@@ -21,7 +21,7 @@ async fn main() -> Result<(), errors::Error> {
     loop {
         match listener.accept().await {
             Ok((stream, _)) => {
-                let simu_handle = simulator::actor::ActorHandle::new(simulator::MockSimu {});
+                let simu_handle = simulator::actor::ActorHandle::new(simulator::fake::MockSimu {});
                 let mut ins = insertor::fifo::MockInsert {};
                 ins.start().await.unwrap();
                 let ins_handle = insertor::actor::ActorHandle::new(ins);
