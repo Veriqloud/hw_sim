@@ -5,6 +5,8 @@ pub mod simulator;
 
 use std::path::Path;
 
+use insertor::Insertor;
+
 #[tokio::main]
 async fn main() -> Result<(), errors::Error> {
     tracing_subscriber::fmt()
@@ -20,7 +22,8 @@ async fn main() -> Result<(), errors::Error> {
         match listener.accept().await {
             Ok((stream, _)) => {
                 let simu_handle = simulator::actor::ActorHandle::new(simulator::MockSimu {});
-                let ins = insertor::fifo::MockInsert {};
+                let mut ins = insertor::fifo::MockInsert {};
+                ins.start().await.unwrap();
                 let ins_handle = insertor::actor::ActorHandle::new(ins);
                 let ipc = ipc::IPCReader::new(stream, simu_handle, ins_handle)
                     .await

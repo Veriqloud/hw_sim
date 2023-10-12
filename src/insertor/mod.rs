@@ -8,7 +8,8 @@ use async_trait::async_trait;
 
 #[async_trait]
 pub trait Insertor: Send + Sync + 'static {
-    async fn start(mut self) -> Result<(), Error>;
+    // Start all connections to fifos
+    async fn start(&mut self) -> Result<(), Error>;
     async fn insert_keys(&self, keys: Keys) -> Result<(), Error>;
 }
 
@@ -22,7 +23,7 @@ pub mod fifo {
             Ok(())
         }
 
-        async fn start(self) -> Result<(), Error> {
+        async fn start(&mut self) -> Result<(), Error> {
             Ok(())
         }
     }
