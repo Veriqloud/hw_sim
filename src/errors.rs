@@ -4,17 +4,17 @@ use snafu::Snafu;
 #[snafu(visibility(pub))]
 pub enum Error {
     #[snafu(display("IPC error {}", source))]
-    IPCError { source: crate::ipc::errors::Error },
+    IPC { source: crate::ipc::errors::Error },
     #[snafu(display("Simulator error {}", source))]
-    SimuError {
+    Simu {
         source: crate::simulator::errors::Error,
     },
     #[snafu(display("Insertor error {}", source))]
-    InsertorError {
-        source: crate::insertor::errors::Error,
+    IpcWriter {
+        source: crate::ipc::writer::errors::Error,
     },
     #[snafu(display("UnixStream error {}", source))]
-    UnixStreamError { source: tokio::io::Error },
+    UnixStream { source: tokio::io::Error },
     #[snafu(display("IO error {}", source))]
-    IOError { source: std::io::Error },
+    IO { source: std::io::Error },
 }

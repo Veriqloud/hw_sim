@@ -1,13 +1,11 @@
 pub mod errors;
-pub mod insertor;
 pub mod ipc;
 pub mod simulator;
 
-use errors::{IOSnafu, IPCSnafu, InsertorSnafu, UnixStreamSnafu};
+use errors::{IOSnafu, IPCSnafu, IpcWriterSnafu, UnixStreamSnafu};
+use ipc::writer::{mock::MockInsert, Writer};
 use snafu::prelude::*;
 use std::path::Path;
-
-use insertor::Insertor;
 
 #[tokio::main]
 async fn main() -> Result<(), errors::Error> {
@@ -24,10 +22,10 @@ async fn main() -> Result<(), errors::Error> {
         match listener.accept().await {
             Ok((stream, _)) => {
                 let simu_handle = simulator::actor::ActorHandle::new(simulator::fake::MockSimu {});
-                let mut ins = insertor::fifo::MockInsert {};
-                ins.start().await.context(InsertorSnafu)?;
-                let ins_handle = insertor::actor::ActorHandle::new(ins);
-                let ipc = ipc::IPCReader::new(stream, simu_handle, ins_handle)
+                let mut ins = MockInsert {};
+                ins.start().await.context(IpcWriterSnafu)?;
+                let ins_handle = ipc::writer::actor::ActorHandle::new(ins);
+                let ipc = ipc::reader::IPCReader::new(stream, simu_handle, ins_handle)
                     .await
                     .context(IPCSnafu)?;
                 ipc.start().await;

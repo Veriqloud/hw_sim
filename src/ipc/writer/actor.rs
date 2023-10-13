@@ -5,14 +5,14 @@ use tokio::sync::{mpsc, oneshot};
 
 use super::{
     errors::{self, Error},
-    Insertor, Keys,
+    Keys, Writer,
 };
 
-pub struct Actor<T: Insertor> {
+pub struct Actor<T: Writer> {
     insertor: T,
     receiver: mpsc::Receiver<ActorMessage>,
 }
-impl<T: Insertor> Actor<T> {
+impl<T: Writer> Actor<T> {
     pub fn new(insertor: T, receiver: mpsc::Receiver<ActorMessage>) -> Self {
         Actor { receiver, insertor }
     }
@@ -36,19 +36,19 @@ pub enum ActorMessage {
     },
 }
 
-pub async fn run_insertor_actor<T: Insertor>(mut actor: Actor<T>) {
+pub async fn run_insertor_actor<T: Writer>(mut actor: Actor<T>) {
     while let Some(msg) = actor.receiver.recv().await {
         actor.handle_message(msg).await;
     }
 }
 
 #[derive(Clone)]
-pub struct ActorHandle<T: Insertor> {
+pub struct ActorHandle<T: Writer> {
     sender: mpsc::Sender<ActorMessage>,
     _phantom: PhantomData<T>,
 }
 
-impl<T: Insertor> ActorHandle<T> {
+impl<T: Writer> ActorHandle<T> {
     pub fn new(insertor: T) -> Self {
         let (sender, receiver) = mpsc::channel(8);
         let actor = Actor::new(insertor, receiver);
