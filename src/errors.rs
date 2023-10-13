@@ -9,6 +9,12 @@ pub enum Error {
     SimuError {
         source: crate::simulator::errors::Error,
     },
+    #[snafu(display("Insertor error {}", source))]
+    InsertorError {
+        source: crate::insertor::errors::Error,
+    },
     #[snafu(display("UnixStream error {}", source))]
     UnixStreamError { source: tokio::io::Error },
+    #[snafu(display("IO error {}", source))]
+    IOError { source: std::io::Error },
 }

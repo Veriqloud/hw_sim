@@ -8,7 +8,7 @@ use tokio::io::AsyncRead;
 use tokio::io::BufReader;
 
 use crate::insertor::{actor::ActorHandle as InsertorHandle, Insertor};
-use crate::simulator::{actor::ActorHandle as SimuHandle, errors::Error, Simulator};
+use crate::simulator::{actor::ActorHandle as SimuHandle, Simulator};
 
 pub struct IPCReader<S: Simulator, I: Insertor, R: AsyncRead + Unpin> {
     insertor_handle: InsertorHandle<I>,
@@ -21,7 +21,7 @@ impl<S: Simulator, I: Insertor, R: AsyncRead + Unpin> IPCReader<S, I, R> {
         unix_stream: R,
         simulator_handle: SimuHandle<S>,
         insertor_handle: InsertorHandle<I>,
-    ) -> Result<Self, Error> {
+    ) -> Result<Self, errors::Error> {
         let reader = BufReader::new(unix_stream);
 
         Ok(IPCReader {
