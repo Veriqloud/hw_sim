@@ -5,7 +5,7 @@ use tokio::sync::{mpsc, oneshot};
 
 use super::{
     errors::{self, Error},
-    Keys, Writer,
+    Writer,
 };
 
 pub struct Actor<T: Writer> {
@@ -19,8 +19,8 @@ impl<T: Writer> Actor<T> {
 
     async fn handle_message(&mut self, msg: ActorMessage) {
         match msg {
-            ActorMessage::InsertKeys { reply_to, keys } => {
-                match self.insertor.insert_keys(keys).await {
+            ActorMessage::InsertData { reply_to, data } => {
+                match self.insertor.insert_data(data).await {
                     Ok(_) => reply_to.send(Ok(())).unwrap(),
                     Err(e) => reply_to.send(Err(e)).unwrap(),
                 }
@@ -30,8 +30,8 @@ impl<T: Writer> Actor<T> {
 }
 
 pub enum ActorMessage {
-    InsertKeys {
-        keys: Keys,
+    InsertData {
+        data: Vec<u8>,
         reply_to: oneshot::Sender<Result<(), Error>>,
     },
 }
@@ -60,12 +60,12 @@ impl<T: Writer> ActorHandle<T> {
         }
     }
 
-    pub async fn insert_keys(&self, keys: Keys) -> Result<(), Error> {
+    pub async fn insert_data(&self, data: Vec<u8>) -> Result<(), Error> {
         let (send, recv) = oneshot::channel();
 
-        let message = ActorMessage::InsertKeys {
-            keys,
+        let message = ActorMessage::InsertData {
             reply_to: send,
+            data,
         };
 
         // Ignore send errors. If this send fails, so does the

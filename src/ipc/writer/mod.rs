@@ -1,5 +1,5 @@
 use self::errors::Error;
-use crate::simulator::Keys;
+
 
 use async_trait::async_trait;
 
@@ -11,5 +11,5 @@ pub mod mock;
 pub trait Writer: Send + Sync + 'static {
     // Start all connections to fifos
     async fn start(&mut self) -> Result<(), Error>;
-    async fn insert_keys(&self, keys: Keys) -> Result<(), Error>;
+    async fn insert_data(&self, data: Vec<u8>) -> Result<(), Error>;
 }

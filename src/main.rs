@@ -1,8 +1,8 @@
+pub mod backend;
 pub mod errors;
 pub mod ipc;
-pub mod simulator;
 
-use errors::{IOSnafu, IPCSnafu, IpcWriterSnafu, UnixStreamSnafu};
+use errors::{IOSnafu, IPCReaderSnafu, IpcWriterSnafu, UnixStreamSnafu};
 use ipc::writer::{mock::MockInsert, Writer};
 use snafu::prelude::*;
 use std::path::Path;
@@ -21,13 +21,13 @@ async fn main() -> Result<(), errors::Error> {
     loop {
         match listener.accept().await {
             Ok((stream, _)) => {
-                let simu_handle = simulator::actor::ActorHandle::new(simulator::fake::MockSimu {});
+                let simu_handle = backend::actor::ActorHandle::new(backend::fake::MockSimu {});
                 let mut ins = MockInsert {};
                 ins.start().await.context(IpcWriterSnafu)?;
                 let ins_handle = ipc::writer::actor::ActorHandle::new(ins);
                 let ipc = ipc::reader::IPCReader::new(stream, simu_handle, ins_handle)
                     .await
-                    .context(IPCSnafu)?;
+                    .context(IPCReaderSnafu)?;
                 ipc.start().await;
             }
             Err(e) => panic!("ERROR {e}"),

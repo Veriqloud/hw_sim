@@ -5,6 +5,6 @@ use snafu::Snafu;
 pub enum Error {
     #[snafu(display("could not connect to Unix Stream because : {}", source))]
     UnixStream { source: std::io::Error },
-    #[snafu(display("could not connect to Unix Stream because : {}", source))]
+    #[snafu(display("Serde error because : {}", source))]
     SerdeJson { source: serde_json::Error },
 }

@@ -1,20 +1,19 @@
 use std::marker::PhantomData;
 
-use crate::simulator::Simulator;
 use snafu::ResultExt;
 use tokio::sync::{mpsc, oneshot};
 
 use super::{
-    errors::{self, Error},
-    Keys,
+    errors::{self, Error, HardwareSnafu},
+    BytesGenerator,
 };
 
-pub struct Actor<T: Simulator + Clone> {
+pub struct Actor<T: BytesGenerator + Clone> {
     receiver: mpsc::Receiver<ActorMessage>,
     simulator: T,
 }
 
-impl<T: Simulator + Clone> Actor<T> {
+impl<T: BytesGenerator + Clone> Actor<T> {
     pub fn new(simulator: T, receiver: mpsc::Receiver<ActorMessage>) -> Self {
         Actor {
             receiver,
@@ -24,15 +23,11 @@ impl<T: Simulator + Clone> Actor<T> {
 
     async fn handle_message(&mut self, msg: ActorMessage) {
         match msg {
-            ActorMessage::GenerateRawKeys {
-                size,
-                owner,
-                reply_to,
-            } => {
-                let simulator_cpy = self.simulator.clone();
+            ActorMessage::ReadAngles { reply_to } => {
+                let mut simulator_cpy = self.simulator.clone();
 
                 tokio::spawn(async move {
-                    let keys_results = simulator_cpy.generate_raw_keys(size, owner);
+                    let keys_results = simulator_cpy.read_angles().context(HardwareSnafu);
 
                     let _ = reply_to.send({
                         match keys_results {
@@ -47,26 +42,24 @@ impl<T: Simulator + Clone> Actor<T> {
 }
 
 pub enum ActorMessage {
-    GenerateRawKeys {
-        size: usize,
-        owner: String,
-        reply_to: oneshot::Sender<Result<Keys, Error>>,
+    ReadAngles {
+        reply_to: oneshot::Sender<Result<Vec<u8>, Error>>,
     },
 }
 
-pub async fn run_simulator_actor<T: Simulator + Clone>(mut actor: Actor<T>) {
+pub async fn run_simulator_actor<T: BytesGenerator + Clone>(mut actor: Actor<T>) {
     while let Some(msg) = actor.receiver.recv().await {
         actor.handle_message(msg).await;
     }
 }
 
 #[derive(Clone)]
-pub struct ActorHandle<T: Simulator> {
+pub struct ActorHandle<T: BytesGenerator> {
     sender: mpsc::Sender<ActorMessage>,
     _phantom: PhantomData<T>,
 }
 
-impl<T: Simulator + Clone> ActorHandle<T> {
+impl<T: BytesGenerator + Clone> ActorHandle<T> {
     pub fn new(simulator: T) -> Self {
         let (sender, receiver) = mpsc::channel(8);
         let actor = Actor::new(simulator, receiver);
@@ -78,14 +71,10 @@ impl<T: Simulator + Clone> ActorHandle<T> {
         }
     }
 
-    pub async fn generate_raw_keys(&self, size: usize, owner: String) -> Result<Keys, Error> {
+    pub async fn read_angles(&self) -> Result<Vec<u8>, Error> {
         let (send, recv) = oneshot::channel();
 
-        let message = ActorMessage::GenerateRawKeys {
-            size,
-            owner,
-            reply_to: send,
-        };
+        let message = ActorMessage::ReadAngles { reply_to: send };
 
         // Ignore send errors. If this send fails, so does the
         // recv.await below. There's no reason to check for the

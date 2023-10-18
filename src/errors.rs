@@ -4,10 +4,12 @@ use snafu::Snafu;
 #[snafu(visibility(pub))]
 pub enum Error {
     #[snafu(display("IPC error {}", source))]
-    IPC { source: crate::ipc::errors::Error },
+    IPCReader {
+        source: crate::ipc::reader::errors::Error,
+    },
     #[snafu(display("Simulator error {}", source))]
-    Simu {
-        source: crate::simulator::errors::Error,
+    Backend {
+        source: crate::backend::errors::Error,
     },
     #[snafu(display("Insertor error {}", source))]
     IpcWriter {

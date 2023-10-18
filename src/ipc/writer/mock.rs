@@ -3,7 +3,7 @@ pub struct MockInsert {}
 
 #[async_trait]
 impl Writer for MockInsert {
-    async fn insert_keys(&self, _keys: Keys) -> Result<(), Error> {
+    async fn insert_data(&self, _data: Vec<u8>) -> Result<(), Error> {
         Ok(())
     }
 
