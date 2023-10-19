@@ -2,8 +2,10 @@ pub mod backend;
 pub mod errors;
 pub mod ipc;
 
-use errors::{IOSnafu, IPCReaderSnafu, IpcWriterSnafu, UnixStreamSnafu};
+use backend::{role::Role, simulation::builder::SimulatorBuilder};
+use errors::{IOSnafu, IpcReaderSnafu, IpcWriterSnafu, UnixStreamSnafu};
 use ipc::writer::{mock::MockInsert, Writer};
+use libhardware::builder::HardwareBuilder;
 use snafu::prelude::*;
 use std::path::Path;
 
@@ -21,13 +23,20 @@ async fn main() -> Result<(), errors::Error> {
     loop {
         match listener.accept().await {
             Ok((stream, _)) => {
-                let simu_handle = backend::actor::ActorHandle::new(backend::fake::MockSimu {});
+                let hw = HardwareBuilder::new().with_pulse_distance(1e-8).build();
+                let sim = SimulatorBuilder::new()
+                    .with_role(Role::Sender)
+                    .with_eta(1e-2)
+                    .with_qb_err(0 as f64)
+                    .with_hardware(hw)
+                    .build();
+                let simu_handle = backend::actor::ActorHandle::new(sim);
                 let mut ins = MockInsert {};
                 ins.start().await.context(IpcWriterSnafu)?;
                 let ins_handle = ipc::writer::actor::ActorHandle::new(ins);
                 let ipc = ipc::reader::IPCReader::new(stream, simu_handle, ins_handle)
                     .await
-                    .context(IPCReaderSnafu)?;
+                    .context(IpcReaderSnafu)?;
                 ipc.start().await;
             }
             Err(e) => panic!("ERROR {e}"),

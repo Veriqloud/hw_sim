@@ -1,5 +1,5 @@
+use crate::backend::protocols::errors::ProtocolError;
 use crate::backend::role::Role;
-use crate::backend::simulation::errors::Error as SimulatorError;
 use crate::backend::simulation::Simulator;
 use rand::RngCore;
 
@@ -17,7 +17,7 @@ mod bb84_constants {
 }
 
 pub trait BB84 {
-    fn correlations_bb84(&mut self, l: usize) -> Result<(Vec<u8>, Vec<u8>), SimulatorError>;
+    fn correlations_bb84(&mut self, l: usize) -> Result<(Vec<u8>, Vec<u8>), ProtocolError>;
 }
 
 impl BB84 for Simulator {
@@ -32,7 +32,7 @@ impl BB84 for Simulator {
     /// The second returned vector contains leftovers that need to be fed into the function at the next
     /// call to keep synchronization in case of different sizes l between the calls done by Alice and Bob
 
-    fn correlations_bb84(&mut self, l: usize) -> Result<(Vec<u8>, Vec<u8>), SimulatorError> {
+    fn correlations_bb84(&mut self, l: usize) -> Result<(Vec<u8>, Vec<u8>), ProtocolError> {
         let mut v: Vec<u8> = Vec::with_capacity(l + bb84_constants::BATCH);
         v.extend(self.leftover.iter());
         let mut b = [0u8; bb84_constants::BATCH];

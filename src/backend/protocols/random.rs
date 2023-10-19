@@ -1,5 +1,5 @@
+use crate::backend::protocols::errors::ProtocolError;
 use crate::backend::role::Role;
-use crate::backend::simulation::errors::Error as SimulatorError;
 use crate::backend::simulation::Simulator;
 use libhardware::ModulatorState;
 //use itertools::izip;
@@ -13,7 +13,7 @@ mod cr_constants {
 }
 
 pub trait CorrelationsRandom {
-    fn correlations_random(&mut self, l: usize) -> Result<(Vec<u8>, Vec<u8>), SimulatorError>;
+    fn correlations_random(&mut self, l: usize) -> Result<(Vec<u8>, Vec<u8>), ProtocolError>;
 }
 
 impl CorrelationsRandom for Simulator {
@@ -30,7 +30,7 @@ impl CorrelationsRandom for Simulator {
     /// The second returned vector contains leftovers that need to be fed into the function at the next
     /// call to keep synchronization in case of different sizes l between the calls done by Alice and Bob
 
-    fn correlations_random(&mut self, l: usize) -> Result<(Vec<u8>, Vec<u8>), SimulatorError> {
+    fn correlations_random(&mut self, l: usize) -> Result<(Vec<u8>, Vec<u8>), ProtocolError> {
         // number of players n and my id k
         let n;
         let k;
@@ -39,9 +39,11 @@ impl CorrelationsRandom for Simulator {
                 n = m.number_of_parties;
                 k = m.position;
             }
-            _ => panic!(
-                "Role not supported. Only Role::OneOfMany is supported for correlations_random"
-            ),
+            _ => return Err(ProtocolError::Role {
+                reason:
+                    "Role not supported. Only Role::OneOfMany is supported for correlations_random"
+                        .to_string(),
+            }),
         }
 
         // the output vector
@@ -70,7 +72,11 @@ impl CorrelationsRandom for Simulator {
                     *a1 = *a2;
                 }
             }
-            _ => panic!("modulator state in correlations_random is not Random"),
+            _ => {
+                return Err(ProtocolError::Role {
+                    reason: "modulator state in correlations_random is not Random".to_string(),
+                })
+            }
         }
 
         // get overlaps
@@ -152,11 +158,14 @@ impl CorrelationsRandom for Simulator {
         }
         //let new_leftover = v.split_off(l);
         if l + self.lfifo_initial as usize > v.len() {
-            panic!(
-                "in random_correlation: cannot split v of length : {} at new values: l = {} + lfifo_initial = {}",
-                v.len(),
-                l,
-                &self.lfifo_initial
+            return Err(ProtocolError::Role {
+                    reason: format!(
+                    "in random_correlation: cannot split v of length : {} at new values: l = {} + lfifo_initial = {}",
+                    v.len(),
+                    l,
+                    &self.lfifo_initial
+                )
+                }
             );
         }
         let new_leftover = v.split_off(l + self.lfifo_initial as usize);

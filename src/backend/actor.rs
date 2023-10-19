@@ -1,5 +1,6 @@
-use std::marker::PhantomData;
+use std::{marker::PhantomData, thread, time};
 
+use libhardware::ModulatorState;
 use snafu::ResultExt;
 use tokio::sync::{mpsc, oneshot};
 
@@ -27,6 +28,13 @@ impl<T: BytesGenerator + Clone> Actor<T> {
                 let mut simulator_cpy = self.simulator.clone();
 
                 tokio::spawn(async move {
+                    let gc = simulator_cpy.get_global_counter().unwrap() + 1000;
+                    simulator_cpy
+                        .set_modulator_state(ModulatorState::Qkd, gc)
+                        .unwrap();
+
+                    // sleep and read
+                    thread::sleep(time::Duration::from_millis(50));
                     let keys_results = simulator_cpy.read_angles().context(HardwareSnafu);
 
                     let _ = reply_to.send({

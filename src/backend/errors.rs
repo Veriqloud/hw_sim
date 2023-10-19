@@ -9,12 +9,12 @@ pub enum Error {
     },
     #[snafu(display("could not connect to Unix Stream because : {}", source))]
     SerdeJson { source: serde_json::Error },
-    #[snafu(display("Hardware error : {}", source))]
-    Hardware {
-        source: libhardware::errors::HardwareError,
-    },
     #[snafu(display("Simulator error : {}", source))]
     Simulation {
         source: crate::backend::simulation::errors::Error,
+    },
+    #[snafu(display("Hardware error : {}", source))]
+    Hardware {
+        source: libhardware::errors::HardwareError,
     },
 }
