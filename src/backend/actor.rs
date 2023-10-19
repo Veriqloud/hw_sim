@@ -45,13 +45,33 @@ impl<T: BytesGenerator + Clone> Actor<T> {
                     });
                 });
             }
+            ActorMessage::SetModulatorState {
+                at_global_counter,
+                modulator_state,
+                reply_to,
+            } => {
+                todo!()
+            }
+            ActorMessage::GetGlobalCounter { reply_to } => todo!(),
+            ActorMessage::GetGcsafe { reply_to } => todo!(),
         }
     }
 }
 
 pub enum ActorMessage {
+    SetModulatorState {
+        at_global_counter: u64,
+        modulator_state: ModulatorState,
+        reply_to: oneshot::Sender<Result<u32, Error>>,
+    },
     ReadAngles {
         reply_to: oneshot::Sender<Result<Vec<u8>, Error>>,
+    },
+    GetGlobalCounter {
+        reply_to: oneshot::Sender<Option<u64>>,
+    },
+    GetGcsafe {
+        reply_to: oneshot::Sender<u64>,
     },
 }
 
