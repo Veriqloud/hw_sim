@@ -4,7 +4,7 @@ pub mod ipc;
 
 use backend::{role::Role, simulation::builder::SimulatorBuilder};
 use errors::{IOSnafu, IpcReaderSnafu, UnixStreamSnafu};
-use ipc::writer::{mock::MockInsert, unix_stream::StreamWriter};
+use ipc::writer::unix_stream::StreamWriter;
 use libhardware::builder::HardwareBuilder;
 use snafu::prelude::*;
 use std::{path::Path, sync::Arc};
@@ -30,9 +30,8 @@ async fn main() -> Result<(), errors::Error> {
         .build();
     let simu_handle = backend::actor::ActorHandle::new(sim);
     let stream = tokio::net::UnixStream::connect("./output")
-        // .context(IOSnafu)
         .await
-        .unwrap();
+        .context(UnixStreamSnafu)?;
     let bw = BufWriter::new(stream);
     let w = Arc::new(bw);
     let ins = StreamWriter { writer: w };
