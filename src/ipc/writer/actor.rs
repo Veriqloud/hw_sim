@@ -9,18 +9,18 @@ use super::{
 };
 
 pub struct Actor<T: Writer> {
-    insertor: T,
+    writer: T,
     receiver: mpsc::Receiver<ActorMessage>,
 }
 impl<T: Writer> Actor<T> {
-    pub fn new(insertor: T, receiver: mpsc::Receiver<ActorMessage>) -> Self {
-        Actor { receiver, insertor }
+    pub fn new(writer: T, receiver: mpsc::Receiver<ActorMessage>) -> Self {
+        Actor { receiver, writer }
     }
 
     async fn handle_message(&mut self, msg: ActorMessage) {
         match msg {
             ActorMessage::InsertData { reply_to, data } => {
-                match self.insertor.insert_data(data).await {
+                match self.writer.insert_data(data).await {
                     Ok(_) => reply_to.send(Ok(())).unwrap(),
                     Err(e) => reply_to.send(Err(e)).unwrap(),
                 }
@@ -36,7 +36,7 @@ pub enum ActorMessage {
     },
 }
 
-pub async fn run_insertor_actor<T: Writer>(mut actor: Actor<T>) {
+pub async fn run_writer_actor<T: Writer>(mut actor: Actor<T>) {
     while let Some(msg) = actor.receiver.recv().await {
         actor.handle_message(msg).await;
     }
@@ -49,10 +49,10 @@ pub struct ActorHandle<T: Writer> {
 }
 
 impl<T: Writer> ActorHandle<T> {
-    pub fn new(insertor: T) -> Self {
+    pub fn new(writer: T) -> Self {
         let (sender, receiver) = mpsc::channel(8);
-        let actor = Actor::new(insertor, receiver);
-        tokio::spawn(run_insertor_actor(actor));
+        let actor = Actor::new(writer, receiver);
+        tokio::spawn(run_writer_actor(actor));
 
         Self {
             sender,

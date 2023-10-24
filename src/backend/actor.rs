@@ -46,14 +46,14 @@ impl<T: BytesGenerator + Clone> Actor<T> {
                 });
             }
             ActorMessage::SetModulatorState {
-                at_global_counter,
-                modulator_state,
-                reply_to,
+                at_global_counter: _,
+                modulator_state: _,
+                reply_to: _,
             } => {
                 todo!()
             }
-            ActorMessage::GetGlobalCounter { reply_to } => todo!(),
-            ActorMessage::GetGcsafe { reply_to } => todo!(),
+            ActorMessage::GetGlobalCounter { reply_to: _ } => todo!(),
+            ActorMessage::GetGcsafe { reply_to: _ } => todo!(),
         }
     }
 }
