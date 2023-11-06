@@ -16,7 +16,7 @@ async fn main() -> Result<(), errors::Error> {
         .with_max_level(tracing::Level::DEBUG)
         .init();
 
-    let path = Path::new("./fifo_test");
+    let path = Path::new("./node2hw");
     if path.exists() {
         std::fs::remove_file(path).context(IOSnafu)?;
     }
@@ -29,7 +29,7 @@ async fn main() -> Result<(), errors::Error> {
         .with_hardware(hw)
         .build();
     let simu_handle = backend::actor::ActorHandle::new(sim);
-    let stream = tokio::net::UnixStream::connect("./output")
+    let stream = tokio::net::UnixStream::connect("./hw2node")
         .await
         .context(UnixStreamSnafu)?;
     let bw = BufWriter::new(stream);

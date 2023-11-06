@@ -41,11 +41,10 @@ impl<S: BytesGenerator, I: Writer, R: AsyncRead + Unpin> IPCReader<S, I, R> {
                     Message::ReadAnglesRequest => {
                         match self.backend_handle.read_angles().await {
                             Ok(data) => {
-                                tracing::debug!("successfully generated {:?} bytes", data);
+                                tracing::debug!("successfully generated {:?} bytes", data.len());
                                 match self.writer_handle.insert_data(data).await {
                                     Ok(_) => {
-                                        tracing::debug!("successfully inserted keys");
-                                        println!("successfully inserted keys");
+                                        tracing::debug!("successfully inserted bytes");
                                     }
                                     Err(e) => {
                                         tracing::error!("{}", e)
