@@ -1,13 +1,13 @@
 pub mod errors;
 
 use snafu::ResultExt;
-use tokio::io::{AsyncBufReadExt, AsyncRead, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, BufReader};
 
 use crate::backend::BytesGenerator;
 
 use super::{
     writer::{actor::ActorHandle as IpcWriterHandle, Writer},
-    Message,
+    UsbCommand,
 };
 use crate::backend::actor::ActorHandle as BackendHandle;
 use errors::Error;
@@ -38,7 +38,15 @@ impl<S: BytesGenerator, I: Writer, R: AsyncRead + Unpin> IPCReader<S, I, R> {
         if let Some(line) = reader.next_line().await.unwrap() {
             match serde_json::from_str(&line).context(errors::SerdeJsonSnafu) {
                 Ok(msg) => match msg {
-                    Message::ReadAnglesRequest => {
+                    UsbCommand::Ok => {
+                        // what to do ? Is it supposed to happen ?
+                        tracing::error!("Message not expected !");
+                    }
+                    UsbCommand::FifoIdle => todo!(),
+                    UsbCommand::StartAtGc => todo!(),
+                    UsbCommand::ReadAngles => {
+                        let mut buf = [0_u8; 8];
+                        reader.get_mut().read_exact(&mut buf).await.unwrap();
                         match self.backend_handle.read_angles().await {
                             Ok(data) => {
                                 tracing::debug!("successfully generated {:?} bytes", data.len());
@@ -56,9 +64,8 @@ impl<S: BytesGenerator, I: Writer, R: AsyncRead + Unpin> IPCReader<S, I, R> {
                             }
                         };
                     }
-                    Message::GetGlobalCounter => todo!(),
-                    Message::GetGcSafe => todo!(),
-                    Message::SetModulatorState => todo!(),
+                    UsbCommand::GetCurrentGc => todo!(),
+                    UsbCommand::AngleSet => todo!(),
                 },
                 Err(e) => tracing::error!("{}", e),
             };
