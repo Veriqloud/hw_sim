@@ -103,16 +103,39 @@ impl<T: BytesGenerator + Clone> ActorHandle<T> {
         }
     }
 
+    pub async fn set_modulator_state(
+        &self,
+        at_global_counter: u64,
+        modulator_state: ModulatorState,
+    ) -> Result<u32, Error> {
+        let (send, recv) = oneshot::channel();
+        let message = ActorMessage::SetModulatorState {
+            at_global_counter,
+            modulator_state,
+            reply_to: send,
+        };
+        let _ = self.sender.send(message).await;
+        recv.await.context(errors::ActorDiedSnafu)?
+    }
+
     pub async fn read_angles(&self) -> Result<Vec<u8>, Error> {
         let (send, recv) = oneshot::channel();
-
         let message = ActorMessage::ReadAngles { reply_to: send };
-
-        // Ignore send errors. If this send fails, so does the
-        // recv.await below. There's no reason to check for the
-        // same failure twice.
         let _ = self.sender.send(message).await;
-
         recv.await.context(errors::ActorDiedSnafu)?
+    }
+
+    pub async fn get_global_counter(&self) -> Result<Option<u64>, Error> {
+        let (send, recv) = oneshot::channel();
+        let message = ActorMessage::GetGlobalCounter { reply_to: send };
+        let _ = self.sender.send(message).await;
+        recv.await.context(errors::ActorDiedSnafu)
+    }
+
+    pub async fn get_gc_safe(&self) -> Result<u64, Error> {
+        let (send, recv) = oneshot::channel();
+        let message = ActorMessage::GetGcsafe { reply_to: send };
+        let _ = self.sender.send(message).await;
+        recv.await.context(errors::ActorDiedSnafu)
     }
 }
