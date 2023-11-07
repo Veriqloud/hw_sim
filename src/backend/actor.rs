@@ -1,4 +1,4 @@
-use std::{marker::PhantomData, thread, time};
+use std::marker::PhantomData;
 
 use libhardware::ModulatorState;
 use snafu::ResultExt;
@@ -25,35 +25,39 @@ impl<T: BytesGenerator + Clone> Actor<T> {
     async fn handle_message(&mut self, msg: ActorMessage) {
         match msg {
             ActorMessage::ReadAngles { reply_to } => {
-                let mut simulator_cpy = self.simulator.clone();
+                let keys_results = self.simulator.read_angles().context(HardwareSnafu);
 
-                tokio::spawn(async move {
-                    let gc = simulator_cpy.get_global_counter().unwrap() + 1000;
-                    simulator_cpy
-                        .set_modulator_state(ModulatorState::Qkd, gc)
-                        .unwrap();
-
-                    // sleep and read
-                    thread::sleep(time::Duration::from_millis(50));
-                    let keys_results = simulator_cpy.read_angles().context(HardwareSnafu);
-
-                    let _ = reply_to.send({
-                        match keys_results {
-                            Ok(v) => Ok(v),
-                            Err(e) => Err(e),
-                        }
-                    });
+                let _ = reply_to.send({
+                    match keys_results {
+                        Ok(v) => Ok(v),
+                        Err(e) => Err(e),
+                    }
                 });
             }
             ActorMessage::SetModulatorState {
-                at_global_counter: _,
-                modulator_state: _,
-                reply_to: _,
+                at_global_counter,
+                modulator_state,
+                reply_to,
             } => {
-                todo!()
+                let res = self
+                    .simulator
+                    .set_modulator_state(modulator_state, at_global_counter)
+                    .context(HardwareSnafu);
+                let _ = reply_to.send({
+                    match res {
+                        Ok(v) => Ok(v),
+                        Err(e) => Err(e),
+                    }
+                });
             }
-            ActorMessage::GetGlobalCounter { reply_to: _ } => todo!(),
-            ActorMessage::GetGcsafe { reply_to: _ } => todo!(),
+            ActorMessage::GetGlobalCounter { reply_to } => {
+                let gc = self.simulator.get_global_counter();
+                let _ = reply_to.send(gc);
+            }
+            ActorMessage::GetGcsafe { reply_to } => {
+                let gc = self.simulator.get_global_counter();
+                let _ = reply_to.send(gc.unwrap_or(0_u64));
+            }
         }
     }
 }
