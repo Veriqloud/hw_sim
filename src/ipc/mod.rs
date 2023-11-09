@@ -14,6 +14,21 @@ pub enum UsbCommand {
     ReadAngles = 0x28,   // read postselected (measured) angles
     GetCurrentGc = 0x29, // get current global counter
     AngleSet = 0x2a,     // set the angles, expected 8 values (byte) to follow
+    KO = 0xaa,           // This type does not exist in the real Hardware ?
+}
+
+impl UsbCommand {
+    fn as_bytes(&self) -> u8 {
+        match self {
+            UsbCommand::Ok => 0x16,
+            UsbCommand::FifoIdle => 0x26,
+            UsbCommand::StartAtGc => 0x27,
+            UsbCommand::ReadAngles => 0x28,
+            UsbCommand::GetCurrentGc => 0x29,
+            UsbCommand::AngleSet => 0x2a,
+            UsbCommand::KO => 0xaa,
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug)]

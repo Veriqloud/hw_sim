@@ -3,7 +3,7 @@ pub mod errors;
 pub mod ipc;
 
 use backend::{role::Role, simulation::builder::SimulatorBuilder};
-use errors::{IOSnafu, IpcReaderSnafu, UnixStreamSnafu};
+use errors::{IOSnafu, UnixStreamSnafu};
 use ipc::writer::unix_stream::StreamWriter;
 use libhardware::builder::HardwareBuilder;
 use snafu::prelude::*;
@@ -34,15 +34,11 @@ async fn main() -> Result<(), errors::Error> {
         .context(UnixStreamSnafu)?;
     let bw = BufWriter::new(stream);
     let w = Arc::new(bw);
-    let ins = StreamWriter { writer: w };
-    let ins_handle = ipc::writer::actor::ActorHandle::new(ins);
+    let _ins = StreamWriter { writer: w };
     loop {
         match listener.accept().await {
             Ok((stream, _)) => {
-                let ipc =
-                    ipc::reader::IPCReader::new(stream, simu_handle.clone(), ins_handle.clone())
-                        .await
-                        .context(IpcReaderSnafu)?;
+                let ipc = ipc::reader::IPCReader::new(stream, simu_handle.clone()).await;
                 ipc.start().await;
             }
             Err(e) => panic!("ERROR {e}"),
