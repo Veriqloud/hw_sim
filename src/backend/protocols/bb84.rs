@@ -17,7 +17,7 @@ mod bb84_constants {
 }
 
 pub trait BB84 {
-    fn correlations_bb84(&mut self, l: usize) -> Result<(Vec<u8>, Vec<u8>), ProtocolError>;
+    fn correlations_bb84(&mut self, l: usize) -> Result<Vec<u8>, ProtocolError>;
 }
 
 impl BB84 for Simulator {
@@ -28,13 +28,9 @@ impl BB84 for Simulator {
     /// - bit 0 is the measurement result
     /// - bit 1 is the basis
     /// - bit 2 is the state
-    ///
-    /// The second returned vector contains leftovers that need to be fed into the function at the next
-    /// call to keep synchronization in case of different sizes l between the calls done by Alice and Bob
 
-    fn correlations_bb84(&mut self, l: usize) -> Result<(Vec<u8>, Vec<u8>), ProtocolError> {
-        let mut v: Vec<u8> = Vec::with_capacity(l + bb84_constants::BATCH);
-        v.extend(self.leftover.iter());
+    fn correlations_bb84(&mut self, l: usize) -> Result<Vec<u8>, ProtocolError> {
+        let mut v = Vec::with_capacity(l + bb84_constants::BATCH);
         let mut b = [0u8; bb84_constants::BATCH];
 
         // get another random array for the qber;
@@ -82,8 +78,32 @@ impl BB84 for Simulator {
             }
             v.extend(b.iter());
         }
-        let new_leftover = v.split_off(l + self.lfifo_initial as usize);
-        v.shrink_to_fit();
-        Ok((v, new_leftover))
+        let (v, _) = v.split_at(l);
+        Ok(v.into())
+    }
+}
+#[cfg(test)]
+pub mod tests {
+    use crate::backend::protocols::bb84::BB84;
+    use crate::backend::simulation::builder::SimulatorBuilder;
+    use std::time::Instant;
+
+    #[test]
+    fn test_correlation_bb84() {
+        let now = Instant::now();
+        let mut sim = SimulatorBuilder::new()
+            .with_now(now)
+            .with_modulator_state(libhardware::ModulatorState::Qkd)
+            .build();
+        println!("SIM: {:?}", &sim);
+
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        let a = sim.correlations_bb84(1024).unwrap();
+        println!("Correlations length {} ", a.len());
+        println!("SIM: {:?}", &sim);
+
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        let a = sim.correlations_bb84(1024).unwrap();
+        println!("Correlations length {} ", a.len());
     }
 }

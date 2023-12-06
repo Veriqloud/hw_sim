@@ -1,11 +1,10 @@
-use std::marker::PhantomData;
+use std::{io::Write, marker::PhantomData};
 
-use libhardware::ModulatorState;
 use snafu::ResultExt;
 use tokio::sync::{mpsc, oneshot};
 
 use super::{
-    errors::{self, Error, HardwareSnafu},
+    errors::{self, Error, HardwareSnafu, IoSnafu},
     BytesGenerator,
 };
 
@@ -22,7 +21,7 @@ impl<T: BytesGenerator + Clone> Actor<T> {
         }
     }
 
-    async fn handle_message(&mut self, msg: ActorMessage) {
+    async fn handle_message(&mut self, msg: ActorMessage) -> Result<(), Error> {
         match msg {
             ActorMessage::ReadAngles { reply_to } => {
                 let keys_results = self.simulator.read_angles().context(HardwareSnafu);
@@ -33,55 +32,78 @@ impl<T: BytesGenerator + Clone> Actor<T> {
                         Err(e) => Err(e),
                     }
                 });
-            }
-            ActorMessage::SetModulatorState {
-                at_global_counter,
-                modulator_state,
-                reply_to,
-            } => {
-                let res = self
-                    .simulator
-                    .set_modulator_state(modulator_state, at_global_counter)
-                    .context(HardwareSnafu);
-                let _ = reply_to.send({
-                    match res {
-                        Ok(v) => Ok(v),
-                        Err(e) => Err(e),
-                    }
-                });
+                Ok(())
             }
             ActorMessage::GetGlobalCounter { reply_to } => {
                 let gc = self.simulator.get_global_counter();
                 let _ = reply_to.send(gc);
+                Ok(())
             }
-            ActorMessage::GetGcsafe { reply_to } => {
-                let gc = self.simulator.get_global_counter();
-                let _ = reply_to.send(gc.unwrap_or(0_u64));
+            ActorMessage::StartAtGc {
+                global_counter,
+                reply_to,
+            } => {
+                let _ = reply_to.send({
+                    match self
+                        .simulator
+                        .start_at_gc(global_counter)
+                        .context(HardwareSnafu)
+                    {
+                        Ok(v) => Ok(v),
+                        Err(e) => Err(e),
+                    }
+                });
+                Ok(())
+            }
+            ActorMessage::FifoIdle { reply_to } => {
+                let _ = reply_to.send({
+                    match self.simulator.fifo_idle().context(HardwareSnafu) {
+                        Ok(v) => Ok(v),
+                        Err(e) => Err(e),
+                    }
+                });
+                Ok(())
+            }
+            ActorMessage::SetAngles { angles, reply_to } => {
+                let _ = reply_to.send({
+                    match self.simulator.set_angles(angles).context(HardwareSnafu) {
+                        Ok(v) => {
+                            let mut f = std::fs::File::open("angles").context(IoSnafu)?;
+                            f.write_all(&angles).context(IoSnafu)?;
+                            Ok(v)
+                        }
+                        Err(e) => Err(e),
+                    }
+                });
+                Ok(())
             }
         }
     }
 }
 
 pub enum ActorMessage {
-    SetModulatorState {
-        at_global_counter: u64,
-        modulator_state: ModulatorState,
-        reply_to: oneshot::Sender<Result<u32, Error>>,
+    StartAtGc {
+        global_counter: u64,
+        reply_to: oneshot::Sender<Result<(), Error>>,
+    },
+    FifoIdle {
+        reply_to: oneshot::Sender<Result<(), Error>>,
+    },
+    SetAngles {
+        angles: [u8; 8],
+        reply_to: oneshot::Sender<Result<(), Error>>,
     },
     ReadAngles {
-        reply_to: oneshot::Sender<Result<Vec<u8>, Error>>,
+        reply_to: oneshot::Sender<Result<[u8; 1024], Error>>,
     },
     GetGlobalCounter {
         reply_to: oneshot::Sender<Option<u64>>,
-    },
-    GetGcsafe {
-        reply_to: oneshot::Sender<u64>,
     },
 }
 
 pub async fn run_simulator_actor<T: BytesGenerator + Clone>(mut actor: Actor<T>) {
     while let Some(msg) = actor.receiver.recv().await {
-        actor.handle_message(msg).await;
+        actor.handle_message(msg).await.unwrap();
     }
 }
 
@@ -103,22 +125,24 @@ impl<T: BytesGenerator + Clone> ActorHandle<T> {
         }
     }
 
-    pub async fn set_modulator_state(
-        &self,
-        at_global_counter: u64,
-        modulator_state: ModulatorState,
-    ) -> Result<u32, Error> {
+    pub async fn fifo_idle(&self) -> Result<(), Error> {
         let (send, recv) = oneshot::channel();
-        let message = ActorMessage::SetModulatorState {
-            at_global_counter,
-            modulator_state,
+        let message = ActorMessage::FifoIdle { reply_to: send };
+        let _ = self.sender.send(message).await;
+        recv.await.context(errors::ActorDiedSnafu)?
+    }
+
+    pub async fn start_at_gc(&self, gc: u64) -> Result<(), Error> {
+        let (send, recv) = oneshot::channel();
+        let message = ActorMessage::StartAtGc {
+            global_counter: gc,
             reply_to: send,
         };
         let _ = self.sender.send(message).await;
         recv.await.context(errors::ActorDiedSnafu)?
     }
 
-    pub async fn read_angles(&self) -> Result<Vec<u8>, Error> {
+    pub async fn read_angles(&self) -> Result<[u8; 1024], Error> {
         let (send, recv) = oneshot::channel();
         let message = ActorMessage::ReadAngles { reply_to: send };
         let _ = self.sender.send(message).await;
@@ -132,10 +156,13 @@ impl<T: BytesGenerator + Clone> ActorHandle<T> {
         recv.await.context(errors::ActorDiedSnafu)
     }
 
-    pub async fn get_gc_safe(&self) -> Result<u64, Error> {
+    pub async fn set_angles(&self, angles: [u8; 8]) -> Result<(), Error> {
         let (send, recv) = oneshot::channel();
-        let message = ActorMessage::GetGcsafe { reply_to: send };
+        let message = ActorMessage::SetAngles {
+            angles,
+            reply_to: send,
+        };
         let _ = self.sender.send(message).await;
-        recv.await.context(errors::ActorDiedSnafu)
+        recv.await.context(errors::ActorDiedSnafu)?
     }
 }

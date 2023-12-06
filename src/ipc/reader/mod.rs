@@ -1,6 +1,5 @@
 pub mod errors;
 
-use libhardware::ModulatorState;
 use snafu::ResultExt;
 use tokio::{
     io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader, BufWriter},
@@ -36,47 +35,31 @@ impl<G: BytesGenerator> IPCReader<G> {
                     UsbCommand::Ok => {
                         tracing::error!("Message not expected !");
                     }
-                    UsbCommand::FifoIdle => {
-                        let gc = self
-                            .backend_handle
-                            .get_global_counter()
-                            .await
-                            .unwrap()
-                            .unwrap_or(0_u64);
-                        match self
-                            .backend_handle
-                            .set_modulator_state(gc, ModulatorState::Idle)
-                            .await
-                        {
-                            Ok(_v) => {
-                                let resp = UsbCommand::Ok.as_bytes();
-                                match writer.write_u8(resp).await {
-                                    Ok(_) => {
-                                        tracing::debug!("successfully inserted bytes");
-                                    }
-                                    Err(e) => {
-                                        tracing::error!("{}", e)
-                                    }
-                                }
+                    UsbCommand::FifoIdle => match self.backend_handle.fifo_idle().await {
+                        Ok(_) => {
+                            tracing::debug!("Sucessfully turn the Simulator into Idle.");
+                            writer.write_u8(UsbCommand::Ok.as_bytes()).await.unwrap();
+                        }
+                        Err(e) => {
+                            tracing::error!("{}", e);
+                            writer.write_u8(UsbCommand::KO.as_bytes()).await.unwrap();
+                        }
+                    },
+                    UsbCommand::StartAtGc => {
+                        // Read expected for Global_counter value (u64)
+                        let gc = reader.get_mut().read_u64().await.unwrap();
+                        match self.backend_handle.start_at_gc(gc).await {
+                            Ok(_) => {
+                                tracing::debug!("Successfully started at GC = {}", gc);
+                                writer.write_u8(UsbCommand::Ok.as_bytes()).await.unwrap();
                             }
                             Err(e) => {
                                 tracing::error!("{}", e);
-                                let resp = UsbCommand::KO.as_bytes();
-                                match writer.write_u8(resp).await {
-                                    Ok(_) => {
-                                        tracing::debug!("Send KO response");
-                                    }
-                                    Err(e) => {
-                                        tracing::error!("{}", e)
-                                    }
-                                }
+                                writer.write_u8(UsbCommand::KO.as_bytes()).await.unwrap();
                             }
                         }
                     }
-                    UsbCommand::StartAtGc => todo!(),
                     UsbCommand::ReadAngles => {
-                        let mut buf = [0_u8; 8];
-                        reader.get_mut().read_exact(&mut buf).await.unwrap();
                         match self.backend_handle.read_angles().await {
                             Ok(data) => {
                                 tracing::debug!("successfully generated {:?} bytes", data.len());
@@ -103,33 +86,48 @@ impl<G: BytesGenerator> IPCReader<G> {
                             }
                         };
                     }
-                    UsbCommand::GetCurrentGc => match self.backend_handle.get_gc_safe().await {
-                        Ok(v) => {
-                            tracing::debug!("global counter: {:?}", v);
-                            match writer.write_u64(v).await {
-                                Ok(_) => {
-                                    tracing::debug!("successfully inserted bytes");
-                                }
-                                Err(e) => {
-                                    tracing::error!("{}", e)
+                    UsbCommand::GetCurrentGc => {
+                        match self.backend_handle.get_global_counter().await {
+                            Ok(v) => {
+                                tracing::debug!("global counter: {:?}", v);
+                                match writer.write_u64(v.unwrap_or(0)).await {
+                                    Ok(_) => {
+                                        tracing::debug!("successfully inserted bytes");
+                                    }
+                                    Err(e) => {
+                                        tracing::error!("{}", e)
+                                    }
                                 }
                             }
-                        }
 
-                        Err(e) => {
-                            tracing::error!("{}", e);
-                            let resp = UsbCommand::KO.as_bytes();
-                            match writer.write_u8(resp).await {
-                                Ok(_) => {
-                                    tracing::debug!("Send KO response");
-                                }
-                                Err(e) => {
-                                    tracing::error!("{}", e)
+                            Err(e) => {
+                                tracing::error!("{}", e);
+                                let resp = UsbCommand::KO.as_bytes();
+                                match writer.write_u8(resp).await {
+                                    Ok(_) => {
+                                        tracing::debug!("Send KO response");
+                                    }
+                                    Err(e) => {
+                                        tracing::error!("{}", e)
+                                    }
                                 }
                             }
                         }
-                    },
-                    UsbCommand::AngleSet => todo!(),
+                    }
+                    UsbCommand::AngleSet => {
+                        let mut angles = [0_u8; 8];
+                        reader.get_mut().read_exact(&mut angles).await.unwrap();
+                        match self.backend_handle.set_angles(angles).await {
+                            Ok(_) => {
+                                tracing::debug!("Successfully set angles to : {:?}", &angles);
+                                match writer.write_u8(UsbCommand::Ok.as_bytes()).await {
+                                    Ok(_) => tracing::debug!("Send OK"),
+                                    Err(e) => tracing::error!("{}", e),
+                                }
+                            }
+                            Err(e) => tracing::error!("{}", e),
+                        }
+                    }
                     UsbCommand::KO => {
                         tracing::error!("Message not expected !");
                     }

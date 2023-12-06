@@ -4,11 +4,9 @@ pub mod ipc;
 
 use backend::{role::Role, simulation::builder::SimulatorBuilder};
 use errors::{IOSnafu, UnixStreamSnafu};
-use ipc::writer::unix_stream::StreamWriter;
 use libhardware::builder::HardwareBuilder;
 use snafu::prelude::*;
-use std::{path::Path, sync::Arc};
-use tokio::io::BufWriter;
+use std::{path::Path, time::Instant};
 
 #[tokio::main]
 async fn main() -> Result<(), errors::Error> {
@@ -27,14 +25,11 @@ async fn main() -> Result<(), errors::Error> {
         .with_eta(1e-2)
         .with_qb_err(0 as f64)
         .with_hardware(hw)
+        .with_modulator_state(libhardware::ModulatorState::Qkd)
+        .with_now(Instant::now())
         .build();
+    tracing::debug!("Simulator time: {:#?} ", sim.now);
     let simu_handle = backend::actor::ActorHandle::new(sim);
-    let stream = tokio::net::UnixStream::connect("./hw2node")
-        .await
-        .context(UnixStreamSnafu)?;
-    let bw = BufWriter::new(stream);
-    let w = Arc::new(bw);
-    let _ins = StreamWriter { writer: w };
     loop {
         match listener.accept().await {
             Ok((stream, _)) => {

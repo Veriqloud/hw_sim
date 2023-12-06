@@ -8,12 +8,11 @@ use std::f32::consts::PI;
 
 mod cr_constants {
     // We work on batches of const size that are appended to v. It's faster that way.
-    // The remainder in the last batch is returned as leftover.
     pub const BATCH: usize = 1 << 10;
 }
 
 pub trait CorrelationsRandom {
-    fn correlations_random(&mut self, l: usize) -> Result<(Vec<u8>, Vec<u8>), ProtocolError>;
+    fn correlations_random(&mut self, l: usize) -> Result<Vec<u8>, ProtocolError>;
 }
 
 impl CorrelationsRandom for Simulator {
@@ -26,11 +25,8 @@ impl CorrelationsRandom for Simulator {
     /// with result bit 1
     ///
     /// If the quber is not zero, the result bit will flip sometimes
-    ///
-    /// The second returned vector contains leftovers that need to be fed into the function at the next
-    /// call to keep synchronization in case of different sizes l between the calls done by Alice and Bob
 
-    fn correlations_random(&mut self, l: usize) -> Result<(Vec<u8>, Vec<u8>), ProtocolError> {
+    fn correlations_random(&mut self, l: usize) -> Result<Vec<u8>, ProtocolError> {
         // number of players n and my id k
         let n;
         let k;
@@ -48,7 +44,6 @@ impl CorrelationsRandom for Simulator {
 
         // the output vector
         let mut v: Vec<u8> = Vec::with_capacity(l + cr_constants::BATCH);
-        v.extend(self.leftover.iter());
 
         // number of parties n, my positon k
         let mut b_parties = Vec::new();
@@ -156,21 +151,9 @@ impl CorrelationsRandom for Simulator {
             }
             v.extend(output.iter());
         }
-        //let new_leftover = v.split_off(l);
-        if l + self.lfifo_initial as usize > v.len() {
-            return Err(ProtocolError::Role {
-                    reason: format!(
-                    "in random_correlation: cannot split v of length : {} at new values: l = {} + lfifo_initial = {}",
-                    v.len(),
-                    l,
-                    &self.lfifo_initial
-                )
-                }
-            );
-        }
-        let new_leftover = v.split_off(l + self.lfifo_initial as usize);
+        let _ = v.split_off(l);
         v.shrink_to_fit();
-        Ok((v, new_leftover))
+        Ok(v)
     }
 }
 

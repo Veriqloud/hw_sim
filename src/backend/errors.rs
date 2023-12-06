@@ -17,4 +17,6 @@ pub enum Error {
     Hardware {
         source: libhardware::errors::HardwareError,
     },
+    #[snafu(display("IO Error : {}", source))]
+    Io { source: std::io::Error },
 }

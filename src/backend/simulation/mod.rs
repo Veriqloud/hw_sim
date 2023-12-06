@@ -15,8 +15,6 @@ pub struct Simulator {
     pub(crate) hw: Hardware,
     pub role: Role,
     pub(crate) rng: Pcg64Mcg,
-    // Leftover values we need to keep between calls of read_angles().
-    pub(crate) leftover: Vec<u8>,
     /// Total qubit detection efficiency
     pub eta: f64,
     /// Qubit error rate
@@ -32,90 +30,10 @@ pub struct Simulator {
     pub(crate) fifo_size: u64,
     /// in Idle Alice remembers this many global counters upon result signal from Bob
     pub(crate) size_of_idle_fifo: u32,
-    pub(crate) lfifo_initial: u32,
+    pub(crate) lfifo_initial: usize,
 }
 
 impl Backend for Simulator {
-    /// Set the state of the phase modulator and reset the hardware fifo.
-    ///
-    /// The reset will happen
-    /// at_global_counter. Make sure that at_global_counter is the same across the two parties.
-    /// Otherwise there might be an offset in the fifo. If at_global_counter lies in the past, vec will
-    /// be padded with zeros at its beginning. The number of zeros is returned here.
-    ///
-    /// This function should exist for the real hardware with the same arguments and behaviour.
-    ///
-    /// Errors are not included yet.
-    fn set_modulator_state(
-        &mut self,
-        modulator_state: ModulatorState,
-        at_global_counter: u64,
-    ) -> Result<u32, HardwareError> {
-        self.reset_seed(at_global_counter);
-        self.leftover.clear();
-        self.lfifo_initial = 0;
-        //if !matches!(modulator_state, ModulatorState::Idle) {
-        // self.reset_seed(at_global_counter as u64);
-        //}
-        self.modulator_state = modulator_state;
-
-        let t = self.get_current_time_with_nanos();
-
-        // if the change is in the future, no problem
-        if ((t / self.hw.pulse_distance) as u64) < (at_global_counter + self.hw.gc_offset) {
-            self.time_of_last_read = t;
-            self.lfifo_initial = 0;
-            Ok(0)
-        }
-        // if the change is in the past, we have to generate zeros, as this is what we want to for the real hardware
-        else {
-            let l = self.get_l(t, at_global_counter);
-            if l.is_none() || l.unwrap() > self.size_of_idle_fifo {
-                return Err(HardwareError::ResetFifoAtThisGcOverflow);
-            }
-            let mut v;
-            let leftover;
-            match &self.modulator_state {
-                ModulatorState::Qkd => {
-                    let (mut _v, mut _leftover) =
-                        self.correlations_bb84(l.unwrap() as usize).map_err(|e| {
-                            println!("ERROR : {:?}", e.to_string());
-                            HardwareError::Other {
-                                reason: e.to_string(),
-                            }
-                        })?;
-                    v = _v;
-                    leftover = _leftover;
-                }
-                ModulatorState::Random(_) => {
-                    let (mut _v, mut _leftover) =
-                        self.correlations_random(l.unwrap() as usize).map_err(|e| {
-                            println!("ERROR : {:?}", e.to_string());
-                            HardwareError::Other {
-                                reason: e.to_string(),
-                            }
-                        })?;
-                    v = _v;
-                    leftover = _leftover;
-                }
-                ModulatorState::Idle => {
-                    return Ok(0);
-                }
-                _ => {
-                    return Err(HardwareError::ModulatorStateNotSupported);
-                }
-            }
-            for e in &mut v {
-                *e &= 0b1; // leave the last bit as result;
-            }
-            self.lfifo_initial = v.len() as u32;
-            v.extend(leftover);
-            self.leftover = v;
-            self.time_of_last_read = t;
-            Ok(l.unwrap())
-        }
-    }
-
     /// Read all angles and measurement results since last read.
     ///
     /// This function will generate the right amount of states based on the real time that passed since
@@ -126,39 +44,56 @@ impl Backend for Simulator {
     /// - bit 0 is the measurement result
     /// - bit 1 is the basis
     /// - bit 2 is the state
-    fn read_angles(&mut self) -> Result<Vec<u8>, HardwareError> {
+    fn read_angles(&mut self) -> Result<[u8; 1024], HardwareError> {
         let current_time = self.get_current_time_with_nanos();
+        tracing::debug!("Current time : {:#?}", &current_time);
         let t = current_time - self.time_of_last_read;
+        tracing::debug!("Last read time : {:#?}", self.time_of_last_read);
         let l = ((t / self.hw.pulse_distance - self.hw.gc_offset as f64) * self.eta) as usize;
-        if l as u64 > self.fifo_size {
+        println!("Amount of time passed since last read: {} ", t);
+        println!(
+            " pulse distance: {}, gc_offset: {}, eta: {} ",
+            self.hw.pulse_distance, self.hw.gc_offset, self.eta
+        );
+        println!("The Simulator is supposed to have generated : {} bytes", l);
+
+        let size = l + self.lfifo_initial;
+        tracing::debug!("Fifo size before generation: {}", self.lfifo_initial);
+        tracing::debug!("Fifo size after generation: {size}");
+        if size as u64 > self.fifo_size {
             return Err(HardwareError::FifoOverflow);
+        }
+        if size < 1024 {
+            return Err(HardwareError::Other {
+                reason: "Not enough bytes".to_string(),
+            });
         }
         self.time_of_last_read = current_time;
         //self.qb_err = (current_time % 7 as f64) * 0.01 + 0.02;
 
         match &self.modulator_state {
-            ModulatorState::Idle => Ok(vec![0u8; 0]),
+            ModulatorState::Idle => Err(HardwareError::Other {
+                reason: "Modulator State in Idle mode".to_string(),
+            }),
             ModulatorState::Qkd => {
-                let (v, leftover) = self.correlations_bb84(l).map_err(|e| {
+                let v = self.correlations_bb84(1024).map_err(|e| {
                     println!("ERROR : {:?}", e.to_string());
                     HardwareError::Other {
                         reason: e.to_string(),
                     }
                 })?;
-                self.leftover = leftover;
-                self.lfifo_initial = 0;
-                Ok(v)
+                self.lfifo_initial = size - 1024;
+                Ok(v.try_into().unwrap())
             }
             ModulatorState::Random(_) => {
-                let (v, leftover) = self.correlations_random(l).map_err(|e| {
+                let v = self.correlations_random(1024).map_err(|e| {
                     println!("ERROR: {:?}", e.to_string());
                     HardwareError::Other {
                         reason: e.to_string(),
                     }
                 })?;
-                self.leftover = leftover;
-                self.lfifo_initial = 0;
-                Ok(v)
+                self.lfifo_initial = size - 1024;
+                Ok(v.try_into().unwrap())
             }
             _ => Err(HardwareError::ModulatorStateNotSupported),
         }
@@ -169,13 +104,29 @@ impl Backend for Simulator {
             .checked_add(self.hw.gc_offset)
     }
 
-    /// Return by how many values increases gc in 0.2 sec
-    fn get_gcsafe(&mut self) -> u64 {
-        (0.2 / self.hw.pulse_distance) as u64
+    fn fifo_idle(&mut self) -> Result<(), HardwareError> {
+        self.modulator_state = ModulatorState::Idle;
+        Ok(())
+    }
+
+    fn start_at_gc(&mut self, gc: u64) -> Result<(), HardwareError> {
+        self.set_gc(gc);
+        self.reset_time();
+        self.modulator_state = ModulatorState::Qkd; // QKD or Random here ? If random, with what angle ?
+        Ok(())
+    }
+
+    fn set_angles(&mut self, angles: [u8; 8]) -> Result<(), HardwareError> {
+        self.modulator_state = ModulatorState::Random(angles.to_vec());
+        Ok(())
     }
 }
 
 impl Simulator {
+    /// Set the global counter of the simulator
+    pub fn set_gc(&mut self, gc: u64) {
+        self.global_counter = gc;
+    }
     /// Update the Role of the simulator
     pub fn set_role(&mut self, nb_parties: u32, position: u32) {
         self.role = Role::OneOfMany(Multiparty {
@@ -217,10 +168,15 @@ impl Simulator {
 
 #[cfg(test)]
 pub mod tests {
+    use crate::backend::role::Multiparty;
+    use crate::backend::role::Role;
     use crate::backend::simulation::builder::SimulatorBuilder;
     use crate::backend::simulation::Simulator;
+    use libhardware::builder::HardwareBuilder;
+    use libhardware::Backend;
     use rand::SeedableRng;
     use rand_pcg::Pcg64Mcg;
+    use std::time::Duration;
     use std::time::Instant;
 
     use std::thread;
@@ -244,7 +200,6 @@ pub mod tests {
                 hw: Default::default(),
                 role: Default::default(),
                 rng: Pcg64Mcg::seed_from_u64(10),
-                leftover: vec![],
                 eta: 0.0,
                 fifo_size: 50_000_000,
                 size_of_idle_fifo: 1_000_000,
@@ -257,5 +212,56 @@ pub mod tests {
             },
             sim
         )
+    }
+
+    #[test]
+    fn test_read_angles_ko() {
+        let now = Instant::now();
+        let mut sim = SimulatorBuilder::new().with_now(now).build();
+        let res = sim.read_angles();
+        assert_eq!(
+            res.unwrap_err(),
+            libhardware::HardwareError::Other {
+                reason: "Not enough bytes".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn test_read_angles_qkd_ok() {
+        let hw = HardwareBuilder::new().with_pulse_distance(1e-8).build();
+        let mut sim = SimulatorBuilder::new()
+            .with_role(Role::Sender)
+            .with_eta(1e-2)
+            .with_qb_err(0 as f64)
+            .with_hardware(hw)
+            .with_modulator_state(libhardware::ModulatorState::Qkd)
+            .with_now(Instant::now())
+            .build();
+        thread::sleep(Duration::from_millis(2));
+        assert!(sim.read_angles().is_ok());
+        println!("SIMULATOR : {:?}", &sim);
+        thread::sleep(Duration::from_millis(2));
+        assert!(sim.read_angles().is_ok());
+        println!("SIMULATOR : {:?}", &sim);
+    }
+
+    #[test]
+    fn test_read_angles_random_ok() {
+        let hw = HardwareBuilder::new().with_pulse_distance(1e-8).build();
+        let mut sim = SimulatorBuilder::new()
+            .with_role(Role::OneOfMany(Multiparty {
+                number_of_parties: 3,
+                position: 2,
+            }))
+            .with_eta(1e-2)
+            .with_qb_err(0 as f64)
+            .with_hardware(hw)
+            .with_modulator_state(libhardware::ModulatorState::Random(vec![0, 32, 64, 96]))
+            .with_now(Instant::now())
+            .build();
+        thread::sleep(Duration::from_millis(2));
+        assert!(sim.read_angles().is_ok());
+        println!("SIMULATOR : {:?}", &sim);
     }
 }

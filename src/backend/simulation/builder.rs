@@ -8,8 +8,6 @@ use crate::backend::role::Role;
 
 use super::Simulator;
 
-// use super::simulator::hardware::simulator::Simulator;
-
 pub struct SimulatorBuilder {
     /// Total qubit detection efficiency
     pub eta: f64,
@@ -20,9 +18,7 @@ pub struct SimulatorBuilder {
     /// Probably not required ...
     pub global_counter: u64,
     pub hw: Hardware,
-    /// Leftover values we need to keep between calls of read_angles().
-    pub leftover: Vec<u8>,
-    pub lfifo_initial: u32,
+    pub lfifo_initial: usize,
     pub modulator_state: ModulatorState,
     pub now: Instant,
     /// Qubit error rate
@@ -44,7 +40,6 @@ impl SimulatorBuilder {
             hw: self.hw.to_owned(),
             role: self.role.to_owned(),
             rng: self.rng.to_owned(),
-            leftover: self.leftover.to_owned(),
             eta: self.eta,
             qb_err: self.qb_err,
             now: self.now,
@@ -69,11 +64,6 @@ impl SimulatorBuilder {
 
     pub fn with_rng(&mut self, rng: Pcg64Mcg) -> &mut Self {
         self.rng = rng;
-        self
-    }
-
-    pub fn with_leftover(&mut self, leftover: Vec<u8>) -> &mut Self {
-        self.leftover = leftover;
         self
     }
 
@@ -124,7 +114,6 @@ impl Default for SimulatorBuilder {
             hw: Default::default(),
             role: Default::default(),
             rng: Pcg64Mcg::seed_from_u64(10),
-            leftover: Vec::default(),
             eta: Default::default(),
             qb_err: Default::default(),
             now: Instant::now(),
@@ -160,7 +149,6 @@ pub mod tests {
             .with_hardware(hw.clone())
             .with_role(Role::Receiver)
             .with_rng(Pcg64Mcg::seed_from_u64(5))
-            .with_leftover(vec![0, 32, 64, 96])
             .with_eta(13.)
             .with_qb_err(42.)
             .with_now(now)
@@ -176,7 +164,6 @@ pub mod tests {
                 hw,
                 role: Role::Receiver,
                 rng: Pcg64Mcg::seed_from_u64(5),
-                leftover: vec![0, 32, 64, 96],
                 eta: 13.,
                 qb_err: 42.,
                 now,

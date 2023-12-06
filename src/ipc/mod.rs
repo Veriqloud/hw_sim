@@ -1,7 +1,6 @@
 pub mod reader;
-pub mod writer;
+// pub mod writer;
 
-use libhardware::ModulatorState;
 use serde::Deserialize;
 use serde::Serialize;
 
@@ -29,19 +28,4 @@ impl UsbCommand {
             UsbCommand::KO => 0xaa,
         }
     }
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct ReadAnglesRequest {}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct GetGlobalCounter {}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct GetGcSafe {}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct SetModulatorState {
-    modulator_state: ModulatorState,
-    at_global_counter: u64,
 }
