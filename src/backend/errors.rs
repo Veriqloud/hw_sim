@@ -7,7 +7,7 @@ pub enum Error {
     ActorDied {
         source: tokio::sync::oneshot::error::RecvError,
     },
-    #[snafu(display("could not connect to Unix Stream because : {}", source))]
+    #[snafu(display("SerdeJson error because : {}", source))]
     SerdeJson { source: serde_json::Error },
     #[snafu(display("Simulator error : {}", source))]
     Simulation {

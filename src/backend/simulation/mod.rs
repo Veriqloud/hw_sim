@@ -64,6 +64,14 @@ impl Backend for Simulator {
             return Err(HardwareError::FifoOverflow);
         }
         if size < 1024 {
+            let n = 1024 - size;
+            let t = (n as f64 / self.eta + self.hw.gc_offset as f64) * self.hw.pulse_distance;
+            println!("Need to wait t = {} to generate {} bytes", t, n);
+
+            // Compute the expected time to wait for the remaining bytes to be generated !
+            // t = n / key_rate = n * (eta / pulse )
+            // Wait for duration t and generate the bytes
+            // set lfifo_initial
             return Err(HardwareError::Other {
                 reason: "Not enough bytes".to_string(),
             });

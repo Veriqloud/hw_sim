@@ -63,8 +63,10 @@ impl<G: BytesGenerator> IPCReader<G> {
                         match self.backend_handle.read_angles().await {
                             Ok(data) => {
                                 tracing::debug!("successfully generated {:?} bytes", data.len());
+                                tracing::debug!("Bytes : {:?}", &data);
                                 match writer.write_all(&data).await {
                                     Ok(_) => {
+                                        writer.flush().await.unwrap();
                                         tracing::debug!("successfully inserted bytes");
                                     }
                                     Err(e) => {
