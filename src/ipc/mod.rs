@@ -4,6 +4,8 @@ pub mod reader;
 use serde::Deserialize;
 use serde::Serialize;
 
+pub(crate) static NODE2HW: &str = "./node2hw";
+
 // These commands are specified by the Hardware team and are always between 0 and 255.
 #[derive(Serialize, Deserialize, Debug)]
 pub enum UsbCommand {

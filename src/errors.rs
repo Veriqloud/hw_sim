@@ -15,4 +15,6 @@ pub enum Error {
     UnixStream { source: tokio::io::Error },
     #[snafu(display("IO error {}", source))]
     IO { source: std::io::Error },
+    #[snafu(display("SerdeJSON error {}", source))]
+    SerdeJson { source: serde_json::Error },
 }
