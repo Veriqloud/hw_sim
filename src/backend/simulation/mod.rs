@@ -46,55 +46,59 @@ impl Backend for Simulator {
     /// - bit 1 is the basis
     /// - bit 2 is the state
     fn read_angles(&mut self) -> Result<[u8; 1024], HardwareError> {
-        let current_time = self.get_current_time_with_nanos();
-        tracing::debug!("Current time : {:#?}", &current_time);
-        let t = current_time - self.time_of_last_read;
-        tracing::debug!("Last read time : {:#?}", self.time_of_last_read);
-        let l = ((t / self.hw.pulse_distance - self.hw.gc_offset as f64) * self.eta) as usize;
-        println!("Amount of time passed since last read: {} ", t);
-        println!(
-            " pulse distance: {}, gc_offset: {}, eta: {} ",
-            self.hw.pulse_distance, self.hw.gc_offset, self.eta
-        );
-        println!("The Simulator is supposed to have generated : {} bytes", l);
-
-        let size = l + self.lfifo_initial;
-        tracing::debug!("Fifo size before generation: {}", self.lfifo_initial);
-        tracing::debug!("Fifo size after generation: {size}");
-        if size as u64 > self.fifo_size {
-            return Err(HardwareError::FifoOverflow);
-        }
-        if size < 1024 {
-            let n = 1024 - size;
-            let t = (n as f64 / self.eta + self.hw.gc_offset as f64) * self.hw.pulse_distance;
-            println!("Need to wait t = {} to generate {} bytes", t, n);
-
-            // Compute the expected time to wait for the remaining bytes to be generated !
-            // t = n / key_rate = n * (eta / pulse )
-            // Wait for duration t and generate the bytes
-            // set lfifo_initial
-            return Err(HardwareError::Other {
-                reason: "Not enough bytes".to_string(),
-            });
-        }
-        self.time_of_last_read = current_time;
-        //self.qb_err = (current_time % 7 as f64) * 0.01 + 0.02;
-
         match &self.modulator_state {
-            ModulatorState::Idle => Err(HardwareError::Other {
-                reason: "Modulator State in Idle mode".to_string(),
-            }),
-            ModulatorState::Qkd => {
-                let v = self.correlations_bb84(1024).map_err(|e| {
-                    println!("ERROR : {:?}", e.to_string());
-                    HardwareError::Other {
-                        reason: e.to_string(),
-                    }
-                })?;
-                self.lfifo_initial = size - 1024;
-                Ok(v.try_into().unwrap())
+            ModulatorState::Idle => {
+                if self.lfifo_initial < 1024 {
+                    return Err(HardwareError::Other {
+                        reason: "Not enough bytes left in the fifo !".to_string(),
+                    });
+                } else {
+                    let v = self.correlations_random(1024).map_err(|e| {
+                        println!("ERROR : {:?}", e.to_string());
+                        HardwareError::Other {
+                            reason: e.to_string(),
+                        }
+                    })?;
+                    self.lfifo_initial = self.lfifo_initial - 1024;
+                    return Ok(v.try_into().unwrap());
+                }
             }
             ModulatorState::Random => {
+                let current_time = self.get_current_time_with_nanos();
+                tracing::debug!("Current time : {:#?}", &current_time);
+                let t = current_time - self.time_of_last_read;
+                tracing::debug!("Last read time : {:#?}", self.time_of_last_read);
+                let l =
+                    ((t / self.hw.pulse_distance - self.hw.gc_offset as f64) * self.eta) as usize;
+                println!("Amount of time passed since last read: {} ", t);
+                println!(
+                    " pulse distance: {}, gc_offset: {}, eta: {} ",
+                    self.hw.pulse_distance, self.hw.gc_offset, self.eta
+                );
+                println!("The Simulator is supposed to have generated : {} bytes", l);
+
+                let size = l + self.lfifo_initial;
+                tracing::debug!("Fifo size before generation: {}", self.lfifo_initial);
+                tracing::debug!("Fifo size after generation: {size}");
+                if size as u64 > self.fifo_size {
+                    return Err(HardwareError::FifoOverflow);
+                }
+                if size < 1024 {
+                    let n = 1024 - size;
+                    let t =
+                        (n as f64 / self.eta + self.hw.gc_offset as f64) * self.hw.pulse_distance;
+                    println!("Need to wait t = {} to generate {} bytes", t, n);
+
+                    // Compute the expected time to wait for the remaining bytes to be generated !
+                    // t = n / key_rate = n * (eta / pulse )
+                    // Wait for duration t and generate the bytes
+                    // set lfifo_initial
+                    return Err(HardwareError::Other {
+                        reason: "Not enough bytes".to_string(),
+                    });
+                }
+                self.time_of_last_read = current_time;
+                //self.qb_err = (current_time % 7 as f64) * 0.01 + 0.02;
                 let v = self.correlations_random(1024).map_err(|e| {
                     println!("ERROR: {:?}", e.to_string());
                     HardwareError::Other {
@@ -121,7 +125,7 @@ impl Backend for Simulator {
     fn start_at_gc(&mut self, gc: u64) -> Result<(), HardwareError> {
         self.set_gc(gc);
         self.reset_time();
-        self.modulator_state = ModulatorState::Qkd; // QKD or Random here ? If random, with what angle ?
+        self.modulator_state = ModulatorState::Random;
         Ok(())
     }
 
@@ -217,6 +221,7 @@ pub mod tests {
                 global_counter: 0,
                 qb_err: 0.0,
                 modulator_state: Default::default(),
+                angles: Default::default(),
                 lfifo_initial: 0,
             },
             sim
