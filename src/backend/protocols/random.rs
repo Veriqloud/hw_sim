@@ -61,7 +61,8 @@ impl CorrelationsRandom for Simulator {
         let mut angles = [0u8; 128];
         let num_angles: u16;
         match &self.modulator_state {
-            ModulatorState::Random(angles_vec) => {
+            ModulatorState::Random => {
+                let angles_vec = &self.angles;
                 num_angles = angles_vec.len() as u16;
                 for (a1, a2) in angles.iter_mut().zip(angles_vec) {
                     *a1 = *a2;

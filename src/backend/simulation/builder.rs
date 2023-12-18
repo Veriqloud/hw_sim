@@ -20,6 +20,7 @@ pub struct SimulatorBuilder {
     pub hw: Hardware,
     pub lfifo_initial: usize,
     pub modulator_state: ModulatorState,
+    pub angles: Vec<u8>,
     pub now: Instant,
     /// Qubit error rate
     pub qb_err: f64,
@@ -49,7 +50,13 @@ impl SimulatorBuilder {
             fifo_size: self.fifo_size,
             size_of_idle_fifo: self.size_of_idle_fifo,
             lfifo_initial: self.lfifo_initial,
+            angles: self.angles.to_owned(),
         }
+    }
+
+    pub fn with_angles(&mut self, angles: Vec<u8>) -> &mut Self {
+        self.angles = angles;
+        self
     }
 
     pub fn with_hardware(&mut self, hw: Hardware) -> &mut Self {
@@ -111,18 +118,19 @@ impl SimulatorBuilder {
 impl Default for SimulatorBuilder {
     fn default() -> Self {
         SimulatorBuilder {
-            hw: Default::default(),
-            role: Default::default(),
-            rng: Pcg64Mcg::seed_from_u64(10),
             eta: Default::default(),
-            qb_err: Default::default(),
-            now: Instant::now(),
-            time_of_last_read: Default::default(),
-            global_counter: Default::default(),
-            modulator_state: Default::default(),
             fifo_size: 50_000_000,
-            size_of_idle_fifo: 1_000_000,
+            global_counter: Default::default(),
+            hw: Default::default(),
             lfifo_initial: 0,
+            modulator_state: Default::default(),
+            angles: Default::default(),
+            now: Instant::now(),
+            qb_err: Default::default(),
+            rng: Pcg64Mcg::seed_from_u64(10),
+            role: Default::default(),
+            size_of_idle_fifo: 1_000_000,
+            time_of_last_read: Default::default(),
         }
     }
 }

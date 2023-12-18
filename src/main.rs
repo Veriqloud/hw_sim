@@ -43,7 +43,8 @@ async fn main() -> Result<(), errors::Error> {
         .with_eta(1e-2)
         .with_qb_err(0 as f64)
         .with_hardware(hw)
-        .with_modulator_state(libhardware::ModulatorState::Random(angles.angles))
+        .with_angles(angles.angles.to_owned())
+        .with_modulator_state(libhardware::ModulatorState::Random)
         .with_now(Instant::now())
         .build();
     tracing::debug!("Simulator time: {:#?} ", sim.now);

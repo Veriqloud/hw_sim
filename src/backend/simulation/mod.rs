@@ -26,6 +26,7 @@ pub struct Simulator {
     /// Probably not required ...
     pub(crate) global_counter: u64,
     pub(crate) modulator_state: ModulatorState,
+    pub(crate) angles: Vec<u8>,
     /// Size of the physical FIFO, for realistic HardwareError, "Size" means number of bytes.
     pub(crate) fifo_size: u64,
     /// in Idle Alice remembers this many global counters upon result signal from Bob
@@ -93,7 +94,7 @@ impl Backend for Simulator {
                 self.lfifo_initial = size - 1024;
                 Ok(v.try_into().unwrap())
             }
-            ModulatorState::Random(_) => {
+            ModulatorState::Random => {
                 let v = self.correlations_random(1024).map_err(|e| {
                     println!("ERROR: {:?}", e.to_string());
                     HardwareError::Other {
@@ -125,7 +126,7 @@ impl Backend for Simulator {
     }
 
     fn set_angles(&mut self, angles: [u8; 8]) -> Result<(), HardwareError> {
-        self.modulator_state = ModulatorState::Random(angles.to_vec());
+        self.angles = angles.to_vec();
         Ok(())
     }
 }
