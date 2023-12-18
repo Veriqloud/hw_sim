@@ -1,7 +1,7 @@
 pub mod builder;
 pub mod errors;
 
-use crate::backend::protocols::bb84::BB84;
+
 use crate::backend::protocols::random::CorrelationsRandom;
 use crate::backend::role::{Multiparty, Role};
 use libhardware::errors::HardwareError;
@@ -49,9 +49,9 @@ impl Backend for Simulator {
         match &self.modulator_state {
             ModulatorState::Idle => {
                 if self.lfifo_initial < 1024 {
-                    return Err(HardwareError::Other {
+                    Err(HardwareError::Other {
                         reason: "Not enough bytes left in the fifo !".to_string(),
-                    });
+                    })
                 } else {
                     let v = self.correlations_random(1024).map_err(|e| {
                         println!("ERROR : {:?}", e.to_string());
@@ -59,8 +59,8 @@ impl Backend for Simulator {
                             reason: e.to_string(),
                         }
                     })?;
-                    self.lfifo_initial = self.lfifo_initial - 1024;
-                    return Ok(v.try_into().unwrap());
+                    self.lfifo_initial -= 1024;
+                    Ok(v.try_into().unwrap())
                 }
             }
             ModulatorState::Random => {
@@ -271,7 +271,7 @@ pub mod tests {
             .with_eta(1e-2)
             .with_qb_err(0 as f64)
             .with_hardware(hw)
-            .with_modulator_state(libhardware::ModulatorState::Random(vec![0, 32, 64, 96]))
+            .with_modulator_state(libhardware::ModulatorState::Random)
             .with_now(Instant::now())
             .build();
         thread::sleep(Duration::from_millis(2));

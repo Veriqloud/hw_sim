@@ -165,6 +165,7 @@ pub mod tests {
             .with_modulator_state(ModulatorState::Qkd)
             .with_fifo_size(10_000)
             .with_size_of_idle_fifo(5_000)
+            .with_angles(vec![0, 32, 34, 96])
             .build();
 
         assert_eq!(
@@ -181,6 +182,7 @@ pub mod tests {
                 fifo_size: 10_000,
                 size_of_idle_fifo: 5_000,
                 lfifo_initial: 0,
+                angles: vec![0, 32, 34, 96],
             },
             sim
         )
