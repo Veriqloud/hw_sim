@@ -2,7 +2,7 @@ pub mod errors;
 
 use snafu::ResultExt;
 use tokio::{
-    io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader, BufWriter},
+    io::{AsyncBufReadExt, AsyncWriteExt, BufReader, BufWriter},
     net::UnixStream,
 };
 
@@ -38,24 +38,23 @@ impl<G: BytesGenerator> IPCReader<G> {
                     UsbCommand::FifoIdle => match self.backend_handle.fifo_idle().await {
                         Ok(_) => {
                             tracing::debug!("Sucessfully turn the Simulator into Idle.");
-                            writer.write_u8(UsbCommand::Ok.as_bytes()).await.unwrap();
+                            writer.write_all(&UsbCommand::Ok.as_bytes()).await.unwrap();
                         }
                         Err(e) => {
                             tracing::error!("{}", e);
-                            writer.write_u8(UsbCommand::KO.as_bytes()).await.unwrap();
+                            writer.write_all(&UsbCommand::KO.as_bytes()).await.unwrap();
                         }
                     },
-                    UsbCommand::StartAtGc => {
+                    UsbCommand::StartAtGc { gc } => {
                         // Read expected for Global_counter value (u64)
-                        let gc = reader.get_mut().read_u64().await.unwrap();
                         match self.backend_handle.start_at_gc(gc).await {
                             Ok(_) => {
                                 tracing::debug!("Successfully started at GC = {}", gc);
-                                writer.write_u8(UsbCommand::Ok.as_bytes()).await.unwrap();
+                                writer.write_all(&UsbCommand::Ok.as_bytes()).await.unwrap();
                             }
                             Err(e) => {
                                 tracing::error!("{}", e);
-                                writer.write_u8(UsbCommand::KO.as_bytes()).await.unwrap();
+                                writer.write_all(&UsbCommand::KO.as_bytes()).await.unwrap();
                             }
                         }
                     }
@@ -75,8 +74,7 @@ impl<G: BytesGenerator> IPCReader<G> {
                             }
                             Err(e) => {
                                 tracing::error!("{}", e);
-                                let resp = UsbCommand::KO.as_bytes();
-                                match writer.write_u8(resp).await {
+                                match writer.write(&UsbCommand::KO.as_bytes()).await {
                                     Ok(_) => {
                                         tracing::debug!("Send KO response");
                                     }
@@ -103,8 +101,7 @@ impl<G: BytesGenerator> IPCReader<G> {
 
                             Err(e) => {
                                 tracing::error!("{}", e);
-                                let resp = UsbCommand::KO.as_bytes();
-                                match writer.write_u8(resp).await {
+                                match writer.write(&UsbCommand::KO.as_bytes()).await {
                                     Ok(_) => {
                                         tracing::debug!("Send KO response");
                                     }
@@ -115,13 +112,11 @@ impl<G: BytesGenerator> IPCReader<G> {
                             }
                         }
                     }
-                    UsbCommand::AngleSet => {
-                        let mut angles = [0_u8; 8];
-                        reader.get_mut().read_exact(&mut angles).await.unwrap();
+                    UsbCommand::AngleSet { angles } => {
                         match self.backend_handle.set_angles(angles).await {
                             Ok(_) => {
                                 tracing::debug!("Successfully set angles to : {:?}", &angles);
-                                match writer.write_u8(UsbCommand::Ok.as_bytes()).await {
+                                match writer.write(&UsbCommand::Ok.as_bytes()).await {
                                     Ok(_) => tracing::debug!("Send OK"),
                                     Err(e) => tracing::error!("{}", e),
                                 }

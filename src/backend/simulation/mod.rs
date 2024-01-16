@@ -1,11 +1,13 @@
 pub mod builder;
 pub mod errors;
 
-use crate::backend::protocols::bb84::BB84;
+use async_trait::async_trait;
+use tokio::time::timeout;
+
 use crate::backend::protocols::random::CorrelationsRandom;
 use crate::backend::role::{Multiparty, Role};
 use libhardware::errors::HardwareError;
-use libhardware::{Backend, Hardware, ModulatorState};
+use libhardware::{Hardware, ModulatorState};
 use rand::SeedableRng;
 use rand_pcg::Pcg64Mcg;
 use std::time::Instant;
@@ -34,7 +36,18 @@ pub struct Simulator {
     pub(crate) lfifo_initial: usize,
 }
 
-impl Backend for Simulator {
+#[async_trait]
+pub trait VqSim {
+    fn fifo_idle(&mut self) -> Result<(), HardwareError>;
+    fn get_global_counter(&mut self) -> Option<u64>;
+    async fn read_angles(&mut self) -> Result<[u8; 1024], HardwareError>;
+    async fn generate_bytes(&mut self) -> Result<Vec<u8>, HardwareError>;
+    fn set_angles(&mut self, angles: [u8; 8]) -> Result<(), HardwareError>;
+    fn start_at_gc(&mut self, gc: u64) -> Result<(), HardwareError>;
+}
+
+#[async_trait]
+impl VqSim for Simulator {
     /// Read all angles and measurement results since last read.
     ///
     /// This function will generate the right amount of states based on the real time that passed since
@@ -45,13 +58,13 @@ impl Backend for Simulator {
     /// - bit 0 is the measurement result
     /// - bit 1 is the basis
     /// - bit 2 is the state
-    fn read_angles(&mut self) -> Result<[u8; 1024], HardwareError> {
+    async fn read_angles(&mut self) -> Result<[u8; 1024], HardwareError> {
         match &self.modulator_state {
             ModulatorState::Idle => {
                 if self.lfifo_initial < 1024 {
-                    return Err(HardwareError::Other {
+                    Err(HardwareError::Other {
                         reason: "Not enough bytes left in the fifo !".to_string(),
-                    });
+                    })
                 } else {
                     let v = self.correlations_random(1024).map_err(|e| {
                         println!("ERROR : {:?}", e.to_string());
@@ -59,8 +72,8 @@ impl Backend for Simulator {
                             reason: e.to_string(),
                         }
                     })?;
-                    self.lfifo_initial = self.lfifo_initial - 1024;
-                    return Ok(v.try_into().unwrap());
+                    self.lfifo_initial -= 1024;
+                    Ok(v.try_into().unwrap())
                 }
             }
             ModulatorState::Random => {
@@ -87,15 +100,21 @@ impl Backend for Simulator {
                     let n = 1024 - size;
                     let t =
                         (n as f64 / self.eta + self.hw.gc_offset as f64) * self.hw.pulse_distance;
-                    println!("Need to wait t = {} to generate {} bytes", t, n);
+                    println!("Need to wait t = {} microsec to generate {} bytes", t, n);
+                    let _time = std::time::Duration::from_micros(t as u64);
+                    let task = tokio::time::sleep(tokio::time::Duration::from_micros(t as u64));
 
-                    // Compute the expected time to wait for the remaining bytes to be generated !
-                    // t = n / key_rate = n * (eta / pulse )
-                    // Wait for duration t and generate the bytes
-                    // set lfifo_initial
-                    return Err(HardwareError::Other {
-                        reason: "Not enough bytes".to_string(),
-                    });
+                    let (_, res) = tokio::join!(task, self.generate_bytes()); // self.generate_bytes()).await;
+                    match res {
+                        Ok(v) => {
+                            self.lfifo_initial = 0;
+                            let v = v.try_into().unwrap();
+                            return Ok(v);
+                        }
+                        Err(e) => {
+                            return Err(e);
+                        }
+                    }
                 }
                 self.time_of_last_read = current_time;
                 //self.qb_err = (current_time % 7 as f64) * 0.01 + 0.02;
@@ -132,6 +151,15 @@ impl Backend for Simulator {
     fn set_angles(&mut self, angles: [u8; 8]) -> Result<(), HardwareError> {
         self.angles = angles.to_vec();
         Ok(())
+    }
+
+    async fn generate_bytes(&mut self) -> Result<Vec<u8>, HardwareError> {
+        self.correlations_random(1024).map_err(|e| {
+            println!("ERROR: {:?}", e.to_string());
+            HardwareError::Other {
+                reason: e.to_string(),
+            }
+        })
     }
 }
 
@@ -181,12 +209,13 @@ impl Simulator {
 
 #[cfg(test)]
 pub mod tests {
+    use crate::backend::protocols::random::CorrelationsRandom;
     use crate::backend::role::Multiparty;
     use crate::backend::role::Role;
     use crate::backend::simulation::builder::SimulatorBuilder;
+    use crate::backend::simulation::VqSim;
     use crate::backend::simulation::Simulator;
     use libhardware::builder::HardwareBuilder;
-    use libhardware::Backend;
     use rand::SeedableRng;
     use rand_pcg::Pcg64Mcg;
     use std::time::Duration;
@@ -229,20 +258,40 @@ pub mod tests {
     }
 
     #[test]
-    fn test_read_angles_ko() {
+    fn test_read_angles_wait() {
         let now = Instant::now();
-        let mut sim = SimulatorBuilder::new().with_now(now).build();
-        let res = sim.read_angles();
-        assert_eq!(
-            res.unwrap_err(),
-            libhardware::HardwareError::Other {
-                reason: "Not enough bytes left in the fifo !".to_string()
-            }
+        let hw = HardwareBuilder::new().with_pulse_distance(1e-8).build();
+        let mut sim = SimulatorBuilder::new()
+            .with_eta(1e-2)
+            .with_qb_err(0 as f64)
+            .with_hardware(hw)
+            .with_role(Role::OneOfMany(Multiparty {
+                number_of_parties: 3,
+                position: 2,
+            }))
+            .with_modulator_state(libhardware::ModulatorState::Random)
+            .with_now(now)
+            .with_angles(vec![0, 32, 64, 96])
+            .build();
+
+        // let noow = Instant::now();
+        // let _res = sim.read_angles().unwrap();
+        // let elapsed_time = noow.elapsed();
+        // println!(
+        //     "It took {} microseconds to compute read_angles.",
+        //     elapsed_time.as_micros()
+        // );
+        // let new_now = Instant::now();
+        let _v = sim.correlations_random(1023).unwrap();
+        let elapsed_time = now.elapsed();
+        println!(
+            "It took {} microseconds to compute correlations_random.",
+            elapsed_time.as_micros()
         );
     }
 
-    #[test]
-    fn test_read_angles_random_ok() {
+    #[tokio::test]
+    async fn test_read_angles_random_ok() {
         let hw = HardwareBuilder::new().with_pulse_distance(1e-8).build();
         let mut sim = SimulatorBuilder::new()
             .with_role(Role::OneOfMany(Multiparty {
@@ -257,7 +306,7 @@ pub mod tests {
             .with_angles(vec![0, 32, 64, 96])
             .build();
         thread::sleep(Duration::from_millis(2));
-        assert!(sim.read_angles().is_ok());
+        assert!(sim.read_angles().await.is_ok());
         println!("SIMULATOR : {:?}", &sim);
     }
 }

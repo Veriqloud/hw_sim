@@ -26,7 +26,7 @@ impl<T: BytesGenerator + Clone> Actor<T> {
     async fn handle_message(&mut self, msg: ActorMessage) -> Result<(), Error> {
         match msg {
             ActorMessage::ReadAngles { reply_to } => {
-                let keys_results = self.simulator.read_angles().context(HardwareSnafu);
+                let keys_results = self.simulator.read_angles().await.context(HardwareSnafu);
 
                 let _ = reply_to.send({
                     match keys_results {
