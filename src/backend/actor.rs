@@ -7,8 +7,6 @@ use crate::ANGLE_PATH;
 
 use super::{
     errors::{self, Error, HardwareSnafu, IoSnafu, SerdeJsonSnafu},
-    role::Role,
-    simulation::VqSim,
     Angles, BytesGenerator,
 };
 
@@ -48,8 +46,8 @@ impl<T: BytesGenerator + Clone> Actor<T> {
                 position,
                 reply_to,
             } => {
-                let r = self.simulator.set_role(nb_parties, position).unwrap();
-                let _ = reply_to.send(Ok(r));
+                self.simulator.set_role(nb_parties, position).unwrap();
+                let _ = reply_to.send(Ok(()));
                 Ok(())
             }
             ActorMessage::StartAtGc {

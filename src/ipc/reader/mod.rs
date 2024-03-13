@@ -1,7 +1,5 @@
 pub mod errors;
 
-use std::sync::Arc;
-
 use snafu::ResultExt;
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader, BufWriter},

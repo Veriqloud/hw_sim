@@ -12,13 +12,13 @@ pub struct SimulatorBuilder {
     /// Total qubit detection efficiency
     pub eta: f64,
     /// Size of the physical FIFO, for realistic HardwareError, "Size" means number of bytes.
-    pub fifo_size: u64,
+    pub fifo_max_size: u64,
     /// Offset is taken care of automatically.
     /// Equivalent to Bob broadcasting his global counter in the real world.
     /// Probably not required ...
     pub global_counter: u64,
     pub hw: Hardware,
-    pub lfifo_initial: usize,
+    pub current_fifo_size: usize,
     pub modulator_state: ModulatorState,
     pub angles: Vec<u8>,
     pub now: Instant,
@@ -26,8 +26,6 @@ pub struct SimulatorBuilder {
     pub qb_err: f64,
     pub rng: Pcg64Mcg,
     pub role: Role,
-    /// in Idle Alice remembers this many global counters upon result signal from Bob
-    pub size_of_idle_fifo: u32,
     pub time_of_last_read: f64,
 }
 
@@ -47,9 +45,8 @@ impl SimulatorBuilder {
             time_of_last_read: self.time_of_last_read,
             global_counter: self.global_counter,
             modulator_state: self.modulator_state.to_owned(),
-            fifo_size: self.fifo_size,
-            size_of_idle_fifo: self.size_of_idle_fifo,
-            lfifo_initial: self.lfifo_initial,
+            fifo_max_size: self.fifo_max_size,
+            current_fifo_size: self.current_fifo_size,
             angles: self.angles.to_owned(),
         }
     }
@@ -104,13 +101,8 @@ impl SimulatorBuilder {
         self
     }
 
-    pub fn with_fifo_size(&mut self, fifo_size: u64) -> &mut Self {
-        self.fifo_size = fifo_size;
-        self
-    }
-
-    pub fn with_size_of_idle_fifo(&mut self, size_of_idle_fifo: u32) -> &mut Self {
-        self.size_of_idle_fifo = size_of_idle_fifo;
+    pub fn with_fifo_max_size(&mut self, fifo_max_size: u64) -> &mut Self {
+        self.fifo_max_size = fifo_max_size;
         self
     }
 }
@@ -119,17 +111,16 @@ impl Default for SimulatorBuilder {
     fn default() -> Self {
         SimulatorBuilder {
             eta: Default::default(),
-            fifo_size: 50_000_000,
+            fifo_max_size: 50_000_000,
             global_counter: Default::default(),
             hw: Default::default(),
-            lfifo_initial: 0,
+            current_fifo_size: 0,
             modulator_state: Default::default(),
             angles: Default::default(),
             now: Instant::now(),
             qb_err: Default::default(),
             rng: Pcg64Mcg::seed_from_u64(10),
             role: Default::default(),
-            size_of_idle_fifo: 1_000_000,
             time_of_last_read: Default::default(),
         }
     }
@@ -163,8 +154,7 @@ pub mod tests {
             .with_time_of_last_read(55.)
             .with_global_counter(99)
             .with_modulator_state(ModulatorState::Qkd)
-            .with_fifo_size(10_000)
-            .with_size_of_idle_fifo(5_000)
+            .with_fifo_max_size(10_000)
             .with_angles(vec![0, 32, 34, 96])
             .build();
 
@@ -179,9 +169,8 @@ pub mod tests {
                 time_of_last_read: 55.,
                 global_counter: 99,
                 modulator_state: ModulatorState::Qkd,
-                fifo_size: 10_000,
-                size_of_idle_fifo: 5_000,
-                lfifo_initial: 0,
+                fifo_max_size: 10_000,
+                current_fifo_size: 0,
                 angles: vec![0, 32, 34, 96],
             },
             sim

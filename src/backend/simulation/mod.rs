@@ -2,8 +2,6 @@ pub mod builder;
 pub mod errors;
 
 use async_trait::async_trait;
-use serde_json::Number;
-use tokio::time::timeout;
 
 use crate::backend::protocols::random::CorrelationsRandom;
 use crate::backend::role::{Multiparty, Role};
@@ -31,10 +29,8 @@ pub struct Simulator {
     pub(crate) modulator_state: ModulatorState,
     pub(crate) angles: Vec<u8>,
     /// Size of the physical FIFO, for realistic HardwareError, "Size" means number of bytes.
-    pub(crate) fifo_size: u64,
-    /// in Idle Alice remembers this many global counters upon result signal from Bob
-    pub(crate) size_of_idle_fifo: u32,
-    pub(crate) lfifo_initial: usize,
+    pub(crate) fifo_max_size: u64,
+    pub(crate) current_fifo_size: usize,
 }
 
 #[async_trait]
@@ -63,7 +59,7 @@ impl VqSim for Simulator {
     async fn read_angles(&mut self) -> Result<[u8; 1024], HardwareError> {
         match &self.modulator_state {
             ModulatorState::Idle => {
-                if self.lfifo_initial < 1024 {
+                if self.current_fifo_size < 1024 {
                     Err(HardwareError::Other {
                         reason: "Not enough bytes left in the fifo !".to_string(),
                     })
@@ -74,7 +70,7 @@ impl VqSim for Simulator {
                             reason: e.to_string(),
                         }
                     })?;
-                    self.lfifo_initial -= 1024;
+                    self.current_fifo_size -= 1024;
                     Ok(v.try_into().unwrap())
                 }
             }
@@ -85,17 +81,11 @@ impl VqSim for Simulator {
                 tracing::debug!("Last read time : {:#?}", self.time_of_last_read);
                 let l =
                     ((t / self.hw.pulse_distance - self.hw.gc_offset as f64) * self.eta) as usize;
-                println!("Amount of time passed since last read: {} ", t);
-                println!(
-                    " pulse distance: {}, gc_offset: {}, eta: {} ",
-                    self.hw.pulse_distance, self.hw.gc_offset, self.eta
-                );
-                println!("The Simulator is supposed to have generated : {} bytes", l);
 
-                let size = l + self.lfifo_initial;
-                tracing::debug!("Fifo size before generation: {}", self.lfifo_initial);
+                let size = l + self.current_fifo_size;
+                tracing::debug!("Fifo size before generation: {}", self.current_fifo_size);
                 tracing::debug!("Fifo size after generation: {size}");
-                if size as u64 > self.fifo_size {
+                if size as u64 > self.fifo_max_size {
                     return Err(HardwareError::FifoOverflow);
                 }
                 if size < 1024 {
@@ -103,13 +93,12 @@ impl VqSim for Simulator {
                     let t =
                         (n as f64 / self.eta + self.hw.gc_offset as f64) * self.hw.pulse_distance;
                     println!("Need to wait t = {} microsec to generate {} bytes", t, n);
-                    let _time = std::time::Duration::from_micros(t as u64);
                     let task = tokio::time::sleep(tokio::time::Duration::from_micros(t as u64));
 
                     let (_, res) = tokio::join!(task, self.generate_bytes()); // self.generate_bytes()).await;
                     match res {
                         Ok(v) => {
-                            self.lfifo_initial = 0;
+                            self.current_fifo_size = 0;
                             let v = v.try_into().unwrap();
                             return Ok(v);
                         }
@@ -126,7 +115,7 @@ impl VqSim for Simulator {
                         reason: e.to_string(),
                     }
                 })?;
-                self.lfifo_initial = size - 1024;
+                self.current_fifo_size = size - 1024;
                 Ok(v.try_into().unwrap())
             }
             _ => Err(HardwareError::ModulatorStateNotSupported),
@@ -179,15 +168,6 @@ impl Simulator {
     fn get_current_time_with_nanos(&self) -> f64 {
         let duration = self.now.elapsed();
         duration.as_secs() as f64 + duration.subsec_nanos() as f64 * 1e-9
-    }
-    /// get the number of values in the fifo between time t and at_glober_counter. Return None if this value is negative.
-    fn get_l(&self, t: f64, at_global_counter: u64) -> Option<u32> {
-        match ((t / self.hw.pulse_distance) as u64).checked_sub(at_global_counter) {
-            Some(v) => v
-                .checked_sub(self.hw.gc_offset)
-                .map(|v| (v as f64 * self.eta) as u32),
-            None => None,
-        }
     }
     /// Restart RNG with a new seed.
     fn reset_seed(&mut self, seed: u64) {
@@ -255,15 +235,14 @@ pub mod tests {
                 role: Default::default(),
                 rng: Pcg64Mcg::seed_from_u64(10),
                 eta: 0.0,
-                fifo_size: 50_000_000,
-                size_of_idle_fifo: 1_000_000,
+                fifo_max_size: 50_000_000,
                 now,
                 time_of_last_read: 0.0,
                 global_counter: 0,
                 qb_err: 0.0,
                 modulator_state: Default::default(),
                 angles: Default::default(),
-                lfifo_initial: 0,
+                current_fifo_size: 0,
             },
             sim
         )
