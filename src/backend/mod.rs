@@ -3,7 +3,7 @@ pub mod errors;
 pub mod protocols;
 pub mod role;
 pub mod simulation;
-
+pub mod tests;
 
 use serde::{Deserialize, Serialize};
 
