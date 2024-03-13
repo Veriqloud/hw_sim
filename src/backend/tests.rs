@@ -1,3 +1,5 @@
+#![allow(unused_imports)]
+
 use core::time;
 use std::{thread, time::Instant};
 
@@ -14,7 +16,7 @@ use crate::backend::{
 };
 
 #[tokio::test]
-async fn correlations_random() {
+async fn generate_bytes() {
     // test correctness of consecutive calls to correlations_random
     let hw = HardwareBuilder::new().with_pulse_distance(1e-8).build();
     let now = Instant::now();
@@ -47,15 +49,15 @@ async fn correlations_random() {
 
     let va1 = sim_a.read_angles().await.unwrap();
     let vb1 = sim_b.read_angles().await.unwrap();
-    assert_eq!(&va1, &vb1);
+    assert_eq!(va1, vb1);
 
     let va2 = sim_a.read_angles().await.unwrap();
     let vb2 = sim_b.read_angles().await.unwrap();
-    assert_eq!(&va2, &vb2);
+    assert_eq!(va2, vb2);
 }
 
 #[tokio::test]
-async fn qkd_statistics_using_modulator_state_random() {
+async fn qkd_statistics_ok() {
     // Test the following statistics for QKD simulation between two parties:
     //
     // 1. perfect correlation of the result bit
