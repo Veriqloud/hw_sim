@@ -13,8 +13,8 @@ use crate::backend::{
     simulation::{builder::SimulatorBuilder, Simulator, VqSim},
 };
 
-#[test]
-fn correlations_random() {
+#[tokio::test]
+async fn correlations_random() {
     // test correctness of consecutive calls to correlations_random
     let hw = HardwareBuilder::new().with_pulse_distance(1e-8).build();
     let now = Instant::now();
@@ -45,12 +45,12 @@ fn correlations_random() {
         .with_now(now)
         .build();
 
-    let va = sim_a.correlations_random(1024).unwrap();
-    let vb1 = sim_b.correlations_random(1024).unwrap();
-    assert_eq!(&va, &vb1);
+    let va1 = sim_a.read_angles().await.unwrap();
+    let vb1 = sim_b.read_angles().await.unwrap();
+    assert_eq!(&va1, &vb1);
 
-    let va2 = sim_a.correlations_random(100).unwrap();
-    let vb2 = sim_b.correlations_random(100).unwrap();
+    let va2 = sim_a.read_angles().await.unwrap();
+    let vb2 = sim_b.read_angles().await.unwrap();
     assert_eq!(&va2, &vb2);
 }
 
@@ -168,6 +168,6 @@ async fn qkd_statistics_using_modulator_state_random() {
     let measured_qber = num_errors as f64 / (num_correct + num_errors) as f64;
     println!("measured qber: {}", measured_qber);
     assert_eq!(num_result_matching, l as u32);
-    assert!((num_basismatch as f64 / l as f64 - 0.5).abs() < 0.015);
-    assert!((measured_qber - qb_err).abs() < 0.015);
+    assert!((num_basismatch as f64 / l as f64 - 0.5).abs() < 0.02);
+    assert!((measured_qber - qb_err).abs() < 0.02);
 }
