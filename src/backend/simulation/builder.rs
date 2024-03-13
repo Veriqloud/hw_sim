@@ -146,7 +146,7 @@ pub mod tests {
             .build();
         let sim = SimulatorBuilder::new()
             .with_hardware(hw.clone())
-            .with_role(Role::Receiver)
+            .with_role(Role::default())
             .with_rng(Pcg64Mcg::seed_from_u64(5))
             .with_eta(13.)
             .with_qb_err(42.)
@@ -161,7 +161,10 @@ pub mod tests {
         assert_eq!(
             Simulator {
                 hw,
-                role: Role::Receiver,
+                role: Role::OneOfMany(crate::backend::role::Multiparty {
+                    number_of_parties: 1,
+                    position: 0
+                }),
                 rng: Pcg64Mcg::seed_from_u64(5),
                 eta: 13.,
                 qb_err: 42.,
