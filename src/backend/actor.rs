@@ -7,6 +7,8 @@ use crate::ANGLE_PATH;
 
 use super::{
     errors::{self, Error, HardwareSnafu, IoSnafu, SerdeJsonSnafu},
+    role::Role,
+    simulation::VqSim,
     Angles, BytesGenerator,
 };
 
@@ -39,6 +41,15 @@ impl<T: BytesGenerator + Clone> Actor<T> {
             ActorMessage::GetGlobalCounter { reply_to } => {
                 let gc = self.simulator.get_global_counter();
                 let _ = reply_to.send(gc);
+                Ok(())
+            }
+            ActorMessage::SetRole {
+                nb_parties,
+                position,
+                reply_to,
+            } => {
+                let r = self.simulator.set_role(nb_parties, position).unwrap();
+                let _ = reply_to.send(Ok(r));
                 Ok(())
             }
             ActorMessage::StartAtGc {
@@ -110,6 +121,11 @@ pub enum ActorMessage {
     GetGlobalCounter {
         reply_to: oneshot::Sender<Option<u64>>,
     },
+    SetRole {
+        nb_parties: u32,
+        position: u32,
+        reply_to: oneshot::Sender<Result<(), Error>>,
+    },
 }
 
 pub async fn run_simulator_actor<T: BytesGenerator + Clone>(mut actor: Actor<T>) {
@@ -171,6 +187,17 @@ impl<T: BytesGenerator + Clone> ActorHandle<T> {
         let (send, recv) = oneshot::channel();
         let message = ActorMessage::SetAngles {
             angles,
+            reply_to: send,
+        };
+        let _ = self.sender.send(message).await;
+        recv.await.context(errors::ActorDiedSnafu)?
+    }
+
+    pub async fn set_role(&self, nb_parties: u32, position: u32) -> Result<(), Error> {
+        let (send, recv) = oneshot::channel();
+        let message = ActorMessage::SetRole {
+            nb_parties,
+            position,
             reply_to: send,
         };
         let _ = self.sender.send(message).await;

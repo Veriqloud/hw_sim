@@ -2,6 +2,7 @@ pub mod builder;
 pub mod errors;
 
 use async_trait::async_trait;
+use serde_json::Number;
 use tokio::time::timeout;
 
 use crate::backend::protocols::random::CorrelationsRandom;
@@ -44,6 +45,7 @@ pub trait VqSim {
     async fn generate_bytes(&mut self) -> Result<Vec<u8>, HardwareError>;
     fn set_angles(&mut self, angles: [u8; 8]) -> Result<(), HardwareError>;
     fn start_at_gc(&mut self, gc: u64) -> Result<(), HardwareError>;
+    fn set_role(&mut self, nb_parties: u32, position: u32) -> Result<(), HardwareError>;
 }
 
 #[async_trait]
@@ -142,6 +144,7 @@ impl VqSim for Simulator {
     }
 
     fn start_at_gc(&mut self, gc: u64) -> Result<(), HardwareError> {
+        self.reset_seed(gc);
         self.set_gc(gc);
         self.reset_time();
         self.modulator_state = ModulatorState::Random;
@@ -161,32 +164,17 @@ impl VqSim for Simulator {
             }
         })
     }
-}
 
-impl Simulator {
-    /// Set the global counter of the simulator
-    pub fn set_gc(&mut self, gc: u64) {
-        self.global_counter = gc;
-    }
-    /// Update the Role of the simulator
-    pub fn set_role(&mut self, nb_parties: u32, position: u32) {
+    fn set_role(&mut self, nb_parties: u32, position: u32) -> Result<(), HardwareError> {
         self.role = Role::OneOfMany(Multiparty {
             number_of_parties: nb_parties,
             position,
         });
+        Ok(())
     }
-    /// Update the value of eta
-    pub fn set_eta(&mut self, eta: f64) {
-        self.eta = eta;
-    }
-    /// Update the value of qber
-    pub fn set_qber(&mut self, qber: f64) {
-        self.qb_err = qber;
-    }
-    /// Reset time to now
-    pub fn reset_time(&mut self) {
-        self.now = Instant::now();
-    }
+}
+
+impl Simulator {
     /// return time elapsed since start in seconds at nanoseconds.
     fn get_current_time_with_nanos(&self) -> f64 {
         let duration = self.now.elapsed();
@@ -205,6 +193,30 @@ impl Simulator {
     fn reset_seed(&mut self, seed: u64) {
         self.rng = Pcg64Mcg::seed_from_u64(seed);
     }
+    /// Reset time to now
+    pub fn reset_time(&mut self) {
+        self.now = Instant::now();
+    }
+    /// Update the value of eta
+    pub fn set_eta(&mut self, eta: f64) {
+        self.eta = eta;
+    }
+    /// Set the global counter of the simulator
+    pub fn set_gc(&mut self, gc: u64) {
+        self.global_counter = gc;
+        self.reset_seed(gc);
+    }
+    /// Update the value of qber
+    pub fn set_qber(&mut self, qber: f64) {
+        self.qb_err = qber;
+    }
+    /// Update the Role of the simulator
+    pub fn set_role(&mut self, nb_parties: u32, position: u32) {
+        self.role = Role::OneOfMany(Multiparty {
+            number_of_parties: nb_parties,
+            position,
+        });
+    }
 }
 
 #[cfg(test)]
@@ -213,8 +225,8 @@ pub mod tests {
     use crate::backend::role::Multiparty;
     use crate::backend::role::Role;
     use crate::backend::simulation::builder::SimulatorBuilder;
-    use crate::backend::simulation::VqSim;
     use crate::backend::simulation::Simulator;
+    use crate::backend::simulation::VqSim;
     use libhardware::builder::HardwareBuilder;
     use rand::SeedableRng;
     use rand_pcg::Pcg64Mcg;

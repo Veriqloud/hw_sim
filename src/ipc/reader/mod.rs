@@ -1,5 +1,7 @@
 pub mod errors;
 
+use std::sync::Arc;
+
 use snafu::ResultExt;
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader, BufWriter},
@@ -126,6 +128,29 @@ impl<G: BytesGenerator> IPCReader<G> {
                     }
                     UsbCommand::KO => {
                         tracing::error!("Message not expected !");
+                    }
+                    UsbCommand::SetRole {
+                        number_of_parties,
+                        position,
+                    } => {
+                        match self
+                            .backend_handle
+                            .set_role(number_of_parties, position)
+                            .await
+                        {
+                            Ok(_) => {
+                                tracing::debug!(
+                                    "Successfully set role with nb_of_parties {} and position {}",
+                                    number_of_parties,
+                                    position
+                                );
+                                match writer.write(&UsbCommand::Ok.as_bytes()).await {
+                                    Ok(_) => tracing::debug!("Send OK"),
+                                    Err(e) => tracing::error!("{}", e),
+                                }
+                            }
+                            Err(e) => tracing::error!("{}", e),
+                        }
                     }
                 },
                 Err(e) => tracing::error!("{}", e),
