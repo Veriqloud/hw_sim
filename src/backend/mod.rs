@@ -1,4 +1,5 @@
 pub mod actor;
+pub mod config;
 pub mod errors;
 pub mod protocols;
 pub mod role;
