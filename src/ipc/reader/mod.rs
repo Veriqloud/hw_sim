@@ -29,7 +29,7 @@ impl<G: BytesGenerator> IPCReader<G> {
         let reader = BufReader::new(read_half);
         let mut writer = BufWriter::new(write_half);
         let mut reader = reader.lines();
-        tracing::info!("IPC running");
+        tracing::info!("New IPC server running");
         if let Some(line) = reader.next_line().await.unwrap() {
             match serde_json::from_str(&line).context(errors::SerdeJsonSnafu) {
                 Ok(msg) => match msg {

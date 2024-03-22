@@ -3,11 +3,9 @@ use std::{fs::OpenOptions, io::Write, marker::PhantomData};
 use snafu::ResultExt;
 use tokio::sync::{mpsc, oneshot};
 
-use crate::ANGLE_PATH;
-
 use super::{
     errors::{self, Error, HardwareSnafu, IoSnafu, SerdeJsonSnafu},
-    Angles, BytesGenerator,
+    Angles, BytesGenerator, ANGLE_PATH,
 };
 
 pub struct Actor<T: BytesGenerator + Clone> {

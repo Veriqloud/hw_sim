@@ -4,22 +4,16 @@ pub mod config;
 pub mod errors;
 pub mod ipc;
 
-use backend::{role::Role, simulation::builder::SimulatorBuilder};
+use backend::simulation::builder::SimulatorBuilder;
 use clap::Parser;
-use errors::{IOSnafu, UnixStreamSnafu};
-use libhardware::builder::HardwareBuilder;
+use errors::IOSnafu;
 use snafu::prelude::*;
-use std::{fs::OpenOptions, io::Read, path::Path, time::Instant};
-use tracing::{info, trace_span};
+use std::path::Path;
+use tracing::trace_span;
 use tracing_subscriber::fmt::writer::MakeWriterExt;
 use uuid::Uuid;
 
-use crate::{
-    backend::{Angles, ANGLE_PATH},
-    config::Configuration,
-    errors::SerdeJsonSnafu,
-    ipc::NODE2HW,
-};
+use crate::config::Configuration;
 
 #[tokio::main]
 async fn main() {
@@ -77,6 +71,8 @@ async fn main() {
     let listener =
         tokio::net::UnixListener::bind(configuration.ipc_config.unix_socket_path).unwrap();
     // .context(UnixStreamSnafu)?;
+    tracing::info!("Listining to {:?}", listener.local_addr());
+
     let sim = SimulatorBuilder::from_config(configuration.backend_config);
     tracing::debug!("Simulator time: {:#?} ", sim.now);
     tracing::debug!("Simulator modulator: {:?}", sim.role);
@@ -84,6 +80,10 @@ async fn main() {
     loop {
         match listener.accept().await {
             Ok((stream, _)) => {
+                tracing::info!(
+                    "Incoming stream from peer address {:?}",
+                    &stream.peer_addr().unwrap()
+                );
                 let ipc = ipc::reader::IPCReader::new(stream, simu_handle.clone()).await;
                 ipc.start().await;
             }
