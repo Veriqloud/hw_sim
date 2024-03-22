@@ -1,9 +1,12 @@
+use libhardware::builder::HardwareBuilder;
 use libhardware::Hardware;
 use libhardware::ModulatorState;
 use rand::SeedableRng;
 use rand_pcg::Pcg64Mcg;
 use std::time::Instant;
 
+use crate::backend::config::Configuration;
+use crate::backend::role::Multiparty;
 use crate::backend::role::Role;
 
 use super::Simulator;
@@ -32,6 +35,23 @@ pub struct SimulatorBuilder {
 impl SimulatorBuilder {
     pub fn new() -> SimulatorBuilder {
         SimulatorBuilder::default()
+    }
+
+    pub fn from_config(conf: Configuration) -> Simulator {
+        let hw = HardwareBuilder::new()
+            .with_pulse_distance(conf.pulse_distance)
+            .build();
+        SimulatorBuilder::default()
+            .with_hardware(hw)
+            .with_angles(conf.angles.to_owned())
+            .with_role(Role::OneOfMany(Multiparty {
+                number_of_parties: conf.number_of_parties,
+                position: conf.position,
+            }))
+            .with_qb_err(conf.qberr)
+            .with_eta(conf.eta)
+            .with_rng(Pcg64Mcg::seed_from_u64(conf.seed))
+            .build()
     }
 
     pub fn build(&self) -> Simulator {

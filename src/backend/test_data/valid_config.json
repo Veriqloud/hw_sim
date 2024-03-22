@@ -4,5 +4,6 @@
     "position": 1,
     "seed": 33,
     "eta": 0.1,
-    "qberr": 0.02
+    "qberr": 0.02,
+    "pulse_distance": 1e-8
 }

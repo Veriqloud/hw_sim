@@ -8,6 +8,7 @@ pub struct Configuration {
     pub seed: u64,
     pub eta: f64,
     pub qberr: f64,
+    pub pulse_distance: f64,
 }
 
 impl Default for Configuration {
@@ -19,6 +20,7 @@ impl Default for Configuration {
             seed: 42,
             eta: 0.,
             qberr: 0.,
+            pulse_distance: 1e-8,
         }
     }
 }
@@ -42,7 +44,8 @@ mod tests {
                 position: 1,
                 seed: 33,
                 eta: 0.1,
-                qberr: 0.02
+                qberr: 0.02,
+                pulse_distance: 1e-8
             },
             config_input
         );

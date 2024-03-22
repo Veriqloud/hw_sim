@@ -1,53 +1,83 @@
 pub mod backend;
+pub mod cli_args;
 pub mod config;
 pub mod errors;
 pub mod ipc;
 
 use backend::{role::Role, simulation::builder::SimulatorBuilder};
+use clap::Parser;
 use errors::{IOSnafu, UnixStreamSnafu};
 use libhardware::builder::HardwareBuilder;
 use snafu::prelude::*;
 use std::{fs::OpenOptions, io::Read, path::Path, time::Instant};
+use tracing::{info, trace_span};
+use tracing_subscriber::fmt::writer::MakeWriterExt;
+use uuid::Uuid;
 
 use crate::{
     backend::{Angles, ANGLE_PATH},
+    config::Configuration,
     errors::SerdeJsonSnafu,
     ipc::NODE2HW,
 };
 
 #[tokio::main]
-async fn main() -> Result<(), errors::Error> {
-    tracing_subscriber::fmt()
-        .with_max_level(tracing::Level::DEBUG)
-        .init();
+async fn main() {
+    //}-> Result<(), errors::Error> {
+    let span = trace_span!("main");
 
-    let mut f = OpenOptions::new()
-        .read(true)
-        .open(ANGLE_PATH)
-        .context(IOSnafu)?;
-    let mut angles = String::new();
-    f.read_to_string(&mut angles).context(IOSnafu)?;
-    println!("ANGLES : {:?}", &angles);
-    let angles: Angles = serde_json::from_str(&angles).context(SerdeJsonSnafu)?;
+    let args = cli_args::CliArgs::parse();
 
-    let path = Path::new(NODE2HW);
-    if path.exists() {
-        std::fs::remove_file(path).context(IOSnafu)?;
+    let configuration: Configuration = if let Some(path) = args.conf.config_path {
+        match Configuration::new(path) {
+            Ok(c) => c,
+            Err(e) => {
+                span.in_scope(|| tracing::error!("{}", e));
+                return;
+            }
+        }
+    } else {
+        let mut c = Configuration::default();
+
+        if let Some(p) = args.conf.ipc_socket {
+            c.ipc_config.unix_socket_path = p;
+        }
+
+        c
+    };
+
+    match TryInto::<tracing_subscriber::filter::LevelFilter>::try_into(configuration.log_level) {
+        Ok(log_level) => {
+            // Helps identify simulator sessions, and separate logs when multiples simulators are running on a single machine (local mode, for development)
+            let log_id = Uuid::new_v4();
+            let logfile = tracing_appender::rolling::daily(
+                args.logs_location,
+                format!("simu_logs_{log_id}.log"),
+            );
+            let stdout = std::io::stdout.with_max_level(log_level.into_level().unwrap());
+            tracing_subscriber::fmt()
+                .with_writer(stdout.and(logfile))
+                .init();
+        }
+        Err(e) => {
+            println!("Could not initialize logger because {e}");
+            return;
+        }
     }
-    let listener = tokio::net::UnixListener::bind(path).context(UnixStreamSnafu)?;
-    let hw = HardwareBuilder::new().with_pulse_distance(1e-8).build();
-    let sim = SimulatorBuilder::new()
-        .with_role(Role::OneOfMany(backend::role::Multiparty {
-            number_of_parties: 3,
-            position: 0,
-        }))
-        .with_eta(1e-2)
-        .with_qb_err(0 as f64)
-        .with_hardware(hw)
-        .with_angles(angles.angles.to_owned())
-        .with_modulator_state(libhardware::ModulatorState::Random)
-        .with_now(Instant::now())
-        .build();
+
+    tracing::info!(
+        "Simulator with configuration : {:?}",
+        &configuration.backend_config
+    );
+
+    let path = Path::new(&configuration.ipc_config.unix_socket_path);
+    if path.exists() {
+        std::fs::remove_file(path).context(IOSnafu).unwrap();
+    }
+    let listener =
+        tokio::net::UnixListener::bind(configuration.ipc_config.unix_socket_path).unwrap();
+    // .context(UnixStreamSnafu)?;
+    let sim = SimulatorBuilder::from_config(configuration.backend_config);
     tracing::debug!("Simulator time: {:#?} ", sim.now);
     tracing::debug!("Simulator modulator: {:?}", sim.role);
     let simu_handle = backend::actor::ActorHandle::new(sim);
