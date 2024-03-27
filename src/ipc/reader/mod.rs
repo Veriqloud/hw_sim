@@ -5,6 +5,7 @@ use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader, BufWriter},
     net::UnixStream,
 };
+use tracing_subscriber::fmt::writer;
 
 use crate::backend::BytesGenerator;
 
@@ -30,7 +31,22 @@ impl<G: BytesGenerator> IPCReader<G> {
         let mut writer = BufWriter::new(write_half);
         let mut reader = reader.lines();
         tracing::info!("New IPC server running");
-        if let Some(line) = reader.next_line().await.unwrap() {
+        loop {
+            let line_res = reader.next_line().await;
+
+            if line_res.is_err() {
+                tracing::error!("{}", line_res.unwrap_err());
+                return;
+            }
+            let line_res = line_res.unwrap();
+
+            if line_res.is_none() {
+                tracing::warn!("Read an empty line on the unix socket");
+                return;
+            }
+
+            let line = line_res.unwrap();
+
             match serde_json::from_str(&line).context(errors::SerdeJsonSnafu) {
                 Ok(msg) => match msg {
                     UsbCommand::Ok => {
@@ -38,7 +54,7 @@ impl<G: BytesGenerator> IPCReader<G> {
                     }
                     UsbCommand::FifoIdle => match self.backend_handle.fifo_idle().await {
                         Ok(_) => {
-                            tracing::debug!("Sucessfully turn the Simulator into Idle.");
+                            tracing::debug!("Successfully turn the Simulator into Idle.");
                             writer.write_all(&UsbCommand::Ok.as_bytes()).await.unwrap();
                         }
                         Err(e) => {
@@ -50,8 +66,12 @@ impl<G: BytesGenerator> IPCReader<G> {
                         // Read expected for Global_counter value (u64)
                         match self.backend_handle.start_at_gc(gc).await {
                             Ok(_) => {
-                                tracing::debug!("Successfully started at GC = {}", gc);
+                                tracing::info!("Successfully started at GC = {}", gc);
+                                tracing::info!("Writing {:?}", &UsbCommand::Ok.as_bytes());
                                 writer.write_all(&UsbCommand::Ok.as_bytes()).await.unwrap();
+                                tracing::info!("Write done, flush next");
+                                writer.flush().await.unwrap();
+                                tracing::info!("Flush done");
                             }
                             Err(e) => {
                                 tracing::error!("{}", e);
@@ -60,13 +80,14 @@ impl<G: BytesGenerator> IPCReader<G> {
                         }
                     }
                     UsbCommand::ReadAngles => {
+                        tracing::info!("Processing ReadAngle request...");
                         match self.backend_handle.read_angles().await {
                             Ok(data) => {
-                                tracing::debug!("successfully generated {:?} bytes", data.len());
+                                tracing::info!("successfully generated {:?} bytes", data.len());
                                 match writer.write_all(&data).await {
                                     Ok(_) => {
                                         writer.flush().await.unwrap();
-                                        tracing::debug!("successfully inserted bytes");
+                                        tracing::info!("successfully inserted bytes");
                                     }
                                     Err(e) => {
                                         tracing::error!("{}", e)
@@ -154,6 +175,7 @@ impl<G: BytesGenerator> IPCReader<G> {
                 },
                 Err(e) => tracing::error!("{}", e),
             };
+            writer.flush().await.unwrap();
         }
     }
 }

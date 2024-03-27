@@ -57,6 +57,7 @@ impl VqSim for Simulator {
     /// - bit 1 is the basis
     /// - bit 2 is the state
     async fn read_angles(&mut self) -> Result<[u8; 1024], HardwareError> {
+        tracing::info!("HW Reading Angles");
         match &self.modulator_state {
             ModulatorState::Idle => {
                 if self.current_fifo_size < 1024 {
@@ -65,7 +66,7 @@ impl VqSim for Simulator {
                     })
                 } else {
                     let v = self.correlations_random(1024).map_err(|e| {
-                        println!("ERROR : {:?}", e.to_string());
+                        tracing::error!("ERROR : {:?}", e.to_string());
                         HardwareError::Other {
                             reason: e.to_string(),
                         }
@@ -76,15 +77,15 @@ impl VqSim for Simulator {
             }
             ModulatorState::Random => {
                 let current_time = self.get_current_time_with_nanos();
-                tracing::debug!("Current time : {:#?}", &current_time);
+                tracing::info!("Current time : {:#?}", &current_time);
                 let t = current_time - self.time_of_last_read;
-                tracing::debug!("Last read time : {:#?}", self.time_of_last_read);
+                tracing::info!("Last read time : {:#?}", self.time_of_last_read);
                 let l =
                     ((t / self.hw.pulse_distance - self.hw.gc_offset as f64) * self.eta) as usize;
 
                 let size = l + self.current_fifo_size;
-                tracing::debug!("Fifo size before generation: {}", self.current_fifo_size);
-                tracing::debug!("Fifo size after generation: {size}");
+                tracing::info!("Fifo size before generation: {}", self.current_fifo_size);
+                tracing::info!("Fifo size after generation: {size}");
                 if size as u64 > self.fifo_max_size {
                     return Err(HardwareError::FifoOverflow);
                 }

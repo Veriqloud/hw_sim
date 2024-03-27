@@ -40,18 +40,30 @@ async fn main() {
         c
     };
 
+    let config_string = serde_json::to_string(&configuration).unwrap();
+    tracing::info!(
+        "Running with configuration: {}",
+        serde_json::to_string_pretty(&config_string).unwrap()
+    );
+
     match TryInto::<tracing_subscriber::filter::LevelFilter>::try_into(configuration.log_level) {
         Ok(log_level) => {
             // Helps identify simulator sessions, and separate logs when multiples simulators are running on a single machine (local mode, for development)
             let log_id = Uuid::new_v4();
             let logfile = tracing_appender::rolling::daily(
-                args.logs_location,
+                &args.logs_location,
                 format!("simu_logs_{log_id}.log"),
             );
             let stdout = std::io::stdout.with_max_level(log_level.into_level().unwrap());
             tracing_subscriber::fmt()
                 .with_writer(stdout.and(logfile))
                 .init();
+            tracing::info!("log_level: {:?}", log_level);
+
+            tracing::info!(
+                "log file name: {}",
+                format!("{}/simu_logs_{}", args.logs_location, log_id)
+            );
         }
         Err(e) => {
             println!("Could not initialize logger because {e}");
@@ -59,6 +71,8 @@ async fn main() {
         }
     }
 
+    tracing::debug!("Debug test");
+    tracing::error!("Error test");
     tracing::info!(
         "Simulator with configuration : {:?}",
         &configuration.backend_config
@@ -75,7 +89,7 @@ async fn main() {
 
     let sim = SimulatorBuilder::from_config(configuration.backend_config);
     tracing::debug!("Simulator time: {:#?} ", sim.now);
-    tracing::debug!("Simulator modulator: {:?}", sim.role);
+    tracing::info!("Simulator modulator: {:?}", sim.role);
     let simu_handle = backend::actor::ActorHandle::new(sim);
     loop {
         match listener.accept().await {
