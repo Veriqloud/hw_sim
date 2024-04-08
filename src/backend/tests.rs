@@ -5,14 +5,17 @@ use std::{thread, time::Instant};
 
 use itertools::izip;
 
-use libhardware::{builder::HardwareBuilder, ModulatorState};
 use rand::SeedableRng;
 use rand_pcg::Pcg64Mcg;
 
 use crate::backend::{
     protocols::random::CorrelationsRandom,
     role::{Multiparty, Role},
-    simulation::{builder::SimulatorBuilder, Simulator, VqSim},
+    simulation::{
+        builder::SimulatorBuilder,
+        hardware::{builder::HardwareBuilder, modulator_state::ModulatorState},
+        Simulator, VqSim,
+    },
 };
 
 #[tokio::test]

@@ -2,10 +2,9 @@ pub mod errors;
 
 use snafu::ResultExt;
 use tokio::{
-    io::{AsyncBufReadExt, AsyncWriteExt, BufReader, BufWriter},
+    io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
     net::UnixStream,
 };
-use tracing_subscriber::fmt::writer;
 
 use crate::backend::BytesGenerator;
 
@@ -55,11 +54,11 @@ impl<G: BytesGenerator> IPCReader<G> {
                     UsbCommand::FifoIdle => match self.backend_handle.fifo_idle().await {
                         Ok(_) => {
                             tracing::info!("Successfully turn the Simulator into Idle.");
-                            writer.write(&UsbCommand::Ok.as_bytes()).await.unwrap();
+                            writer.write_all(&UsbCommand::Ok.as_bytes()).await.unwrap();
                         }
                         Err(e) => {
                             tracing::error!("{}", e);
-                            writer.write(&UsbCommand::KO.as_bytes()).await.unwrap();
+                            writer.write_all(&UsbCommand::KO.as_bytes()).await.unwrap();
                         }
                     },
                     UsbCommand::StartAtGc { gc } => {

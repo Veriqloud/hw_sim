@@ -15,7 +15,7 @@ pub enum Error {
     },
     #[snafu(display("Hardware error : {}", source))]
     Hardware {
-        source: libhardware::errors::HardwareError,
+        source: crate::backend::simulation::hardware::errors::HardwareError,
     },
     #[snafu(display("IO Error : {}", source))]
     Io { source: std::io::Error },

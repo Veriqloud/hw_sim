@@ -1,6 +1,3 @@
-use libhardware::builder::HardwareBuilder;
-use libhardware::Hardware;
-use libhardware::ModulatorState;
 use rand::SeedableRng;
 use rand_pcg::Pcg64Mcg;
 use std::time::Instant;
@@ -9,6 +6,9 @@ use crate::backend::config::Configuration;
 use crate::backend::role::Multiparty;
 use crate::backend::role::Role;
 
+use super::hardware::builder::HardwareBuilder;
+use super::hardware::modulator_state::ModulatorState;
+use super::hardware::Hardware;
 use super::Simulator;
 
 pub struct SimulatorBuilder {
@@ -150,9 +150,9 @@ impl Default for SimulatorBuilder {
 pub mod tests {
     use crate::backend::role::Role;
     use crate::backend::simulation::builder::SimulatorBuilder;
+    use crate::backend::simulation::hardware::builder::HardwareBuilder;
+    use crate::backend::simulation::hardware::modulator_state::ModulatorState;
     use crate::backend::simulation::Simulator;
-    use libhardware::builder::HardwareBuilder;
-    use libhardware::ModulatorState;
     use rand::SeedableRng;
     use rand_pcg::Pcg64Mcg;
     use std::time::Instant;
@@ -173,7 +173,7 @@ pub mod tests {
             .with_now(now)
             .with_time_of_last_read(55.)
             .with_global_counter(99)
-            .with_modulator_state(ModulatorState::Qkd)
+            .with_modulator_state(ModulatorState::Random)
             .with_fifo_max_size(10_000)
             .with_angles(vec![0, 32, 34, 96])
             .build();
@@ -191,7 +191,7 @@ pub mod tests {
                 now,
                 time_of_last_read: 55.,
                 global_counter: 99,
-                modulator_state: ModulatorState::Qkd,
+                modulator_state: ModulatorState::Random,
                 fifo_max_size: 10_000,
                 current_fifo_size: 0,
                 angles: vec![0, 32, 34, 96],

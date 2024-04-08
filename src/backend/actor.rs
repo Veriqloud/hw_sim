@@ -1,11 +1,11 @@
-use std::{fs::OpenOptions, io::Write, marker::PhantomData};
+use std::marker::PhantomData;
 
 use snafu::ResultExt;
 use tokio::sync::{mpsc, oneshot};
 
 use super::{
-    errors::{self, Error, HardwareSnafu, IoSnafu, SerdeJsonSnafu},
-    Angles, BytesGenerator, ANGLE_PATH,
+    errors::{self, Error, HardwareSnafu},
+    BytesGenerator,
 };
 
 pub struct Actor<T: BytesGenerator + Clone> {
@@ -76,25 +76,7 @@ impl<T: BytesGenerator + Clone> Actor<T> {
                 Ok(())
             }
             ActorMessage::SetAngles { angles, reply_to } => {
-                let _ = reply_to.send({
-                    match self.simulator.set_angles(angles).context(HardwareSnafu) {
-                        Ok(v) => {
-                            // let mut f = OpenOptions::new()
-                            //     .write(true)
-                            //     .open(ANGLE_PATH)
-                            //     .context(IoSnafu)?;
-                            // let angles = Angles {
-                            //     angles: angles.to_vec(),
-                            // };
-                            // let angles_str =
-                            //     serde_json::to_string(&angles).context(SerdeJsonSnafu)?;
-                            // // f.write_fmt(&angles_str.into()).context(IoSnafu)?;
-                            // f.write_all(&angles_str.into_bytes()).context(IoSnafu)?;
-                            Ok(v)
-                        }
-                        Err(e) => Err(e),
-                    }
-                });
+                let _ = reply_to.send(self.simulator.set_angles(angles).context(HardwareSnafu));
                 Ok(())
             }
         }

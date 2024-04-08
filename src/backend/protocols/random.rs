@@ -1,7 +1,7 @@
 use crate::backend::protocols::errors::ProtocolError;
 use crate::backend::role::Role;
+use crate::backend::simulation::hardware::modulator_state::ModulatorState;
 use crate::backend::simulation::Simulator;
-use libhardware::ModulatorState;
 //use itertools::izip;
 use rand::RngCore;
 use std::f32::consts::PI;
@@ -28,12 +28,12 @@ impl CorrelationsRandom for Simulator {
 
     fn correlations_random(&mut self, l: usize) -> Result<Vec<u8>, ProtocolError> {
         // number of players n and my id k
-        let n;
-        let k;
+        let number_parties;
+        let position;
         match &self.role {
             Role::OneOfMany(m) => {
-                n = m.number_of_parties;
-                k = m.position;
+                number_parties = m.number_of_parties;
+                position = m.position;
             }
             _ => return Err(ProtocolError::Role {
                 reason:
@@ -80,7 +80,7 @@ impl CorrelationsRandom for Simulator {
 
         for _ in 0..l / cr_constants::BATCH + 1 {
             b_parties.clear();
-            for _ in 0..n {
+            for _ in 0..number_parties {
                 let mut b = [0u8; 2 * cr_constants::BATCH];
                 self.rng.fill_bytes(&mut b);
                 let b = unsafe {
@@ -130,7 +130,7 @@ impl CorrelationsRandom for Simulator {
                 //) {
                 // draw n angles
                 let mut a: u32 = 0;
-                (0..(n as usize)).for_each(|j| {
+                (0..(number_parties as usize)).for_each(|j| {
                     let index = (b_parties[j][i] % num_angles) as usize;
                     a += angles[index] as u32;
                 });
@@ -146,7 +146,7 @@ impl CorrelationsRandom for Simulator {
                     result ^= 0b1
                 };
 
-                let index = (b_parties[k as usize][i] % num_angles) as usize;
+                let index = (b_parties[position as usize][i] % num_angles) as usize;
                 output[i] = angles[index] << 1;
                 output[i] |= result;
             }

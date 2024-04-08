@@ -1,15 +1,18 @@
 pub mod builder;
 pub mod errors;
+pub mod hardware;
 
 use async_trait::async_trait;
 
 use crate::backend::protocols::random::CorrelationsRandom;
 use crate::backend::role::{Multiparty, Role};
-use libhardware::errors::HardwareError;
-use libhardware::{Hardware, ModulatorState};
 use rand::SeedableRng;
 use rand_pcg::Pcg64Mcg;
 use std::time::Instant;
+
+use self::hardware::errors::HardwareError;
+use self::hardware::modulator_state::ModulatorState;
+use self::hardware::Hardware;
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct Simulator {

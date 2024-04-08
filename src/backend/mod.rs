@@ -10,8 +10,6 @@ use serde::{Deserialize, Serialize};
 
 use self::simulation::VqSim;
 
-pub(crate) static ANGLE_PATH: &str = "./angles.json";
-
 #[derive(Serialize, Deserialize)]
 pub(crate) struct Angles {
     pub(crate) angles: Vec<u8>,
