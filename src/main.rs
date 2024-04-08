@@ -58,8 +58,8 @@ async fn main() {
             tracing_subscriber::fmt()
                 .with_writer(stdout.and(logfile))
                 .init();
-            tracing::info!("log_level: {:?}", log_level);
-
+            tracing::info!("log_level: {:?}", log_level.into_level().unwrap());
+            tracing::debug!("test DBG");
             tracing::info!(
                 "log file name: {}",
                 format!("{}/simu_logs_{}", args.logs_location, log_id)
@@ -71,8 +71,6 @@ async fn main() {
         }
     }
 
-    tracing::debug!("Debug test");
-    tracing::error!("Error test");
     tracing::info!(
         "Simulator with configuration : {:?}",
         &configuration.backend_config
@@ -100,8 +98,12 @@ async fn main() {
                 );
                 let ipc = ipc::reader::IPCReader::new(stream, simu_handle.clone()).await;
                 ipc.start().await;
+                tracing::warn!("Socket died on client side.");
             }
-            Err(e) => panic!("ERROR {e}"),
+            Err(e) => {
+                tracing::error!("Error accepted the stream: {e}");
+                return;
+            }
         }
     }
 }

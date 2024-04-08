@@ -79,17 +79,17 @@ impl<T: BytesGenerator + Clone> Actor<T> {
                 let _ = reply_to.send({
                     match self.simulator.set_angles(angles).context(HardwareSnafu) {
                         Ok(v) => {
-                            let mut f = OpenOptions::new()
-                                .write(true)
-                                .open(ANGLE_PATH)
-                                .context(IoSnafu)?;
-                            let angles = Angles {
-                                angles: angles.to_vec(),
-                            };
-                            let angles_str =
-                                serde_json::to_string(&angles).context(SerdeJsonSnafu)?;
-                            // f.write_fmt(&angles_str.into()).context(IoSnafu)?;
-                            f.write_all(&angles_str.into_bytes()).context(IoSnafu)?;
+                            // let mut f = OpenOptions::new()
+                            //     .write(true)
+                            //     .open(ANGLE_PATH)
+                            //     .context(IoSnafu)?;
+                            // let angles = Angles {
+                            //     angles: angles.to_vec(),
+                            // };
+                            // let angles_str =
+                            //     serde_json::to_string(&angles).context(SerdeJsonSnafu)?;
+                            // // f.write_fmt(&angles_str.into()).context(IoSnafu)?;
+                            // f.write_all(&angles_str.into_bytes()).context(IoSnafu)?;
                             Ok(v)
                         }
                         Err(e) => Err(e),
@@ -110,7 +110,7 @@ pub enum ActorMessage {
         reply_to: oneshot::Sender<Result<(), Error>>,
     },
     SetAngles {
-        angles: [u8; 8],
+        angles: [u8; 4],
         reply_to: oneshot::Sender<Result<(), Error>>,
     },
     ReadAngles {
@@ -181,7 +181,7 @@ impl<T: BytesGenerator + Clone> ActorHandle<T> {
         recv.await.context(errors::ActorDiedSnafu)
     }
 
-    pub async fn set_angles(&self, angles: [u8; 8]) -> Result<(), Error> {
+    pub async fn set_angles(&self, angles: [u8; 4]) -> Result<(), Error> {
         let (send, recv) = oneshot::channel();
         let message = ActorMessage::SetAngles {
             angles,

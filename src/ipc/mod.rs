@@ -15,7 +15,7 @@ pub enum UsbCommand {
     ReadAngles, // = 0x28,   // read postselected (measured) angles
     GetCurrentGc, // = 0x29, // get current global counter
     AngleSet {
-        angles: [u8; 8],
+        angles: [u8; 4],
     }, // = 0x2a,     // set the angles, expected 8 values (byte) to follow
     KO,       // = 0xaa,           // This type does not exist in the real Hardware ?
     SetRole {

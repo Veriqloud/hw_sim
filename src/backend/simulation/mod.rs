@@ -39,7 +39,7 @@ pub trait VqSim {
     fn get_global_counter(&mut self) -> Option<u64>;
     async fn read_angles(&mut self) -> Result<[u8; 1024], HardwareError>;
     async fn generate_bytes(&mut self) -> Result<Vec<u8>, HardwareError>;
-    fn set_angles(&mut self, angles: [u8; 8]) -> Result<(), HardwareError>;
+    fn set_angles(&mut self, angles: [u8; 4]) -> Result<(), HardwareError>;
     fn start_at_gc(&mut self, gc: u64) -> Result<(), HardwareError>;
     fn set_role(&mut self, nb_parties: u32, position: u32) -> Result<(), HardwareError>;
 }
@@ -141,7 +141,7 @@ impl VqSim for Simulator {
         Ok(())
     }
 
-    fn set_angles(&mut self, angles: [u8; 8]) -> Result<(), HardwareError> {
+    fn set_angles(&mut self, angles: [u8; 4]) -> Result<(), HardwareError> {
         self.angles = angles.to_vec();
         Ok(())
     }
