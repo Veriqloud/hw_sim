@@ -35,11 +35,6 @@ impl CorrelationsRandom for Simulator {
                 number_parties = m.number_of_parties;
                 position = m.position;
             }
-            _ => return Err(ProtocolError::Role {
-                reason:
-                    "Role not supported. Only Role::OneOfMany is supported for correlations_random"
-                        .to_string(),
-            }),
         }
 
         // the output vector

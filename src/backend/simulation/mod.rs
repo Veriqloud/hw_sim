@@ -122,7 +122,6 @@ impl VqSim for Simulator {
                 self.current_fifo_size = size - 1024;
                 Ok(v.try_into().unwrap())
             }
-            _ => Err(HardwareError::ModulatorStateNotSupported),
         }
     }
     /// Return the current global counter

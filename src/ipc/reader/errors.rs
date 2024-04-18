@@ -7,4 +7,6 @@ pub enum Error {
     UnixStream { source: std::io::Error },
     #[snafu(display("Serde error because : {}", source))]
     SerdeJson { source: serde_json::Error },
+    #[snafu(display("Serde error because : {}", reason))]
+    Unexpected { reason: String},
 }

@@ -59,7 +59,6 @@ async fn main() {
                 .with_writer(stdout.and(logfile))
                 .init();
             tracing::info!("log_level: {:?}", log_level.into_level().unwrap());
-            tracing::debug!("test DBG");
             tracing::info!(
                 "log file name: {}",
                 format!("{}/simu_logs_{}", args.logs_location, log_id)
@@ -86,7 +85,6 @@ async fn main() {
     tracing::info!("Listining to {:?}", listener.local_addr());
 
     let sim = SimulatorBuilder::from_config(configuration.backend_config);
-    tracing::debug!("Simulator time: {:#?} ", sim.now);
     tracing::info!("Simulator modulator: {:?}", sim.role);
     let simu_handle = backend::actor::ActorHandle::new(sim);
     loop {
@@ -97,7 +95,7 @@ async fn main() {
                     &stream.peer_addr().unwrap()
                 );
                 let ipc = ipc::reader::IPCReader::new(stream, simu_handle.clone()).await;
-                ipc.start().await;
+                let _ = ipc.start().await;
                 tracing::warn!("Socket died on client side.");
             }
             Err(e) => {
