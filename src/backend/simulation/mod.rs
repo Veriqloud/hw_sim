@@ -75,7 +75,9 @@ impl VqSim for Simulator {
                         }
                     })?;
                     self.current_fifo_size -= 1024;
-                    Ok(v.try_into().unwrap())
+                    return TryInto::<[u8; 1024]>::try_into(v).map_err(|e| HardwareError::Other {
+                        reason: format!("Could not convert Vec into array : {:?}", e),
+                    });
                 }
             }
             ModulatorState::Random => {
@@ -103,8 +105,11 @@ impl VqSim for Simulator {
                     match res {
                         Ok(v) => {
                             self.current_fifo_size = 0;
-                            let v = v.try_into().unwrap();
-                            return Ok(v);
+                            return TryInto::<[u8; 1024]>::try_into(v).map_err(|e| {
+                                HardwareError::Other {
+                                    reason: format!("Could not convert Vec into array : {:?}", e),
+                                }
+                            });
                         }
                         Err(e) => {
                             return Err(e);
@@ -120,7 +125,9 @@ impl VqSim for Simulator {
                     }
                 })?;
                 self.current_fifo_size = size - 1024;
-                Ok(v.try_into().unwrap())
+                return TryInto::<[u8; 1024]>::try_into(v).map_err(|e| HardwareError::Other {
+                    reason: format!("Could not convert Vec into array : {:?}", e),
+                });
             }
         }
     }

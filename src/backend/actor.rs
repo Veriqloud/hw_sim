@@ -46,7 +46,9 @@ impl<T: BytesGenerator + Clone> Actor<T> {
                 position,
                 reply_to,
             } => {
-                self.simulator.set_role(nb_parties, position).unwrap();
+                self.simulator
+                    .set_role(nb_parties, position)
+                    .context(HardwareSnafu)?;
                 let _ = reply_to.send(Ok(()));
                 Ok(())
             }
@@ -54,25 +56,15 @@ impl<T: BytesGenerator + Clone> Actor<T> {
                 global_counter,
                 reply_to,
             } => {
-                let _ = reply_to.send({
-                    match self
-                        .simulator
+                let _ = reply_to.send(
+                    self.simulator
                         .start_at_gc(global_counter)
-                        .context(HardwareSnafu)
-                    {
-                        Ok(v) => Ok(v),
-                        Err(e) => Err(e),
-                    }
-                });
+                        .context(HardwareSnafu),
+                );
                 Ok(())
             }
             ActorMessage::FifoIdle { reply_to } => {
-                let _ = reply_to.send({
-                    match self.simulator.fifo_idle().context(HardwareSnafu) {
-                        Ok(v) => Ok(v),
-                        Err(e) => Err(e),
-                    }
-                });
+                let _ = reply_to.send(self.simulator.fifo_idle().context(HardwareSnafu));
                 Ok(())
             }
             ActorMessage::SetAngles { angles, reply_to } => {

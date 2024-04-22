@@ -45,12 +45,7 @@ impl<G: BytesGenerator> IPCReader<G> {
                     RawCommand::FifosIdle => UsbCommand::FifoIdle,
                     RawCommand::Ko => UsbCommand::KO,
                     RawCommand::StartAtGc => {
-                        let gc = self
-                            .stream
-                            .read_u64()
-                            .await
-                            .context(UnixStreamSnafu)
-                            .unwrap();
+                        let gc = self.stream.read_u64().await.context(IpcUnixStreamSnafu)?;
                         UsbCommand::StartAtGc { gc }
                     }
                     RawCommand::GetCurrentGc => UsbCommand::GetCurrentGc,
@@ -61,12 +56,11 @@ impl<G: BytesGenerator> IPCReader<G> {
                             .stream
                             .read_exact(&mut angles)
                             .await
-                            .context(UnixStreamSnafu)
-                            .unwrap();
+                            .context(IpcUnixStreamSnafu)?;
                         UsbCommand::AngleSet { angles }
                     }
                     RawCommand::SetRole => {
-                        let out = self.stream.read_u64().await.unwrap();
+                        let out = self.stream.read_u64().await.context(IpcUnixStreamSnafu)?;
                         let (h, l) = ((out >> 32) as u32, out as u32);
                         UsbCommand::SetRole {
                             number_of_parties: h,
