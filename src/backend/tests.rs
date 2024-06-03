@@ -174,5 +174,5 @@ async fn qkd_statistics_ok() {
     println!("measured qber: {}", measured_qber);
     assert_eq!(num_result_matching, l as u32);
     assert!((num_basismatch as f64 / l as f64 - 0.5).abs() < 0.02);
-    assert!((measured_qber - qb_err).abs() < 0.02);
+    assert!((measured_qber - qb_err).abs() < 0.008);
 }
