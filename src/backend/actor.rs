@@ -8,12 +8,12 @@ use super::{
     BytesGenerator,
 };
 
-pub struct Actor<T: BytesGenerator + Clone> {
+pub struct Actor<T: BytesGenerator> {
     receiver: mpsc::Receiver<ActorMessage>,
     simulator: T,
 }
 
-impl<T: BytesGenerator + Clone> Actor<T> {
+impl<T: BytesGenerator> Actor<T> {
     pub fn new(simulator: T, receiver: mpsc::Receiver<ActorMessage>) -> Self {
         Actor {
             receiver,
@@ -71,11 +71,19 @@ impl<T: BytesGenerator + Clone> Actor<T> {
                 let _ = reply_to.send(self.simulator.set_angles(angles).context(HardwareSnafu));
                 Ok(())
             }
+            ActorMessage::Start { reply_to } => todo!(),
+            ActorMessage::Stop { reply_to } => todo!(),
         }
     }
 }
 
 pub enum ActorMessage {
+    Start {
+        reply_to: oneshot::Sender<Result<(), Error>>,
+    },
+    Stop {
+        reply_to: oneshot::Sender<Result<(), Error>>,
+    },
     StartAtGc {
         global_counter: u64,
         reply_to: oneshot::Sender<Result<(), Error>>,
@@ -100,28 +108,31 @@ pub enum ActorMessage {
     },
 }
 
-pub async fn run_simulator_actor<T: BytesGenerator + Clone>(mut actor: Actor<T>) {
+pub async fn run_simulator_actor<T: BytesGenerator>(mut actor: Actor<T>) {
     while let Some(msg) = actor.receiver.recv().await {
         actor.handle_message(msg).await.unwrap();
     }
 }
 
 #[derive(Clone)]
-pub struct ActorHandle<T: BytesGenerator> {
+pub struct ActorHandle {
     sender: mpsc::Sender<ActorMessage>,
-    _phantom: PhantomData<T>,
 }
 
-impl<T: BytesGenerator + Clone> ActorHandle<T> {
-    pub fn new(simulator: T) -> Self {
+impl ActorHandle {
+    pub fn new<T: BytesGenerator>(simulator: T) -> Self {
         let (sender, receiver) = mpsc::channel(8);
         let actor = Actor::new(simulator, receiver);
         tokio::spawn(run_simulator_actor(actor));
 
-        Self {
-            sender,
-            _phantom: Default::default(),
-        }
+        Self { sender }
+    }
+
+    pub async fn start(&self) -> Result<(), Error> {
+        let (send, recv) = oneshot::channel();
+        let message = ActorMessage::FifoIdle { reply_to: send };
+        let _ = self.sender.send(message).await;
+        recv.await.context(errors::ActorDiedSnafu)?
     }
 
     pub async fn fifo_idle(&self) -> Result<(), Error> {

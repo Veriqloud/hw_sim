@@ -3,18 +3,23 @@ pub mod errors;
 pub mod hardware;
 
 use async_trait::async_trait;
+use tokio::net::UnixStream;
+use tokio::sync::Mutex;
 
 use crate::backend::protocols::random::CorrelationsRandom;
 use crate::backend::role::{Multiparty, Role};
 use rand::SeedableRng;
 use rand_pcg::Pcg64Mcg;
+use std::io::Write;
+use std::sync::Arc;
 use std::time::Instant;
 
 use self::hardware::errors::HardwareError;
 use self::hardware::modulator_state::ModulatorState;
 use self::hardware::Hardware;
 
-#[derive(Debug, PartialEq, Clone)]
+// #[derive(PartialEq, Clone)]
+#[derive(Debug, PartialEq)]
 pub struct Simulator {
     pub(crate) hw: Hardware,
     pub role: Role,
@@ -34,6 +39,8 @@ pub struct Simulator {
     /// Size of the physical FIFO, for realistic HardwareError, "Size" means number of bytes.
     pub(crate) fifo_max_size: u64,
     pub(crate) current_fifo_size: usize,
+    // pub(crate) click_results_stream: Arc<Mutex<Box<dyn Write + Send>>>,
+    // pub(crate) angles_stream: UnixStream,
 }
 
 #[async_trait]
@@ -63,6 +70,7 @@ impl VqSim for Simulator {
         tracing::info!("HW Reading Angles");
         match &self.modulator_state {
             ModulatorState::Idle => {
+                tracing::warn!("Modulator State is IDLE !");
                 if self.current_fifo_size < 1024 {
                     Err(HardwareError::Other {
                         reason: "Not enough bytes left in the fifo !".to_string(),
