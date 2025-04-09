@@ -18,6 +18,7 @@ use crate::config::Configuration;
 #[tokio::main]
 async fn main() {
     //}-> Result<(), errors::Error> {
+
     let span = trace_span!("main");
 
     let args = cli_args::CliArgs::parse();
@@ -31,12 +32,7 @@ async fn main() {
             }
         }
     } else {
-        let mut c = Configuration::default();
-
-        if let Some(p) = args.conf.ipc_socket {
-            c.ipc_config.unix_socket_path = p;
-        }
-
+        let c = Configuration::default();
         c
     };
 
@@ -75,15 +71,19 @@ async fn main() {
         &configuration.backend_config
     );
 
-    let path = Path::new(&configuration.ipc_config.unix_socket_path);
-    if path.exists() {
-        std::fs::remove_file(path).context(IOSnafu).unwrap();
-    }
-    let listener =
-        tokio::net::UnixListener::bind(configuration.ipc_config.unix_socket_path).unwrap();
-    // .context(UnixStreamSnafu)?;
-    tracing::info!("Listining to {:?}", listener.local_addr());
+    tracing::info!("IPC with configuration : {:?}", &configuration.ipc_config);
 
+    configuration.ipc_config.check_all_fields_exist().unwrap();
+
+    let angles_stream =
+        tokio::net::UnixStream::connect(&configuration.ipc_config.angle_socket_path)
+            .await
+            .unwrap();
+
+    let click_results_stream =
+        tokio::net::UnixStream::connect(&configuration.ipc_config.click_result_socket_path)
+            .await
+            .unwrap();
     let sim = SimulatorBuilder::from_config(configuration.backend_config);
     tracing::info!("Simulator modulator: {:?}", sim.role);
     let simu_handle = backend::actor::ActorHandle::new(sim);

@@ -1,5 +1,3 @@
-use std::marker::PhantomData;
-
 use snafu::ResultExt;
 use tokio::sync::{mpsc, oneshot};
 

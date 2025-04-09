@@ -3,7 +3,7 @@ use snafu::Snafu;
 #[derive(Debug, Snafu)]
 #[snafu(visibility(pub))]
 pub enum Error {
-    #[snafu(display("IPC error {}", source))]
+    #[snafu(display("IPC Reader error {}", source))]
     IpcReader {
         source: crate::ipc::reader::errors::Error,
     },

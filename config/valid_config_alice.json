@@ -9,7 +9,9 @@
         "pulse_distance": 1e-8
     },
     "ipc_config": {
-        "unix_socket_path": "./node2hw_alice.sock"
+        "command_socket_path":"./xdma0_user",
+        "angle_socket_path": "./xdma0_c2h3_3",
+        "click_result_socket_path": "./click_result"
     },
     "log_level": "Info"
 }

@@ -22,10 +22,6 @@ pub struct CliArgs {
 #[derive(Args, Clone, Debug)]
 #[group(required = true, multiple = false)]
 pub struct ConfigArgs {
-    /// Specify the IPC socket path, without the need for a config file.
-    #[arg(short='i', long="ipc_socket", value_parser = path_exists)]
-    pub ipc_socket: Option<String>,
-
     /// Provide a config file.
     #[arg(short='c', long="config-path", value_parser = path_exists)]
     pub config_path: Option<String>,

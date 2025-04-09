@@ -3,22 +3,17 @@ pub mod errors;
 pub mod hardware;
 
 use async_trait::async_trait;
-use tokio::net::UnixStream;
-use tokio::sync::Mutex;
 
 use crate::backend::protocols::random::CorrelationsRandom;
 use crate::backend::role::{Multiparty, Role};
 use rand::SeedableRng;
 use rand_pcg::Pcg64Mcg;
-use std::io::Write;
-use std::sync::Arc;
 use std::time::Instant;
 
 use self::hardware::errors::HardwareError;
 use self::hardware::modulator_state::ModulatorState;
 use self::hardware::Hardware;
 
-// #[derive(PartialEq, Clone)]
 #[derive(Debug, PartialEq)]
 pub struct Simulator {
     pub(crate) hw: Hardware,
@@ -39,8 +34,6 @@ pub struct Simulator {
     /// Size of the physical FIFO, for realistic HardwareError, "Size" means number of bytes.
     pub(crate) fifo_max_size: u64,
     pub(crate) current_fifo_size: usize,
-    // pub(crate) click_results_stream: Arc<Mutex<Box<dyn Write + Send>>>,
-    // pub(crate) angles_stream: UnixStream,
 }
 
 #[async_trait]
