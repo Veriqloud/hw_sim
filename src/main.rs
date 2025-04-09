@@ -6,9 +6,9 @@ pub mod ipc;
 
 use backend::simulation::builder::SimulatorBuilder;
 use clap::Parser;
-use errors::IOSnafu;
-use snafu::prelude::*;
-use std::path::Path;
+use ipc::writer::actor::IPCWriterActorHandle;
+// use errors::{IOSnafu, UnixStreamSnafu};
+// use std::path::Path;
 use tracing::trace_span;
 use tracing_subscriber::fmt::writer::MakeWriterExt;
 use uuid::Uuid;
@@ -27,6 +27,7 @@ async fn main() {
         match Configuration::new(path) {
             Ok(c) => c,
             Err(e) => {
+                println!("ERROR: {}", e);
                 span.in_scope(|| tracing::error!("{}", e));
                 return;
             }
@@ -87,6 +88,15 @@ async fn main() {
     let sim = SimulatorBuilder::from_config(configuration.backend_config);
     tracing::info!("Simulator modulator: {:?}", sim.role);
     let simu_handle = backend::actor::ActorHandle::new(sim);
+
+    let writer_handle =
+        IPCWriterActorHandle::new(angles_stream, click_results_stream, simu_handle.clone());
+
+    let listener =
+        tokio::net::UnixListener::bind(configuration.ipc_config.command_socket_path).unwrap();
+    // .context(UnixStreamSnafu)?;
+    tracing::info!("Listining to {:?}", listener.local_addr());
+
     loop {
         match listener.accept().await {
             Ok((stream, _)) => {
@@ -94,7 +104,7 @@ async fn main() {
                     "Incoming stream from peer address {:?}",
                     &stream.peer_addr().unwrap()
                 );
-                let ipc = ipc::reader::IPCReader::new(stream, simu_handle.clone()).await;
+                let ipc = ipc::reader::IPCReader::new(stream, writer_handle.clone()).await;
                 let _ = ipc.start().await;
                 tracing::warn!("Socket died on client side.");
             }

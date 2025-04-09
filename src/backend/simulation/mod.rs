@@ -6,6 +6,7 @@ use async_trait::async_trait;
 
 use crate::backend::protocols::random::CorrelationsRandom;
 use crate::backend::role::{Multiparty, Role};
+use crate::ipc::writer::actor::IPCWriterActorHandle;
 use rand::SeedableRng;
 use rand_pcg::Pcg64Mcg;
 use std::time::Instant;

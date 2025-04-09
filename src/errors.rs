@@ -11,6 +11,10 @@ pub enum Error {
     Backend {
         source: crate::backend::errors::Error,
     },
+    #[snafu(display("IPC Writer error {}", source))]
+    Writer {
+        source: crate::ipc::writer::errors::Error,
+    },
     #[snafu(display("UnixStream error {}", source))]
     UnixStream { source: tokio::io::Error },
     #[snafu(display("IO error {}", source))]
