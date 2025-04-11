@@ -134,7 +134,7 @@ impl ActorHandle {
 
     pub async fn start(&self) -> Result<(), Error> {
         let (send, recv) = oneshot::channel();
-        let message = ActorMessage::FifoIdle { reply_to: send };
+        let message = ActorMessage::Start { reply_to: send };
         let _ = self.sender.send(message).await;
         recv.await.context(errors::ActorDiedSnafu)?
     }
