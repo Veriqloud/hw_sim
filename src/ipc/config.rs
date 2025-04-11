@@ -33,8 +33,8 @@ impl Configuration {
         for field in fields.iter() {
             let path = Path::new(field);
 
-            if !path.exists() {
-                std::fs::create_dir_all(path).context(PathNotExistSnafu {
+            if path.exists() {
+                std::fs::remove_file(path).context(PathNotExistSnafu {
                     path: field.to_string(),
                 })?;
             }

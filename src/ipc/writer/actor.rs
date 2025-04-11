@@ -6,10 +6,8 @@ use tokio::{
     time::sleep,
 };
 
-use crate::errors::IOSnafu;
-
-use super::super::super::backend::actor::ActorHandle as SimulatorHandle;
-use super::errors::{ActorDiedSnafu, Error};
+use super::errors::{ActorDiedSnafu, Error, IOSnafu};
+use super::{super::super::backend::actor::ActorHandle as SimulatorHandle, errors::BackendSnafu};
 
 pub struct IPCWriterActor {
     receiver: mpsc::Receiver<WriterMessage>,
@@ -35,14 +33,18 @@ impl IPCWriterActor {
         }
     }
 
-    async fn handle_message(&mut self, msg: WriterMessage) {
+    async fn handle_message(&mut self, msg: WriterMessage) -> Result<(), Error> {
         match msg {
             WriterMessage::Start => {
+                self.simulator_handle.start().await.context(BackendSnafu)?;
                 self.writing_active = true;
                 self.write_loop().await;
+                Ok(())
             }
             WriterMessage::Stop => {
+                self.simulator_handle.stop().await.context(BackendSnafu)?;
                 self.writing_active = false;
+                Ok(())
             }
         }
     }
@@ -71,14 +73,15 @@ impl IPCWriterActor {
                 ((basis as u8), (measurement as u8))
             })
             .unzip();
-        self.angles_stream.write_all(&angles_data).await.unwrap();
-        // .context(IOSnafu)?;
+        self.angles_stream
+            .write_all(&angles_data)
+            .await
+            .context(IOSnafu)?;
 
         self.click_results_stream
             .write_all(&click_results_data)
             .await
-            .unwrap();
-        // .context(IOSnafu)?;
+            .context(IOSnafu)?;
 
         Ok(())
     }

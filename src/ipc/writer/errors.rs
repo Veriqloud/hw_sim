@@ -7,6 +7,10 @@ pub enum Error {
     ActorDied {
         source: tokio::sync::oneshot::error::RecvError,
     },
+    #[snafu(display("Backend Error : {}", source))]
+    Backend {
+        source: crate::backend::errors::Error,
+    },
     #[snafu(display("Could not write to Unix Stream because : {}", source))]
     IO { source: std::io::Error },
 }

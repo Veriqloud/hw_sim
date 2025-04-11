@@ -69,8 +69,14 @@ impl<T: BytesGenerator> Actor<T> {
                 let _ = reply_to.send(self.simulator.set_angles(angles).context(HardwareSnafu));
                 Ok(())
             }
-            ActorMessage::Start { reply_to } => todo!(),
-            ActorMessage::Stop { reply_to } => todo!(),
+            ActorMessage::Start { reply_to } => {
+                let _ = reply_to.send(self.simulator.start().context(HardwareSnafu));
+                Ok(())
+            }
+            ActorMessage::Stop { reply_to } => {
+                let _ = reply_to.send(self.simulator.stop().context(HardwareSnafu));
+                Ok(())
+            }
         }
     }
 }
@@ -127,6 +133,13 @@ impl ActorHandle {
     }
 
     pub async fn start(&self) -> Result<(), Error> {
+        let (send, recv) = oneshot::channel();
+        let message = ActorMessage::FifoIdle { reply_to: send };
+        let _ = self.sender.send(message).await;
+        recv.await.context(errors::ActorDiedSnafu)?
+    }
+
+    pub async fn stop(&self) -> Result<(), Error> {
         let (send, recv) = oneshot::channel();
         let message = ActorMessage::FifoIdle { reply_to: send };
         let _ = self.sender.send(message).await;

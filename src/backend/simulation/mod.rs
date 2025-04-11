@@ -3,6 +3,7 @@ pub mod errors;
 pub mod hardware;
 
 use async_trait::async_trait;
+use tracing::Instrument;
 
 use crate::backend::protocols::random::CorrelationsRandom;
 use crate::backend::role::{Multiparty, Role};
@@ -46,10 +47,25 @@ pub trait VqSim {
     fn set_angles(&mut self, angles: [u8; 4]) -> Result<(), HardwareError>;
     fn start_at_gc(&mut self, gc: u64) -> Result<(), HardwareError>;
     fn set_role(&mut self, nb_parties: u32, position: u32) -> Result<(), HardwareError>;
+    fn start(&mut self) -> Result<(), HardwareError>;
+    fn stop(&mut self) -> Result<(), HardwareError>;
 }
 
 #[async_trait]
 impl VqSim for Simulator {
+    fn start(&mut self) -> Result<(), HardwareError> {
+        tracing::info!("Starting the simulator !");
+        self.reset_time();
+        self.modulator_state = ModulatorState::Random;
+        tracing::info!("MODULATOR STATE CHANGED TO RANDOM !");
+        Ok(())
+    }
+
+    fn stop(&mut self) -> Result<(), HardwareError> {
+        self.modulator_state = ModulatorState::Idle;
+        Ok(())
+    }
+
     /// Read all angles and measurement results since last read.
     ///
     /// This function will generate the right amount of states based on the real time that passed since
