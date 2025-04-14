@@ -61,10 +61,6 @@ impl<T: BytesGenerator> Actor<T> {
                 );
                 Ok(())
             }
-            ActorMessage::FifoIdle { reply_to } => {
-                let _ = reply_to.send(self.simulator.fifo_idle().context(HardwareSnafu));
-                Ok(())
-            }
             ActorMessage::SetAngles { angles, reply_to } => {
                 let _ = reply_to.send(self.simulator.set_angles(angles).context(HardwareSnafu));
                 Ok(())
@@ -74,6 +70,10 @@ impl<T: BytesGenerator> Actor<T> {
                 Ok(())
             }
             ActorMessage::Stop { reply_to } => {
+                tracing::debug!("Processing a STOP");
+                let result = self.simulator.stop().context(HardwareSnafu);
+
+                tracing::debug!("Processing a stop : {}", &result.is_ok());
                 let _ = reply_to.send(self.simulator.stop().context(HardwareSnafu));
                 Ok(())
             }
@@ -90,9 +90,6 @@ pub enum ActorMessage {
     },
     StartAtGc {
         global_counter: u64,
-        reply_to: oneshot::Sender<Result<(), Error>>,
-    },
-    FifoIdle {
         reply_to: oneshot::Sender<Result<(), Error>>,
     },
     SetAngles {
@@ -141,14 +138,7 @@ impl ActorHandle {
 
     pub async fn stop(&self) -> Result<(), Error> {
         let (send, recv) = oneshot::channel();
-        let message = ActorMessage::FifoIdle { reply_to: send };
-        let _ = self.sender.send(message).await;
-        recv.await.context(errors::ActorDiedSnafu)?
-    }
-
-    pub async fn fifo_idle(&self) -> Result<(), Error> {
-        let (send, recv) = oneshot::channel();
-        let message = ActorMessage::FifoIdle { reply_to: send };
+        let message = ActorMessage::Stop { reply_to: send };
         let _ = self.sender.send(message).await;
         recv.await.context(errors::ActorDiedSnafu)?
     }

@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use snafu::ResultExt;
 use tokio::{
     io::AsyncWriteExt,
@@ -36,14 +38,17 @@ impl IPCWriterActor {
     async fn handle_message(&mut self, msg: WriterMessage) -> Result<(), Error> {
         match msg {
             WriterMessage::Start => {
+                tracing::info!("Writer actor received Start message");
                 self.simulator_handle.start().await.context(BackendSnafu)?;
                 self.writing_active = true;
                 self.write_loop().await;
                 Ok(())
             }
             WriterMessage::Stop => {
+                tracing::info!("Writer actor received Stop message");
                 self.simulator_handle.stop().await.context(BackendSnafu)?;
                 self.writing_active = false;
+                tracing::info!("Writing inactive !");
                 Ok(())
             }
         }
@@ -59,8 +64,15 @@ impl IPCWriterActor {
                 }
                 Err(e) => {
                     tracing::error!("Failed to generate bytes: {:?}", e);
+                    break;
                 }
             }
+
+            if !self.writing_active {
+                break;
+            }
+
+            tokio::time::sleep(Duration::from_secs(1)).await;
         }
     }
 
@@ -87,6 +99,7 @@ impl IPCWriterActor {
     }
 }
 
+#[derive(Debug)]
 pub enum WriterMessage {
     Start,
     Stop,
@@ -94,7 +107,10 @@ pub enum WriterMessage {
 
 pub async fn run_writer_actor(mut actor: IPCWriterActor) {
     while let Some(msg) = actor.receiver.recv().await {
-        actor.handle_message(msg).await;
+        tracing::info!("Received message: {:?}", msg);
+        if let Err(e) = actor.handle_message(msg).await {
+            tracing::error!("Failed to handle message: {:?}", e);
+        }
     }
 }
 

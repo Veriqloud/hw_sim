@@ -1,24 +1,15 @@
 pub mod errors;
 
 use snafu::ResultExt;
-use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt},
-    net::UnixStream,
-};
+use tokio::{io::AsyncReadExt, net::UnixStream};
 
-use crate::{
-    backend::BytesGenerator,
-    ipc::{reader::errors::UnixStreamSnafu as IpcUnixStreamSnafu, Command},
-};
+use crate::ipc::{reader::errors::UnixStreamSnafu as IpcUnixStreamSnafu, Command};
 
 use super::{
-    super::errors::{
-        BackendSnafu, Error as Hw_Sim_Error, IpcReaderSnafu, UnixStreamSnafu, WriterSnafu,
-    },
+    super::errors::{Error as Hw_Sim_Error, WriterSnafu},
     writer::actor::IPCWriterActorHandle,
 };
 // use super::UsbCommand;
-use crate::backend::actor::ActorHandle as BackendHandle;
 
 pub struct IPCReader {
     pub(in crate::ipc) cmd_stream: UnixStream,
@@ -51,7 +42,12 @@ impl IPCReader {
 
     pub async fn process_cmd(&mut self, cmd: &Command) -> Result<(), Hw_Sim_Error> {
         match cmd {
-            Command::Stop => self.writer_handle.stop().await.context(WriterSnafu),
+            Command::Stop => {
+                tracing::info!("Writer handle will send Stop message");
+                self.writer_handle.stop().await.context(WriterSnafu)?;
+                tracing::info!("Writer handle send stop");
+                Ok(())
+            }
             Command::Start => self.writer_handle.start().await.context(WriterSnafu),
         }
     }

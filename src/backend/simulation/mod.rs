@@ -40,7 +40,6 @@ pub struct Simulator {
 
 #[async_trait]
 pub trait VqSim {
-    fn fifo_idle(&mut self) -> Result<(), HardwareError>;
     fn get_global_counter(&mut self) -> Option<u64>;
     async fn read_angles(&mut self) -> Result<[u8; 1024], HardwareError>;
     async fn generate_bytes(&mut self) -> Result<Vec<u8>, HardwareError>;
@@ -62,7 +61,9 @@ impl VqSim for Simulator {
     }
 
     fn stop(&mut self) -> Result<(), HardwareError> {
+        tracing::info!("Stopping the simulator");
         self.modulator_state = ModulatorState::Idle;
+        tracing::info!("MODULATOR STATE CHANGED TO IDLE !");
         Ok(())
     }
 
@@ -99,6 +100,7 @@ impl VqSim for Simulator {
                 }
             }
             ModulatorState::Random => {
+                tracing::info!("Modulator state: Random");
                 let current_time = self.get_current_time_with_nanos();
                 tracing::info!("Current time : {:#?}", &current_time);
                 let t = current_time - self.time_of_last_read;
@@ -153,11 +155,6 @@ impl VqSim for Simulator {
     fn get_global_counter(&mut self) -> Option<u64> {
         ((self.get_current_time_with_nanos() / self.hw.pulse_distance) as u64)
             .checked_add(self.hw.gc_offset)
-    }
-
-    fn fifo_idle(&mut self) -> Result<(), HardwareError> {
-        self.modulator_state = ModulatorState::Idle;
-        Ok(())
     }
 
     fn start_at_gc(&mut self, gc: u64) -> Result<(), HardwareError> {
@@ -217,12 +214,5 @@ impl Simulator {
     /// Update the value of qber
     pub fn set_qber(&mut self, qber: f64) {
         self.qb_err = qber;
-    }
-    /// Update the Role of the simulator
-    pub fn set_role(&mut self, nb_parties: u32, position: u32) {
-        self.role = Role::OneOfMany(Multiparty {
-            number_of_parties: nb_parties,
-            position,
-        });
     }
 }
