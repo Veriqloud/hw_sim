@@ -1,12 +1,11 @@
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use snafu::ResultExt;
-use tokio::{
-    io::AsyncWriteExt,
-    net::UnixStream,
-    sync::{mpsc, oneshot},
-    time::sleep,
-};
+use tokio::io::AsyncWriteExt;
+use tokio::net::UnixStream;
+use tokio::sync::mpsc;
+use tokio::time::sleep;
 
 use super::errors::{ActorDiedSnafu, Error, IOSnafu};
 use super::{super::super::backend::actor::ActorHandle as SimulatorHandle, errors::BackendSnafu};
@@ -15,7 +14,7 @@ pub struct IPCWriterActor {
     receiver: mpsc::Receiver<WriterMessage>,
     angles_stream: UnixStream,
     click_results_stream: UnixStream,
-    writing_active: bool,
+    writing_active: Arc<Mutex<bool>>,
     simulator_handle: SimulatorHandle,
 }
 
@@ -25,12 +24,13 @@ impl IPCWriterActor {
         click_results_stream: UnixStream,
         receiver: mpsc::Receiver<WriterMessage>,
         simulator_handle: SimulatorHandle,
+        writing_active: Arc<Mutex<bool>>,
     ) -> Self {
         IPCWriterActor {
             receiver,
             angles_stream,
             click_results_stream,
-            writing_active: false,
+            writing_active,
             simulator_handle,
         }
     }
@@ -40,22 +40,22 @@ impl IPCWriterActor {
             WriterMessage::Start => {
                 tracing::info!("Writer actor received Start message");
                 self.simulator_handle.start().await.context(BackendSnafu)?;
-                self.writing_active = true;
+                *self.writing_active.lock().unwrap() = true;
                 self.write_loop().await;
                 Ok(())
             }
             WriterMessage::Stop => {
                 tracing::info!("Writer actor received Stop message");
                 self.simulator_handle.stop().await.context(BackendSnafu)?;
-                self.writing_active = false;
-                tracing::info!("Writing inactive !");
+                *self.writing_active.lock().unwrap() = false;
+                tracing::info!("Writing inactive!");
                 Ok(())
             }
         }
     }
 
     async fn write_loop(&mut self) {
-        while self.writing_active {
+        while *self.writing_active.lock().unwrap() {
             match self.simulator_handle.read_angles().await {
                 Ok(data) => {
                     if let Err(e) = self.process_and_write_data(data).await {
@@ -68,7 +68,8 @@ impl IPCWriterActor {
                 }
             }
 
-            if !self.writing_active {
+            if !*self.writing_active.lock().unwrap() {
+                tracing::info!("Stop signal received, exiting write_loop");
                 break;
             }
 
@@ -126,11 +127,13 @@ impl IPCWriterActorHandle {
         simulator_handle: SimulatorHandle,
     ) -> Self {
         let (sender, receiver) = mpsc::channel(8);
+        let writing_active = Arc::new(Mutex::new(false));
         let actor = IPCWriterActor::new(
             angles_stream,
             click_results_stream,
             receiver,
             simulator_handle,
+            writing_active.clone(),
         );
         tokio::spawn(run_writer_actor(actor));
         Self { sender }
