@@ -1,17 +1,16 @@
 use snafu::ResultExt;
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 use tokio::io::AsyncWriteExt;
 
 use tokio::net::UnixStream;
 use tokio::sync::oneshot::Receiver;
-use tokio::sync::{mpsc, oneshot};
-use tokio::time::sleep;
+use tokio::sync::{mpsc, oneshot, Mutex, OnceCell};
 
-use super::errors::{ActorDiedSnafu, Error, IOSnafu};
+use super::errors::{Error, IOSnafu};
 use super::{super::super::backend::actor::ActorHandle as SimulatorHandle, errors::BackendSnafu};
 
-static ANGLES_STREAM: OnceLock<Mutex<UnixStream>> = OnceLock::new();
+static ANGLES_STREAM: OnceCell<Mutex<UnixStream>> = OnceCell::const_new();
 
 pub struct IPCWriterActor {
     receiver: mpsc::Receiver<WriterMessage>,
@@ -87,11 +86,13 @@ impl IPCWriterActor {
                             ((basis as u8), (measurement as u8))
                         })
                         .unzip();
+
+                    // TODO: handle error
                     ANGLES_STREAM
                         .get()
                         .unwrap()
-                        .get_mut()
-                        .unwrap()
+                        .lock()
+                        .await
                         .write(&angles_data);
                 }
                 Err(e) => {
