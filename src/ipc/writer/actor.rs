@@ -1,21 +1,23 @@
-use std::sync::{Arc, Mutex};
-use std::time::Duration;
-
 use snafu::ResultExt;
+use std::sync::{Arc, Mutex, OnceLock};
+use std::time::Duration;
 use tokio::io::AsyncWriteExt;
+
 use tokio::net::UnixStream;
-use tokio::sync::mpsc;
+use tokio::sync::oneshot::Receiver;
+use tokio::sync::{mpsc, oneshot};
 use tokio::time::sleep;
 
 use super::errors::{ActorDiedSnafu, Error, IOSnafu};
 use super::{super::super::backend::actor::ActorHandle as SimulatorHandle, errors::BackendSnafu};
 
+static ANGLES_STREAM: OnceLock<Mutex<UnixStream>> = OnceLock::new();
+
 pub struct IPCWriterActor {
     receiver: mpsc::Receiver<WriterMessage>,
-    angles_stream: UnixStream,
     click_results_stream: UnixStream,
-    writing_active: Arc<Mutex<bool>>,
     simulator_handle: SimulatorHandle,
+    stop_chan: Option<oneshot::Sender<()>>,
 }
 
 impl IPCWriterActor {
@@ -24,14 +26,14 @@ impl IPCWriterActor {
         click_results_stream: UnixStream,
         receiver: mpsc::Receiver<WriterMessage>,
         simulator_handle: SimulatorHandle,
-        writing_active: Arc<Mutex<bool>>,
     ) -> Self {
+        ANGLES_STREAM.set(Mutex::new(angles_stream));
+
         IPCWriterActor {
             receiver,
-            angles_stream,
             click_results_stream,
-            writing_active,
             simulator_handle,
+            stop_chan: Default::default(),
         }
     }
 
@@ -40,27 +42,57 @@ impl IPCWriterActor {
             WriterMessage::Start => {
                 tracing::info!("Writer actor received Start message");
                 self.simulator_handle.start().await.context(BackendSnafu)?;
-                *self.writing_active.lock().unwrap() = true;
-                self.write_loop().await;
+                let sim_h_cpy = self.simulator_handle.clone();
+                let (send, mut recv) = oneshot::channel();
+                self.stop_chan = Some(send);
+                tokio::spawn(async move { Self::write_loop(sim_h_cpy, recv).await });
                 Ok(())
             }
             WriterMessage::Stop => {
                 tracing::info!("Writer actor received Stop message");
                 self.simulator_handle.stop().await.context(BackendSnafu)?;
-                *self.writing_active.lock().unwrap() = false;
+                {
+                    let stop_chan = self.stop_chan.take();
+                    match stop_chan {
+                        Some(chan) => {
+                            chan.send(());
+                        }
+                        None => todo!(),
+                    }
+                }
                 tracing::info!("Writing inactive!");
                 Ok(())
             }
         }
     }
 
-    async fn write_loop(&mut self) {
-        while *self.writing_active.lock().unwrap() {
-            match self.simulator_handle.read_angles().await {
+    async fn write_loop(simulator_handle: SimulatorHandle, mut stop_recv: Receiver<()>) {
+        loop {
+            tokio::select! {
+                _ = &mut stop_recv =>{
+                    return
+                }
+                _ = tokio::time::sleep(tokio::time::Duration::from_millis(10))=>{
+
+                }
+            }
+
+            match simulator_handle.read_angles().await {
                 Ok(data) => {
-                    if let Err(e) = self.process_and_write_data(data).await {
-                        tracing::error!("Failed to process and write data: {:?}", e);
-                    }
+                    let (angles_data, click_results_data): (Vec<u8>, Vec<u8>) = data
+                        .iter()
+                        .map(|&byte| {
+                            let basis = (byte & 0b01000000) != 0;
+                            let measurement = (byte & 0b00000001) != 0;
+                            ((basis as u8), (measurement as u8))
+                        })
+                        .unzip();
+                    ANGLES_STREAM
+                        .get()
+                        .unwrap()
+                        .get_mut()
+                        .unwrap()
+                        .write(&angles_data);
                 }
                 Err(e) => {
                     tracing::error!("Failed to generate bytes: {:?}", e);
@@ -68,24 +100,11 @@ impl IPCWriterActor {
                 }
             }
 
-            if !*self.writing_active.lock().unwrap() {
-                tracing::info!("Stop signal received, exiting write_loop");
-                break;
-            }
-
             tokio::time::sleep(Duration::from_secs(1)).await;
         }
     }
 
-    async fn process_and_write_data(&mut self, data: [u8; 1024]) -> Result<(), Error> {
-        let (angles_data, click_results_data): (Vec<u8>, Vec<u8>) = data
-            .iter()
-            .map(|&byte| {
-                let basis = (byte & 0b01000000) != 0;
-                let measurement = (byte & 0b00000001) != 0;
-                ((basis as u8), (measurement as u8))
-            })
-            .unzip();
+    async fn process_and_write_data(data: [u8; 1024]) -> Result<(), Error> {
         self.angles_stream
             .write_all(&angles_data)
             .await
@@ -133,7 +152,6 @@ impl IPCWriterActorHandle {
             click_results_stream,
             receiver,
             simulator_handle,
-            writing_active.clone(),
         );
         tokio::spawn(run_writer_actor(actor));
         Self { sender }
