@@ -1,4 +1,5 @@
 use snafu::ResultExt;
+use std::fmt::Debug;
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 use tokio::io::AsyncWriteExt;
@@ -7,14 +8,16 @@ use tokio::net::UnixStream;
 use tokio::sync::oneshot::Receiver;
 use tokio::sync::{mpsc, oneshot, Mutex, OnceCell};
 
-use super::errors::{Error, IOSnafu};
+use crate::errors::IOSnafu;
+
+use super::errors::Error;
 use super::{super::super::backend::actor::ActorHandle as SimulatorHandle, errors::BackendSnafu};
 
 static ANGLES_STREAM: OnceCell<Mutex<UnixStream>> = OnceCell::const_new();
+static CLICK_RESULTS: OnceCell<Mutex<UnixStream>> = OnceCell::const_new();
 
 pub struct IPCWriterActor {
     receiver: mpsc::Receiver<WriterMessage>,
-    click_results_stream: UnixStream,
     simulator_handle: SimulatorHandle,
     stop_chan: Option<oneshot::Sender<()>>,
 }
@@ -26,11 +29,11 @@ impl IPCWriterActor {
         receiver: mpsc::Receiver<WriterMessage>,
         simulator_handle: SimulatorHandle,
     ) -> Self {
-        ANGLES_STREAM.set(Mutex::new(angles_stream));
+        ANGLES_STREAM.set(Mutex::new(angles_stream)).unwrap();
+        CLICK_RESULTS.set(Mutex::new(click_results_stream)).unwrap();
 
         IPCWriterActor {
             receiver,
-            click_results_stream,
             simulator_handle,
             stop_chan: Default::default(),
         }
@@ -93,7 +96,19 @@ impl IPCWriterActor {
                         .unwrap()
                         .lock()
                         .await
-                        .write(&angles_data);
+                        .write(&angles_data)
+                        .await
+                        .context(IOSnafu)
+                        .unwrap();
+                    CLICK_RESULTS
+                        .get()
+                        .unwrap()
+                        .lock()
+                        .await
+                        .write(&click_results_data)
+                        .await
+                        .context(IOSnafu)
+                        .unwrap();
                 }
                 Err(e) => {
                     tracing::error!("Failed to generate bytes: {:?}", e);
@@ -103,20 +118,6 @@ impl IPCWriterActor {
 
             tokio::time::sleep(Duration::from_secs(1)).await;
         }
-    }
-
-    async fn process_and_write_data(data: [u8; 1024]) -> Result<(), Error> {
-        self.angles_stream
-            .write_all(&angles_data)
-            .await
-            .context(IOSnafu)?;
-
-        self.click_results_stream
-            .write_all(&click_results_data)
-            .await
-            .context(IOSnafu)?;
-
-        Ok(())
     }
 }
 
