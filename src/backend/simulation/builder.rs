@@ -5,7 +5,6 @@ use std::time::Instant;
 use crate::backend::config::Configuration;
 use crate::backend::role::Multiparty;
 use crate::backend::role::Role;
-use crate::ipc::writer::actor::IPCWriterActorHandle;
 
 use super::hardware::builder::HardwareBuilder;
 use super::hardware::modulator_state::ModulatorState;

@@ -3,6 +3,8 @@ use snafu::prelude::*;
 #[derive(Debug, Snafu)]
 #[snafu(visibility(pub))]
 pub enum Error {
+    #[snafu(display("Stop channel error because : {}", e))]
+    Channel { e: String },
     #[snafu(display("could not connect to Unix Stream because : {}", source))]
     ActorDied {
         source: tokio::sync::oneshot::error::RecvError,

@@ -74,9 +74,7 @@ impl<T: BytesGenerator> Actor<T> {
                 let result = self.simulator.stop().context(HardwareSnafu);
 
                 tracing::debug!("Processing a stop : {}", &result.is_ok());
-                let _ = reply_to
-                    .send(self.simulator.stop().context(HardwareSnafu))
-                    .unwrap();
+                let _ = reply_to.send(result);
                 Ok(())
             }
         }

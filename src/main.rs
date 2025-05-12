@@ -12,8 +12,6 @@ use errors::{Error, UnixStreamSnafu};
 use ipc::writer::actor::IPCWriterActorHandle;
 use snafu::ResultExt;
 use tokio::net::{UnixListener, UnixStream};
-// use errors::{IOSnafu, UnixStreamSnafu};
-// use std::path::Path;
 use tracing::trace_span;
 use tracing_subscriber::fmt::writer::MakeWriterExt;
 use uuid::Uuid;
@@ -22,8 +20,6 @@ use crate::config::Configuration;
 
 #[tokio::main]
 async fn main() {
-    //}-> Result<(), errors::Error> {
-
     let span = trace_span!("main");
 
     let args = cli_args::CliArgs::parse();
@@ -38,8 +34,7 @@ async fn main() {
             }
         }
     } else {
-        let c = Configuration::default();
-        c
+        Configuration::default()
     };
 
     let config_string = serde_json::to_string(&configuration).unwrap();
