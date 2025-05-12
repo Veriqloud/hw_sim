@@ -125,9 +125,9 @@ async fn qkd_statistics_ok() {
     b.extend(sim_b.read_angles().await.unwrap());
     c.extend(sim_c.read_angles().await.unwrap());
     // go idle
-    sim_a.fifo_idle().unwrap();
-    sim_b.fifo_idle().unwrap();
-    sim_c.fifo_idle().unwrap();
+    sim_a.stop().unwrap();
+    sim_b.stop().unwrap();
+    sim_c.stop().unwrap();
 
     let gc_a = sim_a.get_global_counter().unwrap() + 1000;
     sim_a.start_at_gc(gc_a).unwrap();
