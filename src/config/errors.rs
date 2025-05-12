@@ -9,4 +9,6 @@ pub enum Error {
     ReadConfig { source: io::Error, path: String },
     #[snafu(display("could not parse server config: {source}"))]
     ParseConfig { source: serde_json::Error },
+    #[snafu(display("IO error"))]
+    PathNotExist { source: io::Error, path: String },
 }

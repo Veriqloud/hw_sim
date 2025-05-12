@@ -15,5 +15,5 @@ pub(crate) struct Angles {
     pub(crate) angles: Vec<u8>,
 }
 
-pub trait BytesGenerator: VqSim + Send + Sync + Clone + 'static {}
-impl<T> BytesGenerator for T where T: VqSim + Send + Sync + Clone + 'static {}
+pub trait BytesGenerator: VqSim + Send + Sync + 'static {}
+impl<T> BytesGenerator for T where T: VqSim + Send + Sync + 'static {}

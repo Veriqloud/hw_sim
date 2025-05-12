@@ -22,7 +22,7 @@ impl CorrelationsRandom for Simulator {
     ///
     /// - bit 0 is the measurement result (all parties have this result, not just Bob as in the real world)
     /// - bit 1 to 7 is the angle where 0=128 corresponds to 2pi with result bit 0 and 64 to pi
-    /// with result bit 1
+    ///   with result bit 1
     ///
     /// If the quber is not zero, the result bit will flip sometimes
 
