@@ -1,5 +1,5 @@
 {
-    "command_socket_path":"path as str",
-    "angle_socket_path": "another path as str",
-    "click_result_socket_path": "yet another path as str"
+    "command_socket_path": "path as str",
+    "angle_file_path": "another path as str",
+    "click_result_file_path": "yet another path as str"
 }

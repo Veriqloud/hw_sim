@@ -1,16 +1,16 @@
 use snafu::ResultExt;
 use std::fmt::Debug;
+use tokio::fs::File;
 use tokio::io::AsyncWriteExt;
 
-use tokio::net::UnixStream;
 use tokio::sync::oneshot::Receiver;
 use tokio::sync::{mpsc, oneshot, Mutex, OnceCell};
 
 use super::errors::Error;
 use super::{super::super::backend::actor::ActorHandle as SimulatorHandle, errors::BackendSnafu};
 
-static ANGLES_STREAM: OnceCell<Mutex<UnixStream>> = OnceCell::const_new();
-static CLICK_RESULTS: OnceCell<Mutex<UnixStream>> = OnceCell::const_new();
+static ANGLES_STREAM: OnceCell<Mutex<File>> = OnceCell::const_new();
+static CLICK_RESULTS: OnceCell<Mutex<File>> = OnceCell::const_new();
 
 pub struct IPCWriterActor {
     receiver: mpsc::Receiver<WriterMessage>,
@@ -20,8 +20,8 @@ pub struct IPCWriterActor {
 
 impl IPCWriterActor {
     pub fn new(
-        angles_stream: UnixStream,
-        click_results_stream: UnixStream,
+        angles_stream: File,
+        click_results_stream: File,
         receiver: mpsc::Receiver<WriterMessage>,
         simulator_handle: SimulatorHandle,
     ) -> Self {
@@ -144,8 +144,8 @@ pub struct IPCWriterActorHandle {
 
 impl IPCWriterActorHandle {
     pub fn new(
-        angles_stream: UnixStream,
-        click_results_stream: UnixStream,
+        angles_stream: File,
+        click_results_stream: File,
         simulator_handle: SimulatorHandle,
     ) -> Self {
         let (sender, receiver) = mpsc::channel(8);

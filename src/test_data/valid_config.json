@@ -9,7 +9,9 @@
         "pulse_distance": 1e-8
     },
     "ipc_config": {
-        "unix_socket_path": "./node2hw.sock"
+        "command_socket_path": "path as str",
+        "angle_file_path": "another path as str",
+        "click_result_file_path": "yet another path as str"
     },
     "log_level": "Debug"
 }
