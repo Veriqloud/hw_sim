@@ -4,14 +4,12 @@ pub mod config;
 pub mod errors;
 pub mod ipc;
 
-use std::path::Path;
-
 use backend::simulation::builder::SimulatorBuilder;
 use clap::Parser;
-use errors::{Error, UnixStreamSnafu};
+use errors::UnixStreamSnafu;
 use ipc::writer::actor::IPCWriterActorHandle;
 use snafu::ResultExt;
-use tokio::net::{UnixListener, UnixStream};
+use tokio::net::UnixListener;
 use tracing::trace_span;
 use tracing_subscriber::fmt::writer::MakeWriterExt;
 use uuid::Uuid;
@@ -75,28 +73,20 @@ async fn main() {
     tracing::info!("IPC with configuration : {:?}", &configuration.ipc_config);
 
     configuration.ipc_config.check_field_exists().unwrap();
-    let command_listener = UnixListener::bind(&configuration.ipc_config.command_socket_path)
-        .context(UnixStreamSnafu)
-        .unwrap();
-
-    // let command_listener =
-    //     initialize_unix_listener(Path::new(&configuration.ipc_config.command_socket_path)).unwrap();
-
-    let command_stream = accept_connection(command_listener).await.unwrap();
 
     let sim = SimulatorBuilder::from_config(configuration.backend_config);
     tracing::info!("Simulator modulator: {:?}", sim.role);
     let simu_handle = backend::actor::ActorHandle::new(sim);
 
     let angle_file = tokio::fs::OpenOptions::new()
-        .create(true)
+        .truncate(true)
         .write(true)
         .open(configuration.ipc_config.angle_file_path)
         .await
         .unwrap();
 
     let click_result_file = tokio::fs::OpenOptions::new()
-        .create(true)
+        .truncate(true)
         .write(true)
         .open(configuration.ipc_config.click_result_file_path)
         .await
@@ -105,18 +95,24 @@ async fn main() {
     let writer_handle =
         IPCWriterActorHandle::new(angle_file, click_result_file, simu_handle.clone());
 
-    let ipc = ipc::reader::IPCReader::new(command_stream, writer_handle.clone()).await;
-    if let Err(e) = ipc.start().await {
-        tracing::error!("Error starting IPCReader: {:?}", e);
+    let command_listener = UnixListener::bind(&configuration.ipc_config.command_socket_path)
+        .context(UnixStreamSnafu)
+        .unwrap();
+
+    loop {
+        let (command_stream, _) = command_listener
+            .accept()
+            .await
+            .context(UnixStreamSnafu)
+            .unwrap();
+
+        tracing::info!(
+            "Incoming stream from peer address {:?}",
+            &command_stream.peer_addr().unwrap()
+        );
+        let ipc = ipc::reader::IPCReader::new(command_stream, writer_handle.clone()).await;
+        if let Err(e) = ipc.start().await {
+            tracing::error!("Error starting IPCReader: {:?}", e);
+        }
     }
-}
-
-async fn accept_connection(listener: UnixListener) -> Result<UnixStream, Error> {
-    let (stream, _) = listener.accept().await.context(UnixStreamSnafu)?;
-
-    tracing::info!(
-        "Incoming stream from peer address {:?}",
-        &stream.peer_addr().unwrap()
-    );
-    Ok(stream)
 }
