@@ -10,8 +10,8 @@
     },
     "ipc_config": {
         "command_socket_path":"./xdma0_user",
-        "angle_socket_path": "./xdma0_c2h3_3",
-        "click_result_socket_path": "./click_result"
+        "angle_file_path": "./xdma0_c2h3_3",
+        "click_result_file_path": "./click_result"
     },
     "log_level": "Info"
 }
