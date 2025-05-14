@@ -75,9 +75,12 @@ async fn main() {
     tracing::info!("IPC with configuration : {:?}", &configuration.ipc_config);
 
     configuration.ipc_config.check_field_exists().unwrap();
+    let command_listener = UnixListener::bind(&configuration.ipc_config.command_socket_path)
+        .context(UnixStreamSnafu)
+        .unwrap();
 
-    let command_listener =
-        initialize_unix_listener(Path::new(&configuration.ipc_config.command_socket_path)).unwrap();
+    // let command_listener =
+    //     initialize_unix_listener(Path::new(&configuration.ipc_config.command_socket_path)).unwrap();
 
     let command_stream = accept_connection(command_listener).await.unwrap();
 
@@ -106,12 +109,6 @@ async fn main() {
     if let Err(e) = ipc.start().await {
         tracing::error!("Error starting IPCReader: {:?}", e);
     }
-}
-
-pub fn initialize_unix_listener(command_socket_path: &Path) -> Result<UnixListener, Error> {
-    let command_listener = UnixListener::bind(command_socket_path).context(UnixStreamSnafu)?;
-
-    Ok(command_listener)
 }
 
 async fn accept_connection(listener: UnixListener) -> Result<UnixStream, Error> {
