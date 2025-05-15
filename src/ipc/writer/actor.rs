@@ -87,11 +87,14 @@ impl IPCWriterActor {
             match simulator_handle.read_angles().await {
                 Ok(data) => {
                     let (angles_data, click_results_data): (Vec<u8>, Vec<u8>) = data
-                        .iter()
-                        .map(|&byte| {
-                            let basis = (byte & 0b01000000) != 0;
-                            let measurement = (byte & 0b00000001) != 0;
-                            ((basis as u8), (measurement as u8))
+                        .chunks_exact(2)
+                        .map(|chunk| {
+                            let byte1 = chunk[0];
+                            let byte2 = chunk[1];
+                            let angle_byte = ((byte1 & 0b110) >> 1) + ((byte2 & 0b110) << 3);
+                            let result_byte = (byte1 & 0b001) + ((byte2 & 0b001) << 4);
+
+                            ((angle_byte as u8), (result_byte as u8))
                         })
                         .unzip();
 
