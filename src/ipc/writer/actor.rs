@@ -79,7 +79,7 @@ impl IPCWriterActor {
                 _ = &mut stop_recv =>{
                     return
                 }
-                _ = tokio::time::sleep(tokio::time::Duration::from_millis(10))=>{
+                _ = tokio::time::sleep(tokio::time::Duration::from_millis(1))=>{
 
                 }
             }

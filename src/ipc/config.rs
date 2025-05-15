@@ -25,7 +25,7 @@ impl Default for Configuration {
 impl Configuration {
     pub fn check_field_exists(&self) -> Result<(), Error> {
         let path = Path::new(&self.command_socket_path);
-        if path.try_exists().is_ok() {
+        if path.exists() {
             std::fs::remove_file(path).context(PathNotExistSnafu {
                 path: &self.command_socket_path,
             })?;
