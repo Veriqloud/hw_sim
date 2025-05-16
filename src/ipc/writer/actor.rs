@@ -91,10 +91,9 @@ impl IPCWriterActor {
                         .map(|chunk| {
                             let byte1 = chunk[0];
                             let byte2 = chunk[1];
-                            let angle_byte = ((byte1 & 0b110) >> 1) + ((byte2 & 0b110) << 3);
-                            let result_byte = (byte1 & 0b001) + ((byte2 & 0b001) << 4);
-
-                            ((angle_byte as u8), (result_byte as u8))
+                            let angle_byte = ((byte1 & 0b110) >> 1) | ((byte2 & 0b110) << 3);
+                            let result_byte = (byte1 & 0b001) | ((byte2 & 0b001) << 4);
+                            (angle_byte, result_byte)
                         })
                         .unzip();
 
