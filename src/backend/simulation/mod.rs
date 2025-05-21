@@ -51,10 +51,8 @@ pub trait VqSim {
 #[async_trait]
 impl VqSim for Simulator {
     fn start(&mut self) -> Result<(), HardwareError> {
-        tracing::info!("Starting the simulator !");
-        self.reset_time();
-        self.modulator_state = ModulatorState::Random;
-        tracing::info!("MODULATOR STATE CHANGED TO RANDOM !");
+        tracing::info!("Simulator: Start command acknowledged. Waiting for GC to start generation.");
+        // Does not start generation here. Generation starts after seed_and_start_generation.
         Ok(())
     }
 
@@ -79,23 +77,10 @@ impl VqSim for Simulator {
         tracing::info!("HW Reading Angles");
         match &self.modulator_state {
             ModulatorState::Idle => {
-                tracing::warn!("Modulator State is IDLE !");
-                if self.current_fifo_size < 1024 {
-                    Err(HardwareError::Other {
-                        reason: "Not enough bytes left in the fifo !".to_string(),
-                    })
-                } else {
-                    let v = self.correlations_random(1024).map_err(|e| {
-                        tracing::error!("ERROR : {:?}", e.to_string());
-                        HardwareError::Other {
-                            reason: e.to_string(),
-                        }
-                    })?;
-                    self.current_fifo_size -= 1024;
-                    return TryInto::<[u8; 1024]>::try_into(v).map_err(|e| HardwareError::Other {
-                        reason: format!("Could not convert Vec into array : {:?}", e),
-                    });
-                }
+                tracing::warn!("Modulator State is IDLE! Cannot read angles.");
+                Err(HardwareError::Other {
+                    reason: "Simulator is idle. Cannot read angles.".to_string(),
+                })
             }
             ModulatorState::Random => {
                 tracing::info!("Modulator state: Random");

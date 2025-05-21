@@ -39,7 +39,7 @@ impl IPCWriterActor {
         match msg {
             WriterMessage::Start => {
                 tracing::info!("Writer actor received Start message, spawning write_loop.");
-                self.simulator_handle.start().await.context(BackendSnafu)?;
+                // Simulator is started and seeded by IPCReader now.
                 let sim_h_cpy = self.simulator_handle.clone();
                 let (send, recv) = oneshot::channel();
                 self.stop_chan = Some(send);
@@ -48,7 +48,8 @@ impl IPCWriterActor {
             }
             WriterMessage::Stop => {
                 tracing::info!("Writer actor received Stop message");
-                self.simulator_handle.stop().await.context(BackendSnafu)?;
+                // Simulator is stopped by IPCReader now.
+                // This actor only needs to stop its own write_loop.
                 {
                     let stop_chan = self.stop_chan.take();
                     match stop_chan {
