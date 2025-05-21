@@ -38,7 +38,7 @@ impl IPCWriterActor {
     async fn handle_message(&mut self, msg: WriterMessage) -> Result<(), Error> {
         match msg {
             WriterMessage::Start => {
-                tracing::info!("Writer actor received Start message");
+                tracing::info!("Writer actor received Start message, spawning write_loop.");
                 self.simulator_handle.start().await.context(BackendSnafu)?;
                 let sim_h_cpy = self.simulator_handle.clone();
                 let (send, recv) = oneshot::channel();
@@ -86,6 +86,13 @@ impl IPCWriterActor {
 
             match simulator_handle.read_angles().await {
                 Ok(data) => {
+                    if data.len() % 2 != 0 {
+                        tracing::error!(
+                            "Received data with odd length {}, cannot process in pairs.",
+                            data.len()
+                        );
+                        break;
+                    }
                     let (angles_data, click_results_data): (Vec<u8>, Vec<u8>) = data
                         .chunks_exact(2)
                         .map(|chunk| {
@@ -97,26 +104,38 @@ impl IPCWriterActor {
                         })
                         .unzip();
 
-                    // TODO: handle error
-                    ANGLES_STREAM
-                        .get()
-                        .unwrap()
-                        .lock()
-                        .await
-                        .write_all(&angles_data)
-                        .await
-                        .unwrap();
-                    CLICK_RESULTS
-                        .get()
-                        .unwrap()
-                        .lock()
-                        .await
-                        .write_all(&click_results_data)
-                        .await
-                        .unwrap();
+                    if let Some(angles_stream_mutex) = ANGLES_STREAM.get() {
+                        if let Err(e) = angles_stream_mutex
+                            .lock()
+                            .await
+                            .write_all(&angles_data)
+                            .await
+                        {
+                            tracing::error!("Failed to write angles_data: {:?}", e);
+                            break; // Or handle error appropriately
+                        }
+                    } else {
+                        tracing::error!("ANGLES_STREAM not initialized");
+                        break;
+                    }
+
+                    if let Some(click_results_mutex) = CLICK_RESULTS.get() {
+                        if let Err(e) = click_results_mutex
+                            .lock()
+                            .await
+                            .write_all(&click_results_data)
+                            .await
+                        {
+                            tracing::error!("Failed to write click_results_data: {:?}", e);
+                            break; // Or handle error appropriately
+                        }
+                    } else {
+                        tracing::error!("CLICK_RESULTS not initialized");
+                        break;
+                    }
                 }
                 Err(e) => {
-                    tracing::error!("Failed to generate bytes: {:?}", e);
+                    tracing::error!("Failed to read angles (raw data) from simulator: {:?}", e);
                     break;
                 }
             }

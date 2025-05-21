@@ -50,13 +50,17 @@ impl<T: BytesGenerator> Actor<T> {
                 let _ = reply_to.send(Ok(()));
                 Ok(())
             }
-            ActorMessage::StartAtGc {
+            ActorMessage::SeedAndStartGeneration {
                 global_counter,
                 reply_to,
             } => {
+                tracing::debug!(
+                    "Processing SeedAndStartGeneration with GC : {}",
+                    &global_counter
+                );
                 let _ = reply_to.send(
                     self.simulator
-                        .start_at_gc(global_counter)
+                        .seed_and_start_generation(global_counter)
                         .context(HardwareSnafu),
                 );
                 Ok(())
@@ -88,7 +92,7 @@ pub enum ActorMessage {
     Stop {
         reply_to: oneshot::Sender<Result<(), Error>>,
     },
-    StartAtGc {
+    SeedAndStartGeneration {
         global_counter: u64,
         reply_to: oneshot::Sender<Result<(), Error>>,
     },
@@ -143,9 +147,9 @@ impl ActorHandle {
         recv.await.context(errors::ActorDiedSnafu)?
     }
 
-    pub async fn start_at_gc(&self, gc: u64) -> Result<(), Error> {
+    pub async fn seed_and_start_generation(&self, gc: u64) -> Result<(), Error> {
         let (send, recv) = oneshot::channel();
-        let message = ActorMessage::StartAtGc {
+        let message = ActorMessage::SeedAndStartGeneration {
             global_counter: gc,
             reply_to: send,
         };

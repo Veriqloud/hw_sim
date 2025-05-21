@@ -1,5 +1,6 @@
 {
-    "command_socket_path": "path as str",
-    "angle_file_path": "another path as str",
-    "click_result_file_path": "yet another path as str"
-}
+    "command_socket_path": "/dev/cmd_test",
+    "angle_file_path": "/dev/c2h_angles_test",
+    "click_result_file_path": "/dev/c2h_click_results_test",
+    "gc_file_path": "/dev/h2c_gc_test"
+ }

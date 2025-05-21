@@ -72,8 +72,6 @@ async fn main() {
 
     tracing::info!("IPC with configuration : {:?}", &configuration.ipc_config);
 
-    configuration.ipc_config.check_field_exists().unwrap();
-
     let sim = SimulatorBuilder::from_config(configuration.backend_config);
     tracing::info!("Simulator modulator: {:?}", sim.role);
     let simu_handle = backend::actor::ActorHandle::new(sim);
@@ -83,6 +81,22 @@ async fn main() {
         .truncate(true)
         .write(true)
         .open(configuration.ipc_config.angle_file_path)
+        .await
+        .unwrap();
+
+    let gc_file = tokio::fs::OpenOptions::new()
+        .create(true)
+        .truncate(true)
+        .write(true)
+        .open(configuration.ipc_config.gc_file_path)
+        .await
+        .unwrap();
+
+    let cmd_file = tokio::fs::OpenOptions::new()
+        .create(true)
+        .truncate(true)
+        .write(true)
+        .open(configuration.ipc_config.command_file_path)
         .await
         .unwrap();
 
@@ -97,24 +111,27 @@ async fn main() {
     let writer_handle =
         IPCWriterActorHandle::new(angle_file, click_result_file, simu_handle.clone());
 
-    let command_listener = UnixListener::bind(&configuration.ipc_config.command_socket_path)
-        .context(UnixStreamSnafu)
-        .unwrap();
+    let ipc = ipc::reader::IPCReader::new(cmd_file, gc_file, simu_handle, writer_handle);
+    ipc.start().await.unwrap();
+    // let command_listener = UnixListener::bind(&configuration.ipc_config.command_file_path)
+    //     .context(UnixStreamSnafu)
+    //     .unwrap();
 
-    loop {
-        let (command_stream, _) = command_listener
-            .accept()
-            .await
-            .context(UnixStreamSnafu)
-            .unwrap();
+    // loop {
+    //     let (command_stream, _) = command_listener
+    //         .accept()
+    //         .await
+    //         .context(UnixStreamSnafu)
+    //         .unwrap();
 
-        tracing::info!(
-            "Incoming stream from peer address {:?}",
-            &command_stream.peer_addr().unwrap()
-        );
-        let ipc = ipc::reader::IPCReader::new(command_stream, writer_handle.clone()).await;
-        if let Err(e) = ipc.start().await {
-            tracing::error!("Error starting IPCReader: {:?}", e);
-        }
-    }
+    //     tracing::info!(
+    //         "Incoming stream from peer address {:?}",
+    //         &command_stream.peer_addr().unwrap()
+    //     );
+    //     let ipc = ipc::reader::IPCReader::new(cmd_file, gc_file, simulator_handle, writer_handle);
+    //     // let ipc = ipc::reader::IPCReader::new(command_stream, writer_handle.clone());
+    //     if let Err(e) = ipc.start().await {
+    //         tracing::error!("Error starting IPCReader: {:?}", e);
+    //     }
+    // }
 }

@@ -1,36 +1,23 @@
-use std::{path::Path, str::FromStr};
+use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};
-use snafu::ResultExt;
-
-use crate::config::errors::{Error, PathNotExistSnafu};
 
 #[derive(Debug, Deserialize, Serialize, PartialEq)]
 pub struct Configuration {
-    pub command_socket_path: String,
-    pub angle_file_path: String,
-    pub click_result_file_path: String,
+    pub command_file_path: String,      // Should be /dev/cmd
+    pub angle_file_path: String,        // Should be /dev/c2h_angles
+    pub click_result_file_path: String, // Should be /dev/c2h_click_results
+    pub gc_file_path: String,           // Should be /dev/h2c_gc
 }
 
 impl Default for Configuration {
     fn default() -> Self {
         Self {
-            command_socket_path: String::from_str("./xdma0_user").unwrap(),
-            angle_file_path: String::from_str("./xdma0_c2h3_3").unwrap(),
-            click_result_file_path: String::from_str("./click_result").unwrap(),
+            command_file_path: String::from_str("/dev/cmd").unwrap(),
+            angle_file_path: String::from_str("/dev/c2h_angles").unwrap(),
+            click_result_file_path: String::from_str("/dev/c2h_click_results").unwrap(),
+            gc_file_path: String::from_str("/dev/h2c_gc").unwrap(),
         }
-    }
-}
-
-impl Configuration {
-    pub fn check_field_exists(&self) -> Result<(), Error> {
-        let path = Path::new(&self.command_socket_path);
-        if path.exists() {
-            std::fs::remove_file(path).context(PathNotExistSnafu {
-                path: &self.command_socket_path,
-            })?;
-        }
-        Ok(())
     }
 }
 
@@ -43,12 +30,12 @@ mod tests {
 
         let config_input: crate::ipc::config::Configuration =
             serde_json::from_str(&config_input_string).unwrap();
-
         assert_eq!(
             crate::ipc::config::Configuration {
-                command_socket_path: "path as str".to_owned(),
-                angle_file_path: "another path as str".to_owned(),
-                click_result_file_path: "yet another path as str".to_owned()
+                command_file_path: "/dev/cmd_test".to_owned(),
+                angle_file_path: "/dev/c2h_angles_test".to_owned(),
+                click_result_file_path: "/dev/c2h_click_results_test".to_owned(),
+                gc_file_path: "/dev/h2c_gc_test".to_owned()
             },
             config_input
         );

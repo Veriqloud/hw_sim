@@ -42,7 +42,7 @@ pub trait VqSim {
     async fn read_angles(&mut self) -> Result<[u8; 1024], HardwareError>;
     async fn generate_bytes(&mut self) -> Result<Vec<u8>, HardwareError>;
     fn set_angles(&mut self, angles: [u8; 4]) -> Result<(), HardwareError>;
-    fn start_at_gc(&mut self, gc: u64) -> Result<(), HardwareError>;
+    fn seed_and_start_generation(&mut self, gc: u64) -> Result<(), HardwareError>;
     fn set_role(&mut self, nb_parties: u32, position: u32) -> Result<(), HardwareError>;
     fn start(&mut self) -> Result<(), HardwareError>;
     fn stop(&mut self) -> Result<(), HardwareError>;
@@ -155,7 +155,8 @@ impl VqSim for Simulator {
             .checked_add(self.hw.gc_offset)
     }
 
-    fn start_at_gc(&mut self, gc: u64) -> Result<(), HardwareError> {
+    fn seed_and_start_generation(&mut self, gc: u64) -> Result<(), HardwareError> {
+        tracing::info!("Seeding PRNG with GC {} and starting generation.", gc);
         self.reset_seed(gc);
         self.set_gc(gc);
         self.reset_time();
