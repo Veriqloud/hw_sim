@@ -86,7 +86,24 @@ async fn app_main() -> Result<(), crate::errors::Error> {
     tracing::info!("Simulator modulator: {:?}", sim.role);
     let simu_handle = backend::actor::ActorHandle::new(sim);
 
-    run_ipc_connection_loop(&configuration.ipc_config, simu_handle).await;
+    tracing::info!("HAAAA ");
+
+    let angle_file = tokio::fs::OpenOptions::new()
+        .write(true)
+        .open(&configuration.ipc_config.angle_file_path)
+        .await
+        .unwrap();
+    tracing::info!("HAAAA ");
+    let click_result_file = tokio::fs::OpenOptions::new()
+        .write(true)
+        .open(&configuration.ipc_config.click_result_file_path)
+        .await
+        .unwrap();
+
+    tracing::info!("All IPC files opened successfully. Initializing IPC handlers.");
+    let writer_handle =
+        IPCWriterActorHandle::new(angle_file, click_result_file, simu_handle.clone());
+    run_ipc_connection_loop(&configuration.ipc_config, simu_handle, writer_handle).await;
 
     Ok(())
 }
@@ -95,31 +112,10 @@ async fn app_main() -> Result<(), crate::errors::Error> {
 async fn run_ipc_connection_loop(
     config: &IPCConfiguration,
     simu_handle: backend::actor::ActorHandle,
+    writer_handle: IPCWriterActorHandle,
 ) {
     loop {
         tracing::info!("Attempting to establish IPC connections. Waiting for a controller...");
-
-        // Open angle_file (hw_sim: Write, controller: Read)
-        // This will block until the controller opens its end for reading.
-        let angle_file = match tokio::fs::OpenOptions::new()
-            .write(true)
-            .open(&config.angle_file_path)
-            .await
-        {
-            Ok(file) => {
-                tracing::info!("Opened angle_file: {}", &config.angle_file_path);
-                file
-            }
-            Err(e) => {
-                tracing::error!(
-                    "Failed to open angle_file '{}': {}. Retrying in 5s.",
-                    &config.angle_file_path,
-                    e
-                );
-                sleep(Duration::from_secs(5)).await;
-                continue; // Retry the loop
-            }
-        };
 
         // Open gc_file (hw_sim: Read, controller: Write)
         let gc_file = match tokio::fs::OpenOptions::new()
@@ -163,35 +159,13 @@ async fn run_ipc_connection_loop(
             }
         };
 
-        // Open click_result_file (hw_sim: Write, controller: Read)
-        let click_result_file = match tokio::fs::OpenOptions::new()
-            .write(true)
-            .open(&config.click_result_file_path)
-            .await
-        {
-            Ok(file) => {
-                tracing::info!(
-                    "Opened click_result_file: {}",
-                    &config.click_result_file_path
-                );
-                file
-            }
-            Err(e) => {
-                tracing::error!(
-                    "Failed to open click_result_file '{}': {}. Retrying in 5s.",
-                    &config.click_result_file_path,
-                    e
-                );
-                sleep(Duration::from_secs(5)).await;
-                continue; // Retry the loop
-            }
-        };
-
         tracing::info!("All IPC files opened successfully. Initializing IPC handlers.");
-        let writer_handle =
-            IPCWriterActorHandle::new(angle_file, click_result_file, simu_handle.clone());
-        let ipc_reader =
-            ipc::reader::IPCReader::new(cmd_file, gc_file, simu_handle.clone(), writer_handle);
+        let ipc_reader = ipc::reader::IPCReader::new(
+            cmd_file,
+            gc_file,
+            simu_handle.clone(),
+            writer_handle.clone(),
+        );
 
         tracing::info!("IPC handlers initialized. Starting IPC command processing loop.");
         if let Err(e) = ipc_reader.start().await {
