@@ -37,7 +37,7 @@ impl SimulatorBuilder {
         SimulatorBuilder::default()
     }
 
-    pub fn from_config(conf: Configuration) -> Simulator {
+    pub fn from_config(conf: &Configuration) -> Simulator {
         let hw = HardwareBuilder::new()
             .with_pulse_distance(conf.pulse_distance)
             .build();
