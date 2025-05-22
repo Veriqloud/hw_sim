@@ -168,7 +168,10 @@ fn ensure_fifo(path_str: &str) -> Result<(), std::io::Error> {
         Ok(_) => tracing::info!("Removed existing file/FIFO at: {}", path_str),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
             // File not found, which is fine, we'll create it.
-            tracing::debug!("No existing file/FIFO at: {}. Proceeding to create.", path_str);
+            tracing::debug!(
+                "No existing file/FIFO at: {}. Proceeding to create.",
+                path_str
+            );
         }
         Err(e) => {
             // For other errors during removal, log and return the error.
