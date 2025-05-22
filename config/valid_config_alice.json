@@ -12,7 +12,7 @@
         "command_file_path":"./xdma0_user",
         "angle_file_path": "./xdma0_c2h3_3",
         "click_result_file_path": "./click_result",
-        "gc_file_path": "/h2c_gc_test"
+        "gc_file_path": "./h2c_gc_test"
     },
     "log_level": "Info"
 }
