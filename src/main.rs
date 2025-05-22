@@ -4,10 +4,13 @@ pub mod config;
 pub mod errors;
 pub mod ipc;
 
+use crate::config::Configuration;
 use backend::simulation::builder::SimulatorBuilder;
 use clap::Parser;
 use errors::UnixStreamSnafu;
 use ipc::writer::actor::IPCWriterActorHandle;
+use nix;
+use nix::sys::stat::Mode;
 use snafu::ResultExt;
 use std::fs;
 use std::os::unix::fs as unix_fs; // For mkfifo
@@ -16,8 +19,6 @@ use tokio::net::UnixListener;
 use tracing::trace_span;
 use tracing_subscriber::fmt::writer::MakeWriterExt;
 use uuid::Uuid;
-
-use crate::config::Configuration;
 
 #[tokio::main]
 async fn main() {
@@ -182,6 +183,6 @@ fn ensure_fifo(path_str: &str) -> Result<(), std::io::Error> {
 
     // Create the FIFO.
     tracing::info!("Creating FIFO at: {}", path_str);
-    unix_fs::mkfifo(path, 0o666)?; // Permissions: rw-rw-rw-
+    nix::unistd::mkfifo(path, Mode::)?; // Permissions: rw-rw-rw-
     Ok(())
 }
