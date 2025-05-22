@@ -13,7 +13,6 @@ use nix;
 use nix::sys::stat::Mode;
 use snafu::ResultExt;
 use std::fs;
-use std::os::unix::fs as unix_fs; // For mkfifo
 use std::path::Path;
 use tokio::net::UnixListener;
 use tracing::trace_span;
@@ -182,7 +181,9 @@ fn ensure_fifo(path_str: &str) -> Result<(), std::io::Error> {
     }
 
     // Create the FIFO.
-    tracing::info!("Creating FIFO at: {}", path_str);
-    nix::unistd::mkfifo(path, Mode::)?; // Permissions: rw-rw-rw-
+    tracing::info!("Creating FIFO at: {} with mode 0666", path_str);
+    // Permissions: rw-rw-rw- (0o666)
+    let mode = Mode::S_IRUSR | Mode::S_IWUSR | Mode::S_IRGRP | Mode::S_IWGRP | Mode::S_IROTH | Mode::S_IWOTH;
+    nix::unistd::mkfifo(path, mode)?;
     Ok(())
 }
