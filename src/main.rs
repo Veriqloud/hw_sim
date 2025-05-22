@@ -86,16 +86,14 @@ async fn main() {
 
     let gc_file = tokio::fs::OpenOptions::new()
         .create(true)
-        .truncate(true)
-        .write(true)
+        .read(true)
         .open(configuration.ipc_config.gc_file_path)
         .await
         .unwrap();
 
     let cmd_file = tokio::fs::OpenOptions::new()
         .create(true)
-        .truncate(true)
-        .write(true)
+        .read(true)
         .open(configuration.ipc_config.command_file_path)
         .await
         .unwrap();
