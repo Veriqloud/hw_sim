@@ -35,14 +35,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     tracing::info!("SimuController: Parsed IPC Config: {:?}", config.ipc_config);
 
-    // Open FIFO files
-    // Command file (write-only for controller)
-    tracing::info!("SimuController: Opening command file: {}", config.ipc_config.command_file_path);
-    let mut cmd_file = OpenOptions::new()
-        .write(true)
-        .open(&config.ipc_config.command_file_path)
+    // Open FIFO files in an order complementary to hw_sim
+    // hw_sim order: angle_file (write), gc_file (read), cmd_file (read), click_result_file (write)
+    // simu_controller order: angle_file (read), gc_file (write), cmd_file (write), click_result_file (read)
+
+    // Angle file (read-only for controller)
+    tracing::info!("SimuController: Opening angle file: {}", config.ipc_config.angle_file_path);
+    let mut angle_file = OpenOptions::new()
+        .read(true)
+        .open(&config.ipc_config.angle_file_path)
         .await?;
-    tracing::info!("SimuController: Opened command file successfully.");
+    tracing::info!("SimuController: Opened angle file successfully.");
 
     // Global Counter file (write-only for controller)
     tracing::info!("SimuController: Opening GC file: {}", config.ipc_config.gc_file_path);
@@ -52,13 +55,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .await?;
     tracing::info!("SimuController: Opened GC file successfully.");
 
-    // Angle file (read-only for controller)
-    tracing::info!("SimuController: Opening angle file: {}", config.ipc_config.angle_file_path);
-    let mut angle_file = OpenOptions::new()
-        .read(true)
-        .open(&config.ipc_config.angle_file_path)
+    // Command file (write-only for controller)
+    tracing::info!("SimuController: Opening command file: {}", config.ipc_config.command_file_path);
+    let mut cmd_file = OpenOptions::new()
+        .write(true)
+        .open(&config.ipc_config.command_file_path)
         .await?;
-    tracing::info!("SimuController: Opened angle file successfully.");
+    tracing::info!("SimuController: Opened command file successfully.");
 
     // Click Result file (read-only for controller)
     tracing::info!("SimuController: Opening click result file: {}", config.ipc_config.click_result_file_path);
