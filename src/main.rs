@@ -40,6 +40,12 @@ async fn main() {
         Configuration::default()
     };
 
+    tracing::info!(
+        "Running with configuration: {}",
+        serde_json::to_string_pretty(&configuration)
+            .unwrap_or_else(|_| "Failed to serialize config".to_string())
+    );
+
     // Initialize logger
     // This part should ideally be in main_app and use Snafu context.
     // For now, keeping it as is to match the provided main.rs structure.
@@ -69,21 +75,7 @@ async fn main() {
     tracing::info!("log_level: {:?}", stdout_level);
     tracing::info!("log file path: {}", logfile_path_str);
 
-    tracing::info!(
-        "Running with configuration: {}",
-        serde_json::to_string_pretty(&configuration)
-            .unwrap_or_else(|_| "Failed to serialize config".to_string())
-    );
-
-    // Setup IPC FIFOs using the new method on Configuration
-    // This call can fail, and ideally, main should return a Result.
-    // For now, panicking on failure to keep it simple based on existing main structure.
-    if let Err(e) = configuration.setup_ipc_fifos() {
-        tracing::error!("Failed to set up IPC FIFOs: {}. Exiting.", e);
-        // In a main returning Result, this would be:
-        // configuration.setup_ipc_fifos().context(errors::ConfigurationSnafu)?;
-        panic!("IPC FIFO setup failed: {}", e);
-    }
+    &configuration.ipc_config.setup_ipc_fifos().unwrap();
 
     tracing::info!(
         "Simulator with configuration : {:?}",
@@ -230,27 +222,4 @@ async fn main() {
         // A small delay before restarting the loop to prevent tight looping on persistent errors.
         sleep(Duration::from_secs(1)).await;
     }
-    // The main loop above will run indefinitely. The code below this point is effectively unreachable.
-    // let command_listener = UnixListener::bind(&configuration.ipc_config.command_file_path)
-    //     .context(UnixStreamSnafu)
-    //     .unwrap();
-
-    // loop {
-    //     let (command_stream, _) = command_listener
-    //         .accept()
-    //         .await
-    //         .context(UnixStreamSnafu)
-    //         .unwrap();
-
-    //     tracing::info!(
-    //         "Incoming stream from peer address {:?}",
-    //         &command_stream.peer_addr().unwrap()
-    //     );
-    //     let ipc = ipc::reader::IPCReader::new(cmd_file, gc_file, simulator_handle, writer_handle);
-    //     // let ipc = ipc::reader::IPCReader::new(command_stream, writer_handle.clone());
-    //     if let Err(e) = ipc.start().await {
-    //         tracing::error!("Error starting IPCReader: {:?}", e);
-    //     }
-    // }
 }
-// The ensure_fifo function is now removed from main.rs and its logic is inside config.rs
