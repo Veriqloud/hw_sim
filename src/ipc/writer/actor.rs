@@ -5,8 +5,8 @@ use tokio::io::AsyncWriteExt;
 use tokio::sync::oneshot::Receiver;
 use tokio::sync::{mpsc, oneshot, Mutex, OnceCell};
 
-use super::errors::Error;
 use super::super::super::backend::actor::ActorHandle as SimulatorHandle;
+use super::errors::Error;
 
 static ANGLES_STREAM: OnceCell<Mutex<File>> = OnceCell::const_new();
 static CLICK_RESULTS: OnceCell<Mutex<File>> = OnceCell::const_new();
