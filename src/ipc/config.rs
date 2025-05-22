@@ -3,7 +3,9 @@ use serde::{Deserialize, Serialize};
 use snafu::ResultExt;
 use std::{fs, path::Path, str::FromStr};
 
-use crate::config::errors::{Error, FifoCreationSnafu};
+// Use the new local error type
+pub mod errors;
+use self::errors::{Error, FifoCreationSnafu};
 
 #[derive(Debug, Deserialize, Serialize, PartialEq)]
 pub struct Configuration {
@@ -19,14 +21,14 @@ impl Default for Configuration {
             command_file_path: String::from_str("/dev/cmd").unwrap(),
             angle_file_path: String::from_str("/dev/c2h_angles").unwrap(),
             click_result_file_path: String::from_str("/dev/c2h_click_results").unwrap(),
-            gc_file_path: String::from_str("/dev/h2c_gc").unwrap(),
+            gc_file_path: String::from_str("./files/gc").unwrap(), // Adjusted default for local testing
         }
     }
 }
 
 impl Configuration {
     pub fn setup_ipc_fifos(&self) -> Result<(), Error> {
-        tracing::info!("Ensuring IPC FIFOs are set up...");
+        tracing::info!("Ensuring IPC FIFOs are set up for IPC config...");
         let ipc_paths = [
             &self.command_file_path,
             &self.angle_file_path,
@@ -39,7 +41,7 @@ impl Configuration {
                 path: path_str.to_string(),
             })?;
         }
-        tracing::info!("IPC FIFOs setup complete.");
+        tracing::info!("IPC FIFOs setup complete for IPC config.");
         Ok(())
     }
 }

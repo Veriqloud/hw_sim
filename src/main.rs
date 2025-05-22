@@ -7,75 +7,69 @@ pub mod ipc;
 use crate::config::Configuration;
 use backend::simulation::builder::SimulatorBuilder;
 use clap::Parser;
-// errors::UnixStreamSnafu is not used directly in main after refactor
 use ipc::writer::actor::IPCWriterActorHandle;
-// nix, nix::sys::stat::Mode, std::fs, std::path::Path are no longer needed here
 use snafu::ResultExt;
 use std::time::Duration;
-// tokio::net::UnixListener is not used in the current main loop logic
-use tokio::time::sleep; // Added for delays in the loop
+use tokio::time::sleep;
 use tracing::trace_span;
 use tracing_subscriber::fmt::writer::MakeWriterExt;
 use uuid::Uuid;
 
+// Main entry point
 #[tokio::main]
 async fn main() {
-    let span = trace_span!("main");
+    if let Err(e) = app_main().await {
+        // If logger is initialized, error would have been traced.
+        // This println is for errors before logger setup or if tracing fails.
+        eprintln!("Application exited with error: {}", e);
+        std::process::exit(1);
+    }
+}
+
+// Core application logic
+async fn app_main() -> Result<(), crate::errors::Error> {
+    let span = trace_span!("app_main");
+    let _guard = span.enter();
 
     let args = cli_args::CliArgs::parse();
 
     let configuration: Configuration = if let Some(path) = args.conf.config_path {
-        // Error handling for Configuration::new will be done in main_app with Snafu
-        // For now, this direct match is kept from the original main structure.
-        // A full refactor would move this into main_app as well.
-        match Configuration::new(path) {
-            Ok(c) => c,
-            Err(e) => {
-                println!("ERROR loading configuration: {}", e);
-                span.in_scope(|| tracing::error!("Configuration error: {}", e));
-                return; // Exit if config loading fails before logger setup
-            }
-        }
+        Configuration::new(path).context(errors::ConfigLoadSnafu)?
     } else {
         Configuration::default()
     };
-
-    tracing::info!(
-        "Running with configuration: {}",
-        serde_json::to_string_pretty(&configuration)
-            .unwrap_or_else(|_| "Failed to serialize config".to_string())
-    );
-
+    
     // Initialize logger
-    // This part should ideally be in main_app and use Snafu context.
-    // For now, keeping it as is to match the provided main.rs structure.
     let log_level_filter =
-        match TryInto::<tracing_subscriber::filter::LevelFilter>::try_into(configuration.log_level)
-        {
-            Ok(level_filter) => level_filter,
-            Err(e) => {
-                println!("Could not initialize logger (invalid log level): {}", e);
-                return;
-            }
-        };
+        TryInto::<tracing_subscriber::filter::LevelFilter>::try_into(configuration.log_level.clone()) // Clone LogLevel
+            .context(errors::LoggerInitializationSnafu)?;
 
     let log_id = Uuid::new_v4();
     let logfile_name = format!("simu_logs_{log_id}.log");
     let logfile_path_str = format!("{}/{}", args.logs_location, &logfile_name);
 
-    let logfile = tracing_appender::rolling::daily(&args.logs_location, &logfile_name);
-    let stdout_level = log_level_filter
-        .into_level()
-        .unwrap_or(tracing::Level::INFO);
-    let stdout = std::io::stdout.with_max_level(stdout_level);
+    let logfile_appender = tracing_appender::rolling::daily(&args.logs_location, &logfile_name);
+    let stdout_level = log_level_filter.into_level().unwrap_or(tracing::Level::INFO);
+    let stdout_writer = std::io::stdout.with_max_level(stdout_level);
+    
+    // Attempt to initialize logger. This can fail if called multiple times.
+    // For robust applications, consider using `set_global_default` and handling its Result,
+    // or ensuring `init` is only called once. For this refactor, we assume it's called once.
     tracing_subscriber::fmt()
-        .with_writer(stdout.and(logfile))
-        .init(); // This can panic if called multiple times.
+        .with_writer(stdout_writer.and(logfile_appender))
+        .init();
 
     tracing::info!("log_level: {:?}", stdout_level);
     tracing::info!("log file path: {}", logfile_path_str);
 
-    &configuration.ipc_config.setup_ipc_fifos().unwrap();
+    tracing::info!(
+        "Running with configuration: {}",
+        serde_json::to_string_pretty(&configuration)
+            .unwrap_or_else(|e| format!("Failed to serialize config for logging: {}", e))
+    );
+    
+    // Setup IPC FIFOs using the method on ipc_config
+    configuration.ipc_config.setup_ipc_fifos().context(errors::IpcConfigSnafu)?;
 
     tracing::info!(
         "Simulator with configuration : {:?}",
@@ -83,11 +77,20 @@ async fn main() {
     );
     tracing::info!("IPC with configuration : {:?}", &configuration.ipc_config);
 
-    let sim = SimulatorBuilder::from_config(configuration.backend_config);
+    let sim = SimulatorBuilder::from_config(configuration.backend_config.clone()); // Clone if not Copy
     tracing::info!("Simulator modulator: {:?}", sim.role);
     let simu_handle = backend::actor::ActorHandle::new(sim);
+    
+    run_ipc_connection_loop(&configuration, simu_handle).await;
 
-    // Import the specific error type for matching IPC errors
+    Ok(())
+}
+
+// Extracted IPC connection loop
+async fn run_ipc_connection_loop(
+    config: &Configuration,
+    simu_handle: backend::actor::ActorHandle,
+) {
     use crate::ipc::reader::errors::Error as IpcReaderError;
 
     loop {
