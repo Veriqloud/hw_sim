@@ -77,30 +77,24 @@ async fn main() {
     let simu_handle = backend::actor::ActorHandle::new(sim);
 
     let angle_file = tokio::fs::OpenOptions::new()
-        .create(true)
-        .truncate(true)
         .write(true)
         .open(configuration.ipc_config.angle_file_path)
         .await
         .unwrap();
 
     let gc_file = tokio::fs::OpenOptions::new()
-        .create(true)
         .read(true)
         .open(configuration.ipc_config.gc_file_path)
         .await
         .unwrap();
 
     let cmd_file = tokio::fs::OpenOptions::new()
-        .create(true)
         .read(true)
         .open(configuration.ipc_config.command_file_path)
         .await
         .unwrap();
 
     let click_result_file = tokio::fs::OpenOptions::new()
-        .create(true)
-        .truncate(true)
         .write(true)
         .open(configuration.ipc_config.click_result_file_path)
         .await
