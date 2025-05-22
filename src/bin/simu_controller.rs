@@ -35,11 +35,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     tracing::info!("SimuController: Parsed IPC Config: {:?}", config.ipc_config);
 
-    // Open FIFO files in an order complementary to hw_sim
-    // hw_sim order: angle_file (write), gc_file (read), cmd_file (read), click_result_file (write)
-    // simu_controller order: angle_file (read), gc_file (write), cmd_file (write), click_result_file (read)
+    // Open FIFO files in an order complementary to hw_sim's combined opening sequence.
+    // hw_sim effective order:
+    // 1. angle_file (write)
+    // 2. click_result_file (write)
+    // 3. gc_file (read)
+    // 4. cmd_file (read)
+    //
+    // simu_controller complementary order:
+    // 1. angle_file (read)
+    // 2. click_result_file (read)
+    // 3. gc_file (write)
+    // 4. cmd_file (write)
 
-    // Angle file (read-only for controller)
+    // 1. Angle file (read-only for controller)
     tracing::info!("SimuController: Opening angle file: {}", config.ipc_config.angle_file_path);
     let mut angle_file = OpenOptions::new()
         .read(true)
@@ -47,7 +56,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .await?;
     tracing::info!("SimuController: Opened angle file successfully.");
 
-    // Global Counter file (write-only for controller)
+    // 2. Click Result file (read-only for controller)
+    tracing::info!("SimuController: Opening click result file: {}", config.ipc_config.click_result_file_path);
+    let mut click_result_file = OpenOptions::new()
+        .read(true)
+        .open(&config.ipc_config.click_result_file_path)
+        .await?;
+    tracing::info!("SimuController: Opened click result file successfully.");
+
+    // 3. Global Counter file (write-only for controller)
     tracing::info!("SimuController: Opening GC file: {}", config.ipc_config.gc_file_path);
     let mut gc_file = OpenOptions::new()
         .write(true)
@@ -55,21 +72,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .await?;
     tracing::info!("SimuController: Opened GC file successfully.");
 
-    // Command file (write-only for controller)
+    // 4. Command file (write-only for controller)
     tracing::info!("SimuController: Opening command file: {}", config.ipc_config.command_file_path);
     let mut cmd_file = OpenOptions::new()
         .write(true)
         .open(&config.ipc_config.command_file_path)
         .await?;
     tracing::info!("SimuController: Opened command file successfully.");
-
-    // Click Result file (read-only for controller)
-    tracing::info!("SimuController: Opening click result file: {}", config.ipc_config.click_result_file_path);
-    let mut click_result_file = OpenOptions::new()
-        .read(true)
-        .open(&config.ipc_config.click_result_file_path)
-        .await?;
-    tracing::info!("SimuController: Opened click result file successfully.");
 
     // --- Step 1: Send Start command ---
     tracing::info!("SimuController: Sending Start command (0x{:02X})", CMD_START);

@@ -92,15 +92,16 @@ async fn app_main() -> Result<(), crate::errors::Error> {
         .write(true)
         .open(&configuration.ipc_config.angle_file_path)
         .await
-        .unwrap();
-    tracing::info!("HAAAA ");
+        .context(errors::IOSnafu)?;
+    tracing::info!("Opened angle_file for writing: {}", &configuration.ipc_config.angle_file_path);
     let click_result_file = tokio::fs::OpenOptions::new()
         .write(true)
         .open(&configuration.ipc_config.click_result_file_path)
         .await
-        .unwrap();
+        .context(errors::IOSnafu)?;
+    tracing::info!("Opened click_result_file for writing: {}", &configuration.ipc_config.click_result_file_path);
 
-    tracing::info!("All IPC files opened successfully. Initializing IPC handlers.");
+    tracing::info!("Writer-side IPC files opened successfully. Initializing IPCWriterActorHandle.");
     let writer_handle =
         IPCWriterActorHandle::new(angle_file, click_result_file, simu_handle.clone());
     run_ipc_connection_loop(&configuration.ipc_config, simu_handle, writer_handle).await;
