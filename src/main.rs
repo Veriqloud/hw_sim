@@ -39,24 +39,28 @@ async fn main() {
     } else {
         Configuration::default()
     };
-    
+
     // Initialize logger
     // This part should ideally be in main_app and use Snafu context.
     // For now, keeping it as is to match the provided main.rs structure.
-    let log_level_filter = match TryInto::<tracing_subscriber::filter::LevelFilter>::try_into(configuration.log_level.clone()) {
-        Ok(level_filter) => level_filter,
-        Err(e) => {
-            println!("Could not initialize logger (invalid log level): {}", e);
-            return;
-        }
-    };
+    let log_level_filter =
+        match TryInto::<tracing_subscriber::filter::LevelFilter>::try_into(configuration.log_level)
+        {
+            Ok(level_filter) => level_filter,
+            Err(e) => {
+                println!("Could not initialize logger (invalid log level): {}", e);
+                return;
+            }
+        };
 
     let log_id = Uuid::new_v4();
     let logfile_name = format!("simu_logs_{log_id}.log");
     let logfile_path_str = format!("{}/{}", args.logs_location, &logfile_name);
 
     let logfile = tracing_appender::rolling::daily(&args.logs_location, &logfile_name);
-    let stdout_level = log_level_filter.into_level().unwrap_or(tracing::Level::INFO);
+    let stdout_level = log_level_filter
+        .into_level()
+        .unwrap_or(tracing::Level::INFO);
     let stdout = std::io::stdout.with_max_level(stdout_level);
     tracing_subscriber::fmt()
         .with_writer(stdout.and(logfile))
@@ -64,10 +68,11 @@ async fn main() {
 
     tracing::info!("log_level: {:?}", stdout_level);
     tracing::info!("log file path: {}", logfile_path_str);
-    
+
     tracing::info!(
         "Running with configuration: {}",
-        serde_json::to_string_pretty(&configuration).unwrap_or_else(|_| "Failed to serialize config".to_string())
+        serde_json::to_string_pretty(&configuration)
+            .unwrap_or_else(|_| "Failed to serialize config".to_string())
     );
 
     // Setup IPC FIFOs using the new method on Configuration
@@ -86,7 +91,7 @@ async fn main() {
     );
     tracing::info!("IPC with configuration : {:?}", &configuration.ipc_config);
 
-    let sim = SimulatorBuilder::from_config(configuration.backend_config.clone());
+    let sim = SimulatorBuilder::from_config(configuration.backend_config);
     tracing::info!("Simulator modulator: {:?}", sim.role);
     let simu_handle = backend::actor::ActorHandle::new(sim);
 
