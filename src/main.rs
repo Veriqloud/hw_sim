@@ -209,11 +209,9 @@ async fn main() {
                 {
                     tracing::info!("Controller disconnected (EOF on command channel). Preparing for new connection.");
                 }
-                IpcReaderError::GcFileIo { source }
-                    if source.kind() == std::io::ErrorKind::UnexpectedEof =>
-                {
-                    tracing::info!("Controller disconnected (EOF on GC channel). Preparing for new connection.");
-                }
+                // The GcFileIo variant does not exist in ipc::reader::errors::Error, so this arm is removed.
+                // Other IpcReaderError types, including any potential EOF on other files if they were
+                // to be specifically added to the enum, will be caught by the wildcard below.
                 _ => {
                     tracing::warn!(
                         "IPC processing ended with an error: {:?}. Preparing for new connection.",
