@@ -5,7 +5,6 @@ pub mod errors;
 pub mod ipc;
 
 use crate::config::Configuration;
-use crate::ipc::reader::errors::Error as IpcReaderError;
 use backend::simulation::builder::SimulatorBuilder;
 use clap::Parser;
 use ipc::{config::Configuration as IPCConfiguration, writer::actor::IPCWriterActorHandle};
@@ -19,8 +18,6 @@ use uuid::Uuid;
 #[tokio::main]
 async fn main() {
     if let Err(e) = app_main().await {
-        // If logger is initialized, error would have been traced.
-        // This println is for errors before logger setup or if tracing fails.
         eprintln!("Application exited with error: {}", e);
         std::process::exit(1);
     }
@@ -86,20 +83,24 @@ async fn app_main() -> Result<(), crate::errors::Error> {
     tracing::info!("Simulator modulator: {:?}", sim.role);
     let simu_handle = backend::actor::ActorHandle::new(sim);
 
-    tracing::info!("HAAAA ");
-
     let angle_file = tokio::fs::OpenOptions::new()
         .write(true)
         .open(&configuration.ipc_config.angle_file_path)
         .await
         .context(errors::IOSnafu)?;
-    tracing::info!("Opened angle_file for writing: {}", &configuration.ipc_config.angle_file_path);
+    tracing::info!(
+        "Opened angle_file for writing: {}",
+        &configuration.ipc_config.angle_file_path
+    );
     let click_result_file = tokio::fs::OpenOptions::new()
         .write(true)
         .open(&configuration.ipc_config.click_result_file_path)
         .await
         .context(errors::IOSnafu)?;
-    tracing::info!("Opened click_result_file for writing: {}", &configuration.ipc_config.click_result_file_path);
+    tracing::info!(
+        "Opened click_result_file for writing: {}",
+        &configuration.ipc_config.click_result_file_path
+    );
 
     tracing::info!("Writer-side IPC files opened successfully. Initializing IPCWriterActorHandle.");
     let writer_handle =
