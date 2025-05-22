@@ -14,6 +14,7 @@ use nix::sys::stat::Mode;
 use snafu::ResultExt;
 use std::fs;
 use std::path::Path;
+use std::time::Duration;
 use tokio::net::UnixListener;
 use tokio::time::sleep; // Added for delays in the loop
 use tracing::trace_span;
@@ -105,52 +106,93 @@ async fn main() {
 
         // Open angle_file (hw_sim: Write, controller: Read)
         // This will block until the controller opens its end for reading.
-        let angle_file = match tokio::fs::OpenOptions::new().write(true).open(&configuration.ipc_config.angle_file_path).await {
+        let angle_file = match tokio::fs::OpenOptions::new()
+            .write(true)
+            .open(&configuration.ipc_config.angle_file_path)
+            .await
+        {
             Ok(file) => {
-                tracing::info!("Opened angle_file: {}", &configuration.ipc_config.angle_file_path);
+                tracing::info!(
+                    "Opened angle_file: {}",
+                    &configuration.ipc_config.angle_file_path
+                );
                 file
             }
             Err(e) => {
-                tracing::error!("Failed to open angle_file '{}': {}. Retrying in 5s.", &configuration.ipc_config.angle_file_path, e);
+                tracing::error!(
+                    "Failed to open angle_file '{}': {}. Retrying in 5s.",
+                    &configuration.ipc_config.angle_file_path,
+                    e
+                );
                 sleep(Duration::from_secs(5)).await;
                 continue; // Retry the loop
             }
         };
 
         // Open gc_file (hw_sim: Read, controller: Write)
-        let gc_file = match tokio::fs::OpenOptions::new().read(true).open(&configuration.ipc_config.gc_file_path).await {
+        let gc_file = match tokio::fs::OpenOptions::new()
+            .read(true)
+            .open(&configuration.ipc_config.gc_file_path)
+            .await
+        {
             Ok(file) => {
                 tracing::info!("Opened gc_file: {}", &configuration.ipc_config.gc_file_path);
                 file
             }
             Err(e) => {
-                tracing::error!("Failed to open gc_file '{}': {}. Retrying in 5s.", &configuration.ipc_config.gc_file_path, e);
+                tracing::error!(
+                    "Failed to open gc_file '{}': {}. Retrying in 5s.",
+                    &configuration.ipc_config.gc_file_path,
+                    e
+                );
                 sleep(Duration::from_secs(5)).await;
                 continue; // Retry the loop
             }
         };
 
         // Open cmd_file (hw_sim: Read, controller: Write)
-        let cmd_file = match tokio::fs::OpenOptions::new().read(true).open(&configuration.ipc_config.command_file_path).await {
+        let cmd_file = match tokio::fs::OpenOptions::new()
+            .read(true)
+            .open(&configuration.ipc_config.command_file_path)
+            .await
+        {
             Ok(file) => {
-                tracing::info!("Opened cmd_file: {}", &configuration.ipc_config.command_file_path);
+                tracing::info!(
+                    "Opened cmd_file: {}",
+                    &configuration.ipc_config.command_file_path
+                );
                 file
             }
             Err(e) => {
-                tracing::error!("Failed to open cmd_file '{}': {}. Retrying in 5s.", &configuration.ipc_config.command_file_path, e);
+                tracing::error!(
+                    "Failed to open cmd_file '{}': {}. Retrying in 5s.",
+                    &configuration.ipc_config.command_file_path,
+                    e
+                );
                 sleep(Duration::from_secs(5)).await;
                 continue; // Retry the loop
             }
         };
 
         // Open click_result_file (hw_sim: Write, controller: Read)
-        let click_result_file = match tokio::fs::OpenOptions::new().write(true).open(&configuration.ipc_config.click_result_file_path).await {
+        let click_result_file = match tokio::fs::OpenOptions::new()
+            .write(true)
+            .open(&configuration.ipc_config.click_result_file_path)
+            .await
+        {
             Ok(file) => {
-                tracing::info!("Opened click_result_file: {}", &configuration.ipc_config.click_result_file_path);
+                tracing::info!(
+                    "Opened click_result_file: {}",
+                    &configuration.ipc_config.click_result_file_path
+                );
                 file
             }
             Err(e) => {
-                tracing::error!("Failed to open click_result_file '{}': {}. Retrying in 5s.", &configuration.ipc_config.click_result_file_path, e);
+                tracing::error!(
+                    "Failed to open click_result_file '{}': {}. Retrying in 5s.",
+                    &configuration.ipc_config.click_result_file_path,
+                    e
+                );
                 sleep(Duration::from_secs(5)).await;
                 continue; // Retry the loop
             }
@@ -159,26 +201,36 @@ async fn main() {
         tracing::info!("All IPC files opened successfully. Initializing IPC handlers.");
         let writer_handle =
             IPCWriterActorHandle::new(angle_file, click_result_file, simu_handle.clone());
-        let ipc_reader = ipc::reader::IPCReader::new(cmd_file, gc_file, simu_handle.clone(), writer_handle);
+        let ipc_reader =
+            ipc::reader::IPCReader::new(cmd_file, gc_file, simu_handle.clone(), writer_handle);
 
         tracing::info!("IPC handlers initialized. Starting IPC command processing loop.");
         if let Err(e) = ipc_reader.start().await {
             match e {
-                IpcReaderError::CommandFileIo { source } if source.kind() == std::io::ErrorKind::UnexpectedEof => {
+                IpcReaderError::CommandFileIo { source }
+                    if source.kind() == std::io::ErrorKind::UnexpectedEof =>
+                {
                     tracing::info!("Controller disconnected (EOF on command channel). Preparing for new connection.");
                 }
-                IpcReaderError::GcFileIo { source } if source.kind() == std::io::ErrorKind::UnexpectedEof => {
+                IpcReaderError::GcFileIo { source }
+                    if source.kind() == std::io::ErrorKind::UnexpectedEof =>
+                {
                     tracing::info!("Controller disconnected (EOF on GC channel). Preparing for new connection.");
                 }
                 _ => {
-                    tracing::warn!("IPC processing ended with an error: {:?}. Preparing for new connection.", e);
+                    tracing::warn!(
+                        "IPC processing ended with an error: {:?}. Preparing for new connection.",
+                        e
+                    );
                 }
             }
         } else {
             tracing::info!("IPCReader exited cleanly (this is unexpected if it's meant to run indefinitely). Preparing for new connection.");
         }
-        
-        tracing::info!("Current IPC session ended. Will attempt to listen for a new controller connection.");
+
+        tracing::info!(
+            "Current IPC session ended. Will attempt to listen for a new controller connection."
+        );
         // Files and handlers are dropped here as they go out of scope.
         // A small delay before restarting the loop to prevent tight looping on persistent errors.
         sleep(Duration::from_secs(1)).await;
@@ -242,7 +294,12 @@ fn ensure_fifo(path_str: &str) -> Result<(), std::io::Error> {
     // Create the FIFO.
     tracing::info!("Creating FIFO at: {} with mode 0666", path_str);
     // Permissions: rw-rw-rw- (0o666)
-    let mode = Mode::S_IRUSR | Mode::S_IWUSR | Mode::S_IRGRP | Mode::S_IWGRP | Mode::S_IROTH | Mode::S_IWOTH;
+    let mode = Mode::S_IRUSR
+        | Mode::S_IWUSR
+        | Mode::S_IRGRP
+        | Mode::S_IWGRP
+        | Mode::S_IROTH
+        | Mode::S_IWOTH;
     nix::unistd::mkfifo(path, mode)?;
     Ok(())
 }
