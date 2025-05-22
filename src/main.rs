@@ -7,15 +7,12 @@ pub mod ipc;
 use crate::config::Configuration;
 use backend::simulation::builder::SimulatorBuilder;
 use clap::Parser;
-use errors::UnixStreamSnafu;
+// errors::UnixStreamSnafu is not used directly in main after refactor
 use ipc::writer::actor::IPCWriterActorHandle;
-use nix;
-use nix::sys::stat::Mode;
+// nix, nix::sys::stat::Mode, std::fs, std::path::Path are no longer needed here
 use snafu::ResultExt;
-use std::fs;
-use std::path::Path;
 use std::time::Duration;
-use tokio::net::UnixListener;
+// tokio::net::UnixListener is not used in the current main loop logic
 use tokio::time::sleep; // Added for delays in the loop
 use tracing::trace_span;
 use tracing_subscriber::fmt::writer::MakeWriterExt;
@@ -28,73 +25,68 @@ async fn main() {
     let args = cli_args::CliArgs::parse();
 
     let configuration: Configuration = if let Some(path) = args.conf.config_path {
+        // Error handling for Configuration::new will be done in main_app with Snafu
+        // For now, this direct match is kept from the original main structure.
+        // A full refactor would move this into main_app as well.
         match Configuration::new(path) {
             Ok(c) => c,
             Err(e) => {
-                println!("ERROR: {}", e);
-                span.in_scope(|| tracing::error!("{}", e));
-                return;
+                println!("ERROR loading configuration: {}", e);
+                span.in_scope(|| tracing::error!("Configuration error: {}", e));
+                return; // Exit if config loading fails before logger setup
             }
         }
     } else {
         Configuration::default()
     };
-
-    let config_string = serde_json::to_string(&configuration).unwrap();
-    tracing::info!(
-        "Running with configuration: {}",
-        serde_json::to_string_pretty(&config_string).unwrap()
-    );
-
-    match TryInto::<tracing_subscriber::filter::LevelFilter>::try_into(configuration.log_level) {
-        Ok(log_level) => {
-            // Helps identify simulator sessions, and separate logs when multiples simulators are running on a single machine (local mode, for development)
-            let log_id = Uuid::new_v4();
-            let logfile = tracing_appender::rolling::daily(
-                &args.logs_location,
-                format!("simu_logs_{log_id}.log"),
-            );
-            let stdout = std::io::stdout.with_max_level(log_level.into_level().unwrap());
-            tracing_subscriber::fmt()
-                .with_writer(stdout.and(logfile))
-                .init();
-            tracing::info!("log_level: {:?}", log_level.into_level().unwrap());
-            tracing::info!(
-                "log file name: {}",
-                format!("{}/simu_logs_{}", args.logs_location, log_id)
-            );
-        }
+    
+    // Initialize logger
+    // This part should ideally be in main_app and use Snafu context.
+    // For now, keeping it as is to match the provided main.rs structure.
+    let log_level_filter = match TryInto::<tracing_subscriber::filter::LevelFilter>::try_into(configuration.log_level.clone()) {
+        Ok(level_filter) => level_filter,
         Err(e) => {
-            println!("Could not initialize logger because {e}");
+            println!("Could not initialize logger (invalid log level): {}", e);
             return;
         }
+    };
+
+    let log_id = Uuid::new_v4();
+    let logfile_name = format!("simu_logs_{log_id}.log");
+    let logfile_path_str = format!("{}/{}", args.logs_location, &logfile_name);
+
+    let logfile = tracing_appender::rolling::daily(&args.logs_location, &logfile_name);
+    let stdout_level = log_level_filter.into_level().unwrap_or(tracing::Level::INFO);
+    let stdout = std::io::stdout.with_max_level(stdout_level);
+    tracing_subscriber::fmt()
+        .with_writer(stdout.and(logfile))
+        .init(); // This can panic if called multiple times.
+
+    tracing::info!("log_level: {:?}", stdout_level);
+    tracing::info!("log file path: {}", logfile_path_str);
+    
+    tracing::info!(
+        "Running with configuration: {}",
+        serde_json::to_string_pretty(&configuration).unwrap_or_else(|_| "Failed to serialize config".to_string())
+    );
+
+    // Setup IPC FIFOs using the new method on Configuration
+    // This call can fail, and ideally, main should return a Result.
+    // For now, panicking on failure to keep it simple based on existing main structure.
+    if let Err(e) = configuration.setup_ipc_fifos() {
+        tracing::error!("Failed to set up IPC FIFOs: {}. Exiting.", e);
+        // In a main returning Result, this would be:
+        // configuration.setup_ipc_fifos().context(errors::ConfigurationSnafu)?;
+        panic!("IPC FIFO setup failed: {}", e);
     }
 
     tracing::info!(
         "Simulator with configuration : {:?}",
         &configuration.backend_config
     );
-
     tracing::info!("IPC with configuration : {:?}", &configuration.ipc_config);
 
-    // Ensure FIFOs are created/recreated before use
-    tracing::info!("Ensuring IPC FIFOs are set up...");
-    let ipc_paths = [
-        &configuration.ipc_config.command_file_path,
-        &configuration.ipc_config.angle_file_path,
-        &configuration.ipc_config.click_result_file_path,
-        &configuration.ipc_config.gc_file_path,
-    ];
-
-    for path_str in &ipc_paths {
-        ensure_fifo(path_str).unwrap_or_else(|e| {
-            tracing::error!("Failed to create FIFO at {}: {}. Exiting.", path_str, e);
-            panic!("FIFO creation failed for {}: {}", path_str, e);
-        });
-    }
-    tracing::info!("IPC FIFOs setup complete.");
-
-    let sim = SimulatorBuilder::from_config(configuration.backend_config);
+    let sim = SimulatorBuilder::from_config(configuration.backend_config.clone());
     tracing::info!("Simulator modulator: {:?}", sim.role);
     let simu_handle = backend::actor::ActorHandle::new(sim);
 
@@ -258,48 +250,4 @@ async fn main() {
     //     }
     // }
 }
-
-/// Ensures that a FIFO exists at the given path.
-/// If a file (or old FIFO) exists at the path, it is removed first.
-/// Parent directories are created if they don't exist.
-fn ensure_fifo(path_str: &str) -> Result<(), std::io::Error> {
-    let path = Path::new(path_str);
-
-    // Create parent directory if it doesn't exist
-    if let Some(parent_dir) = path.parent() {
-        if !parent_dir.exists() {
-            fs::create_dir_all(parent_dir)?;
-            tracing::info!("Created directory: {:?}", parent_dir);
-        }
-    }
-
-    // Attempt to remove the file if it exists. This handles cases where it's a regular file
-    // or an old FIFO that needs to be replaced.
-    match fs::remove_file(path) {
-        Ok(_) => tracing::info!("Removed existing file/FIFO at: {}", path_str),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            // File not found, which is fine, we'll create it.
-            tracing::debug!(
-                "No existing file/FIFO at: {}. Proceeding to create.",
-                path_str
-            );
-        }
-        Err(e) => {
-            // For other errors during removal, log and return the error.
-            tracing::error!("Error removing existing file/FIFO at {}: {}", path_str, e);
-            return Err(e);
-        }
-    }
-
-    // Create the FIFO.
-    tracing::info!("Creating FIFO at: {} with mode 0666", path_str);
-    // Permissions: rw-rw-rw- (0o666)
-    let mode = Mode::S_IRUSR
-        | Mode::S_IWUSR
-        | Mode::S_IRGRP
-        | Mode::S_IWGRP
-        | Mode::S_IROTH
-        | Mode::S_IWOTH;
-    nix::unistd::mkfifo(path, mode)?;
-    Ok(())
-}
+// The ensure_fifo function is now removed from main.rs and its logic is inside config.rs
