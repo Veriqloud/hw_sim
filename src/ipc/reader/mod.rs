@@ -1,7 +1,11 @@
 pub mod errors;
 
+use rand::Rng;
 use snafu::ResultExt;
-use tokio::{fs::File, io::AsyncReadExt};
+use tokio::{
+    fs::File,
+    io::{AsyncReadExt, AsyncWriteExt},
+};
 
 use crate::{backend::actor::ActorHandle as SimulatorHandle, ipc::Command};
 
@@ -12,6 +16,7 @@ use super::writer::actor::IPCWriterActorHandle;
 pub struct IPCReader {
     pub(in crate::ipc) cmd_file: File,
     pub(in crate::ipc) gc_file: File,
+    pub(in crate::ipc) gcr_file: File, // New field for the GCR file
     pub(in crate::ipc) writer_handle: IPCWriterActorHandle,
     pub(in crate::ipc) simulator_handle: SimulatorHandle,
 }
@@ -52,6 +57,7 @@ impl IPCReader {
     pub fn new(
         cmd_file: File,
         gc_file: File,
+        gcr_file: File, // Add gcr_file to constructor
         simulator_handle: SimulatorHandle,
         writer_handle: IPCWriterActorHandle,
     ) -> Self {
@@ -59,6 +65,7 @@ impl IPCReader {
             writer_handle,
             cmd_file,
             gc_file,
+            gcr_file, // Initialize gcr_file
             simulator_handle,
         }
     }
@@ -75,7 +82,25 @@ impl IPCReader {
                             reason: format!("Simulator start command failed: {}", e),
                         }
                     })?;
-                    tracing::info!("Simulator acknowledged start. Reading GC...");
+                    tracing::info!("Simulator acknowledged start. Generating and writing GCR data...");
+
+                    // Generate random [u8; 8]
+                    let gcr_data: [u8; 8] = rand::thread_rng().gen();
+                    tracing::info!("Generated GCR data: {:?}", gcr_data);
+
+                    // Write GCR data to gcr_file
+                    self.gcr_file
+                        .write_all(&gcr_data)
+                        .await
+                        .map_err(|e| errors::Error::Unexpected {
+                            reason: format!("Failed to write GCR data to file: {}", e),
+                        })?;
+                    self.gcr_file.flush().await.map_err(|e| { // Ensure data is written
+                        errors::Error::Unexpected {
+                            reason: format!("Failed to flush GCR data to file: {}", e),
+                        }
+                    })?;
+                    tracing::info!("Successfully wrote GCR data. Reading GC...");
 
                     let gc = self.read_gc_from_file().await?;
                     tracing::info!("Read GC: {}. Seeding simulator...", gc);
