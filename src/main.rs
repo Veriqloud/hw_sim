@@ -161,10 +161,32 @@ async fn run_ipc_connection_loop(
             }
         };
 
+        // Open gcr_file (hw_sim: Write, controller: Read)
+        let gcr_file = match tokio::fs::OpenOptions::new()
+            .write(true) // Open for writing
+            .open(&config.gcr_file_path)
+            .await
+        {
+            Ok(file) => {
+                tracing::info!("Opened gcr_file for writing: {}", &config.gcr_file_path);
+                file
+            }
+            Err(e) => {
+                tracing::error!(
+                    "Failed to open gcr_file '{}': {}. Retrying in 5s.",
+                    &config.gcr_file_path,
+                    e
+                );
+                sleep(Duration::from_secs(5)).await;
+                continue; // Retry the loop
+            }
+        };
+
         tracing::info!("All IPC files opened successfully. Initializing IPC handlers.");
         let ipc_reader = ipc::reader::IPCReader::new(
             cmd_file,
             gc_file,
+            gcr_file, // Pass the opened gcr_file
             simu_handle.clone(),
             writer_handle.clone(),
         );
