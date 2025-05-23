@@ -10,7 +10,7 @@ use tokio::time::{sleep, Duration};
 // MMIO Constants
 const COMMAND_TRIGGER_OFFSET: u64 = 0x12000; // Base offset for the command trigger register
 const COMMAND_TRIGGER_ADDR_BYTES: usize = 16; // Byte address for the command trigger u32
-const MMIO_MAP_LEN: usize = 0x1000;      // General memory map length, ensure it covers addresses
+const MMIO_MAP_LEN: usize = 0x1000; // General memory map length, ensure it covers addresses
 
 // Structs to deserialize the relevant parts of config/valid_config_alice.json
 #[derive(Deserialize, Debug)]
@@ -101,7 +101,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .await?;
     tracing::info!("SimuController: Opened GCR file successfully.");
 
-
     // MMIO device path is taken from config.ipc_config.xdma_device_path
     // No file handle is kept open for MMIO by the controller; writes are discrete operations.
 
@@ -120,7 +119,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     )?;
     thread::sleep(std_time::Duration::from_millis(100)); // From ddr_data_init
     tracing::info!("SimuController: Start command sent via MMIO.");
-    
+
     // --- Step 2: Send GC value ---
     // This should trigger seed_and_start_generation in hw_sim
     let gc_value = 12345u64; // Example Global Counter value
@@ -158,7 +157,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    tracing::info!("SimuController: Waiting a moment for hw_sim to start processing angles/clicks...");
+    tracing::info!(
+        "SimuController: Waiting a moment for hw_sim to start processing angles/clicks..."
+    );
     sleep(Duration::from_millis(500)).await; // Give hw_sim time to react
 
     // --- Step 3: Read angles and click results ---
@@ -260,7 +261,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     loop {
         if drain_attempts >= MAX_DRAIN_ATTEMPTS {
-            tracing::warn!("SimuController: Max drain attempts ({}) reached. Stopping drain.", MAX_DRAIN_ATTEMPTS);
+            tracing::warn!(
+                "SimuController: Max drain attempts ({}) reached. Stopping drain.",
+                MAX_DRAIN_ATTEMPTS
+            );
             break;
         }
         drain_attempts += 1;
@@ -271,7 +275,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         sleep(Duration::from_millis(50)).await;
 
         // Try draining angle_file
-        match tokio::time::timeout(Duration::from_millis(50), angle_file.read(&mut angle_buffer)).await {
+        match tokio::time::timeout(
+            Duration::from_millis(50),
+            angle_file.read(&mut angle_buffer),
+        )
+        .await
+        {
             Ok(Ok(0)) => {
                 tracing::debug!("SimuController: Angle file (drain) - EOF.");
             }
@@ -286,28 +295,42 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 tracing::warn!("SimuController: Error draining angle_file: {}", e);
                 // Potentially break or handle specific errors if they are persistent and critical
             }
-            Err(_) => { // Timeout
+            Err(_) => {
+                // Timeout
                 tracing::debug!("SimuController: Angle file (drain) - Read attempt timed out.");
             }
         }
 
         // Try draining click_result_file
-        match tokio::time::timeout(Duration::from_millis(50), click_result_file.read(&mut click_buffer)).await {
+        match tokio::time::timeout(
+            Duration::from_millis(50),
+            click_result_file.read(&mut click_buffer),
+        )
+        .await
+        {
             Ok(Ok(0)) => {
                 tracing::debug!("SimuController: Click result file (drain) - EOF.");
             }
             Ok(Ok(n)) => {
-                tracing::info!("SimuController: Drained {} bytes from click_result_file.", n);
+                tracing::info!(
+                    "SimuController: Drained {} bytes from click_result_file.",
+                    n
+                );
                 drained_something_in_iteration = true;
             }
             Ok(Err(e)) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                tracing::debug!("SimuController: Click result file (drain) - No data (WouldBlock).");
+                tracing::debug!(
+                    "SimuController: Click result file (drain) - No data (WouldBlock)."
+                );
             }
             Ok(Err(e)) => {
                 tracing::warn!("SimuController: Error draining click_result_file: {}", e);
             }
-            Err(_) => { // Timeout
-                tracing::debug!("SimuController: Click result file (drain) - Read attempt timed out.");
+            Err(_) => {
+                // Timeout
+                tracing::debug!(
+                    "SimuController: Click result file (drain) - Read attempt timed out."
+                );
             }
         }
 
@@ -337,14 +360,18 @@ fn xdma_write(
             "MMIO address must be u32-aligned",
         ));
     }
-    if value_addr_bytes + 4 > map_len { // Ensure address + size of u32 is within map_len
+    if value_addr_bytes + 4 > map_len {
+        // Ensure address + size of u32 is within map_len
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
             "MMIO address out of bounds for the mapped length",
         ));
     }
 
-    let file = StdOpenOptions::new().read(true).write(true).open(device_path)?;
+    let file = StdOpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(device_path)?;
     unsafe {
         let mut mmap = MmapOptions::new()
             .len(map_len)
@@ -352,45 +379,8 @@ fn xdma_write(
             .map_mut(&file)?; // map_mut for writing
         let ptr = mmap.as_mut_ptr().add(value_addr_bytes) as *mut u32;
         ptr.write_volatile(value); // Use write_volatile for MMIO
-        // mmap.flush() might be needed for some memory types, but often not for MMIO registers.
-        // If issues occur, consider adding mmap.flush() or mmap.flush_async().
-    }
-    Ok(())
-}
-
-/// Synchronously writes a u32 value to a memory-mapped device.
-/// `map_offset` is the offset passed to MmapOptions.
-/// `value_addr_bytes` is the byte address *within* the mapped region.
-fn xdma_write(
-    device_path: &str,
-    map_offset: u64,
-    map_len: usize,
-    value_addr_bytes: usize,
-    value: u32,
-) -> Result<(), std::io::Error> {
-    if value_addr_bytes % 4 != 0 {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidInput,
-            "MMIO address must be u32-aligned",
-        ));
-    }
-    if value_addr_bytes + 4 > map_len { // Ensure address + size of u32 is within map_len
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidInput,
-            "MMIO address out of bounds for the mapped length",
-        ));
-    }
-
-    let file = StdOpenOptions::new().read(true).write(true).open(device_path)?;
-    unsafe {
-        let mut mmap = MmapOptions::new()
-            .len(map_len)
-            .offset(map_offset)
-            .map_mut(&file)?; // map_mut for writing
-        let ptr = mmap.as_mut_ptr().add(value_addr_bytes) as *mut u32;
-        ptr.write_volatile(value); // Use write_volatile for MMIO
-        // mmap.flush() might be needed for some memory types, but often not for MMIO registers.
-        // If issues occur, consider adding mmap.flush() or mmap.flush_async().
+                                   // mmap.flush() might be needed for some memory types, but often not for MMIO registers.
+                                   // If issues occur, consider adding mmap.flush() or mmap.flush_async().
     }
     Ok(())
 }
