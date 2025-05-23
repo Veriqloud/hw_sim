@@ -9,7 +9,7 @@
         "pulse_distance": 1e-8
     },
     "ipc_config": {
-        "xdma_device_path": "./files/xdma0_user", 
+        "command_path": "./files/xdma0_user", 
         "angle_file_path": "./files/angle_bob",
         "click_result_file_path": "./files/click_result_bob",
         "gc_file_path": "./files/gc_bob",

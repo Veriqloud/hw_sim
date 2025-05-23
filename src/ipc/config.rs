@@ -14,7 +14,7 @@ use self::errors::{Error, FifoCreationSnafu, MockMmioFileSetupSnafu};
 
 #[derive(Debug, Deserialize, Serialize, PartialEq)]
 pub struct Configuration {
-    pub xdma_device_path: String,       // e.g., /dev/xdma0_user
+    pub command_path: String,           // e.g., /dev/xdma0_user or a mock file path
     pub angle_file_path: String,        // Should be /dev/c2h_angles
     pub click_result_file_path: String, // Should be /dev/c2h_click_results
     pub gc_file_path: String,           // Should be /dev/h2c_gc
@@ -24,7 +24,7 @@ pub struct Configuration {
 impl Default for Configuration {
     fn default() -> Self {
         Self {
-            xdma_device_path: String::from_str("/dev/xdma0_user").unwrap(),
+            command_path: String::from_str("/dev/xdma0_user").unwrap(),
             angle_file_path: String::from_str("/dev/c2h_angles").unwrap(),
             click_result_file_path: String::from_str("/dev/c2h_click_results").unwrap(),
             gc_file_path: String::from_str("./files/gc").unwrap(), // Adjusted default for local testing
@@ -51,8 +51,8 @@ impl Configuration {
         }
         tracing::info!("IPC FIFOs setup complete for IPC config.");
 
-        // If xdma_device_path looks like a local mock file, ensure it exists and is sized.
-        if self.xdma_device_path.starts_with("./files/") {
+        // If command_path looks like a local mock file, ensure it exists and is sized.
+        if self.command_path.starts_with("./files/") {
             // Constants from ipc/reader: MMIO_MAP_OFFSET (0x12000), MMIO_MAP_LEN (0x1000)
             // Constants from simu_controller: START_TRIGGER_OFFSET (0x12000), MMIO_MAP_LEN (0x1000)
             // The reset command in simu_controller uses offset 0x1000.
@@ -67,9 +67,9 @@ impl Configuration {
                                            // So, the file size must be at least max_map_offset + map_region_len.
             let required_file_size = max_offset_in_mapping + map_region_len;
 
-            ensure_mock_mmio_file_exists(&self.xdma_device_path, required_file_size).context(
+            ensure_mock_mmio_file_exists(&self.command_path, required_file_size).context(
                 MockMmioFileSetupSnafu {
-                    path: self.xdma_device_path.clone(),
+                    path: self.command_path.clone(),
                 },
             )?;
         }
@@ -223,7 +223,7 @@ mod tests {
             serde_json::from_str(&config_input_string).unwrap();
         assert_eq!(
             crate::ipc::config::Configuration {
-                xdma_device_path: "/dev/xdma0_user_test".to_owned(),
+                command_path: "/dev/xdma0_user_test".to_owned(),
                 angle_file_path: "/dev/c2h_angles_test".to_owned(),
                 click_result_file_path: "/dev/c2h_click_results_test".to_owned(),
                 gc_file_path: "/dev/h2c_gc_test".to_owned(),

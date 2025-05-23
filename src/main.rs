@@ -162,9 +162,9 @@ async fn run_ipc_connection_loop(
         };
 
         tracing::info!("All IPC files opened successfully. Initializing IPC handlers.");
-        // Pass the xdma_device_path from the config to the IPCReader
+        // Pass the command_path from the config to the IPCReader
         let ipc_reader = ipc::reader::IPCReader::new(
-            config.xdma_device_path.clone(),
+            config.command_path.clone(),
             gc_file,
             gcr_file,
             simu_handle.clone(),

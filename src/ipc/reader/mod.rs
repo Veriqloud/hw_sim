@@ -25,7 +25,7 @@ const COMMAND_TRIGGER_ADDR_BYTES: usize = 16; // Byte address for the Start/Stop
 const POLLING_INTERVAL_MS: u64 = 50; // Polling interval for MMIO commands
 
 pub struct IPCReader {
-    xdma_device_path: String,
+    command_path: String,
     gc_file: File,
     gcr_file: File,
     writer_handle: IPCWriterActorHandle,
@@ -115,14 +115,14 @@ impl IPCReader {
     }
 
     pub fn new(
-        xdma_device_path: String,
+        command_path: String,
         gc_file: File,
         gcr_file: File,
         simulator_handle: SimulatorHandle,
         writer_handle: IPCWriterActorHandle,
     ) -> Self {
         IPCReader {
-            xdma_device_path,
+            command_path,
             gc_file,
             gcr_file,
             writer_handle,
@@ -133,7 +133,7 @@ impl IPCReader {
 
     async fn await_next_command(&mut self) -> Result<Command, errors::Error> {
         loop {
-            let device_path_clone = self.xdma_device_path.clone();
+            let device_path_clone = self.command_path.clone();
             let read_result = task::spawn_blocking(move || {
                 read_u32_from_mmio(
                     &device_path_clone,

@@ -15,7 +15,7 @@ const MMIO_MAP_LEN: usize = 0x1000; // General memory map length, ensure it cove
 // Structs to deserialize the relevant parts of config/valid_config_alice.json
 #[derive(Deserialize, Debug)]
 struct IpcConfig {
-    xdma_device_path: String, // Changed from command_file_path
+    command_path: String, // Renamed from xdma_device_path
     angle_file_path: String,
     click_result_file_path: String,
     gc_file_path: String,
@@ -49,13 +49,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 2. click_result_file (write by hw_sim)
     // 3. gc_file (read by hw_sim)
     // 4. gcr_file (write by hw_sim)
-    // MMIO device (xdma_device_path) is read by hw_sim for commands.
+    // MMIO device (command_path) is read by hw_sim for commands.
     //
     // simu_controller complementary order for FIFOs:
     // 1. angle_file (read by controller)
     // 2. click_result_file (read by controller)
     // 3. gc_file (write by controller)
-    // MMIO device (xdma_device_path) is written to by controller for commands.
+    // MMIO device (command_path) is written to by controller for commands.
 
     // 1. Angle file (read-only for controller)
     tracing::info!(
@@ -108,10 +108,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // As per new ddr_data_init: xdma_write(16, 1, 0x12000);
     tracing::info!(
         "SimuController: Sending Start command (value 1 to addr {:#X}, offset {:#X}) via MMIO to {}.",
-        COMMAND_TRIGGER_ADDR_BYTES, COMMAND_TRIGGER_OFFSET, &config.ipc_config.xdma_device_path
+        COMMAND_TRIGGER_ADDR_BYTES, COMMAND_TRIGGER_OFFSET, &config.ipc_config.command_path
     );
     xdma_write(
-        &config.ipc_config.xdma_device_path,
+        &config.ipc_config.command_path,
         COMMAND_TRIGGER_OFFSET,
         MMIO_MAP_LEN,
         COMMAND_TRIGGER_ADDR_BYTES,
@@ -242,10 +242,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // --- Step 4: Send Stop command via MMIO ---
     tracing::info!(
         "SimuController: Sending Stop command (value 0 to addr {:#X}, offset {:#X}) via MMIO to {}.",
-        COMMAND_TRIGGER_ADDR_BYTES, COMMAND_TRIGGER_OFFSET, &config.ipc_config.xdma_device_path
+        COMMAND_TRIGGER_ADDR_BYTES, COMMAND_TRIGGER_OFFSET, &config.ipc_config.command_path
     );
     xdma_write(
-        &config.ipc_config.xdma_device_path,
+        &config.ipc_config.command_path,
         COMMAND_TRIGGER_OFFSET,
         MMIO_MAP_LEN,
         COMMAND_TRIGGER_ADDR_BYTES,
