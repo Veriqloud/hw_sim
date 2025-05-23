@@ -2,5 +2,6 @@
     "command_socket_path": "/dev/cmd_test",
     "angle_file_path": "/dev/c2h_angles_test",
     "click_result_file_path": "/dev/c2h_click_results_test",
-    "gc_file_path": "/dev/h2c_gc_test"
+    "gc_file_path": "/dev/h2c_gc_test",
+    "gcr_file_path": "/dev/gcr_test"
  }
