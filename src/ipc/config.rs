@@ -13,6 +13,7 @@ pub struct Configuration {
     pub angle_file_path: String,        // Should be /dev/c2h_angles
     pub click_result_file_path: String, // Should be /dev/c2h_click_results
     pub gc_file_path: String,           // Should be /dev/h2c_gc
+    pub gcr_file_path: String,          // Should be ./files/gcr (gc and result)
 }
 
 impl Default for Configuration {
@@ -22,6 +23,7 @@ impl Default for Configuration {
             angle_file_path: String::from_str("/dev/c2h_angles").unwrap(),
             click_result_file_path: String::from_str("/dev/c2h_click_results").unwrap(),
             gc_file_path: String::from_str("./files/gc").unwrap(), // Adjusted default for local testing
+            gcr_file_path: String::from_str("./files/gcr").unwrap(), // Default for gc and result
         }
     }
 }
@@ -31,9 +33,11 @@ impl Configuration {
         tracing::info!("Ensuring IPC FIFOs are set up for IPC config...");
         let ipc_paths = [
             &self.command_file_path,
+            &self.command_file_path,
             &self.angle_file_path,
             &self.click_result_file_path,
             &self.gc_file_path,
+            &self.gcr_file_path,
         ];
 
         for path_str in &ipc_paths {
@@ -100,7 +104,8 @@ mod tests {
                 command_file_path: "/dev/cmd_test".to_owned(),
                 angle_file_path: "/dev/c2h_angles_test".to_owned(),
                 click_result_file_path: "/dev/c2h_click_results_test".to_owned(),
-                gc_file_path: "/dev/h2c_gc_test".to_owned()
+                gc_file_path: "/dev/h2c_gc_test".to_owned(),
+                gcr_file_path: "/dev/gcr_test".to_owned()
             },
             config_input
         );
