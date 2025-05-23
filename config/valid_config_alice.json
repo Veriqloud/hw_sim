@@ -9,10 +9,11 @@
         "pulse_distance": 1e-8
     },
     "ipc_config": {
-        "command_file_path":"./files/cmd",
+        "xdma_device_path": "./files/xdma0_user",
         "angle_file_path": "./files/angle",
         "click_result_file_path": "./files/click_result",
-        "gc_file_path": "./files/gc"
+        "gc_file_path": "./files/gc",
+        "gcr_file_path": "./files/gcr" 
     },
     "log_level": "Info"
 }

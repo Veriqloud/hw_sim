@@ -140,27 +140,6 @@ async fn run_ipc_connection_loop(
             }
         };
 
-        // Open cmd_file (hw_sim: Read, controller: Write)
-        let cmd_file = match tokio::fs::OpenOptions::new()
-            .read(true)
-            .open(&config.command_file_path)
-            .await
-        {
-            Ok(file) => {
-                tracing::info!("Opened cmd_file: {}", &config.command_file_path);
-                file
-            }
-            Err(e) => {
-                tracing::error!(
-                    "Failed to open cmd_file '{}': {}. Retrying in 5s.",
-                    &config.command_file_path,
-                    e
-                );
-                sleep(Duration::from_secs(5)).await;
-                continue; // Retry the loop
-            }
-        };
-
         // Open gcr_file (hw_sim: Write, controller: Read)
         let gcr_file = match tokio::fs::OpenOptions::new()
             .write(true) // Open for writing
@@ -183,10 +162,11 @@ async fn run_ipc_connection_loop(
         };
 
         tracing::info!("All IPC files opened successfully. Initializing IPC handlers.");
+        // Pass the xdma_device_path from the config to the IPCReader
         let ipc_reader = ipc::reader::IPCReader::new(
-            cmd_file,
+            config.xdma_device_path.clone(),
             gc_file,
-            gcr_file, // Pass the opened gcr_file
+            gcr_file,
             simu_handle.clone(),
             writer_handle.clone(),
         );

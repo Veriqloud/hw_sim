@@ -52,22 +52,21 @@ impl IPCWriterActor {
                 {
                     let stop_chan = self.stop_chan.take();
                     match stop_chan {
-                        Some(chan) => match chan.send(()) {
-                            Ok(_) => (),
-                            Err(_) => {
-                                return Err(Error::Channel {
-                                    e: "Couldn't send through stop channel !".to_string(),
-                                })
+                        Some(chan) => {
+                            if chan.send(()).is_err() {
+                                // Log if sending fails, but don't error out the actor handling
+                                // as the loop might already be stopping or stopped.
+                                tracing::warn!("Failed to send on stop_chan; write_loop might already be stopped.");
                             }
-                        },
+                        }
                         None => {
-                            return Err(Error::Channel {
-                                e: "No stop channel !".to_string(),
-                            })
+                            // If stop_chan is None, it means stop has already been called.
+                            // This is not an error condition for the actor's message handling.
+                            tracing::debug!("Stop channel already taken; stop process likely initiated or completed.");
                         }
                     }
                 }
-                tracing::info!("Writing inactive!");
+                tracing::info!("Writing inactive!"); // This log might be reached multiple times if Stop is processed repeatedly by reader
                 Ok(())
             }
         }
