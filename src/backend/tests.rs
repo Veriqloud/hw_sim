@@ -109,9 +109,9 @@ async fn qkd_statistics_ok() {
     );
 
     let gc_a = sim_a.get_global_counter().unwrap();
-    sim_a.start_at_gc(gc_a).unwrap();
-    sim_b.start_at_gc(gc_a).unwrap();
-    sim_c.start_at_gc(gc_a).unwrap();
+    sim_a.seed_and_start_generation(gc_a).unwrap();
+    sim_b.seed_and_start_generation(gc_a).unwrap();
+    sim_c.seed_and_start_generation(gc_a).unwrap();
 
     let mut a = sim_a.read_angles().await.unwrap().to_vec();
     let mut b = sim_b.read_angles().await.unwrap().to_vec();
@@ -130,9 +130,9 @@ async fn qkd_statistics_ok() {
     sim_c.stop().unwrap();
 
     let gc_a = sim_a.get_global_counter().unwrap() + 1000;
-    sim_a.start_at_gc(gc_a).unwrap();
-    sim_b.start_at_gc(gc_a).unwrap();
-    sim_c.start_at_gc(gc_a).unwrap();
+    sim_a.seed_and_start_generation(gc_a).unwrap();
+    sim_b.seed_and_start_generation(gc_a).unwrap();
+    sim_c.seed_and_start_generation(gc_a).unwrap();
 
     // read several times to one last time
     a.extend(sim_a.read_angles().await.unwrap());

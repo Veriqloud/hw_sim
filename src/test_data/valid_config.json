@@ -9,7 +9,7 @@
         "pulse_distance": 1e-8
     },
     "ipc_config": {
-        "command_socket_path": "path as str",
+        "command_file_path": "path as str",
         "angle_file_path": "another path as str",
         "click_result_file_path": "yet another path as str"
     },
