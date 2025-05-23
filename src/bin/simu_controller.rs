@@ -101,7 +101,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .await?;
     tracing::info!("SimuController: Opened GCR file successfully.");
 
-    // MMIO device path is taken from config.ipc_config.xdma_device_path
+    // MMIO device path is taken from config.ipc_config.command_path
     // No file handle is kept open for MMIO by the controller; writes are discrete operations.
 
     // --- Step 1: Send Start command via MMIO ---
