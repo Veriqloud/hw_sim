@@ -13,8 +13,8 @@ use std::time::Instant;
 use self::hardware::errors::HardwareError;
 use self::hardware::modulator_state::ModulatorState;
 use self::hardware::Hardware;
-use crate::backend::protocols::errors::ProtocolError; // For CorrelationsRandom error
-use rand::Rng; // For random byte generation for click/angle
+// Removed: use crate::backend::protocols::errors::ProtocolError;
+// Removed: use rand::Rng;
 
 pub const BATCH_SIZE: usize = 1024;
 
@@ -147,7 +147,7 @@ impl VqSim for Simulator {
             //  - bits 1 and 2 from byte2 become bits 2 and 3 of angle_byte.
             //  This would be: (((byte1 & 0b0110) >> 1) as u8) | (((byte2 & 0b0110) << 1) as u8)
             //  Let's stick to the user's provided formula:
-            let angle_byte = ((byte1 & 0b110) >> 1) | ((byte2 & 0b110) << (3 - 1)); // Corrected from previous attempt, to match user's `<<3` intent for the second part if it was meant to occupy higher bits.
+            // let angle_byte = ((byte1 & 0b110) >> 1) | ((byte2 & 0b110) << (3 - 1)); // This variable is unused. angle_val is used.
                                                                                     // If it's `((byte1 & 0b110) >> 1) | ((byte2 & 0b110) << 3)` literally, then it's:
                                                                                     // part1 = (byte1 & 6) >> 1 -> values 0,1,2,3 from bits 1,2 of byte1
                                                                                     // part2 = (byte2 & 6) << 3 -> values 0, 16, 32, 48 from bits 1,2 of byte2
@@ -238,15 +238,15 @@ impl Simulator {
         buffer
     }
 
-    /// return time elapsed since start in seconds at nanoseconds.
-    fn get_current_time_with_nanos(&self) -> f64 {
-        let duration = self.now.elapsed();
-        duration.as_secs() as f64 + duration.subsec_nanos() as f64 * 1e-9
-    }
-    /// Restart RNG with a new seed.
-    fn reset_seed(&mut self, seed: u64) {
-        self.rng = Pcg64Mcg::seed_from_u64(seed);
-    }
+    // /// return time elapsed since start in seconds at nanoseconds.
+    // fn get_current_time_with_nanos(&self) -> f64 {
+    //     let duration = self.now.elapsed();
+    //     duration.as_secs() as f64 + duration.subsec_nanos() as f64 * 1e-9
+    // }
+    // /// Restart RNG with a new seed.
+    // fn reset_seed(&mut self, seed: u64) {
+    //     self.rng = Pcg64Mcg::seed_from_u64(seed);
+    // }
     /// Reset time to now
     pub fn reset_time(&mut self) {
         self.now = Instant::now();

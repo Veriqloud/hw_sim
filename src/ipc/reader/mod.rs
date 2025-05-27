@@ -63,41 +63,41 @@ fn read_u32_from_mmio(
     }
 }
 
-/// Synchronously writes a u32 value to a memory-mapped device.
-/// This function is intended to be run in a blocking thread.
-fn write_u32_to_mmio(
-    device_path: &str,
-    map_offset: u64,
-    map_len: usize,
-    value_addr_bytes: usize,
-    value: u32,
-) -> Result<(), std::io::Error> {
-    if value_addr_bytes % 4 != 0 {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidInput,
-            "MMIO address must be u32-aligned",
-        ));
-    }
-    if value_addr_bytes + 4 > map_len {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidInput,
-            "MMIO address out of bounds for the mapped length",
-        ));
-    }
+// /// Synchronously writes a u32 value to a memory-mapped device.
+// /// This function is intended to be run in a blocking thread.
+// fn write_u32_to_mmio(
+//     device_path: &str,
+//     map_offset: u64,
+//     map_len: usize,
+//     value_addr_bytes: usize,
+//     value: u32,
+// ) -> Result<(), std::io::Error> {
+//     if value_addr_bytes % 4 != 0 {
+//         return Err(std::io::Error::new(
+//             std::io::ErrorKind::InvalidInput,
+//             "MMIO address must be u32-aligned",
+//         ));
+//     }
+//     if value_addr_bytes + 4 > map_len {
+//         return Err(std::io::Error::new(
+//             std::io::ErrorKind::InvalidInput,
+//             "MMIO address out of bounds for the mapped length",
+//         ));
+//     }
 
-    let file = StdOpenOptions::new().read(true).write(true).open(device_path)?;
-    unsafe {
-        let mut mmap = MmapOptions::new()
-            .len(map_len)
-            .offset(map_offset)
-            .map_mut(&file)?; // map_mut for writing
-        let ptr = mmap.as_mut_ptr().add(value_addr_bytes) as *mut u32;
-        ptr.write_volatile(value); // Use write_volatile for MMIO
-        // For some devices/memory types, a flush might be needed.
-        // mmap.flush()?;
-    }
-    Ok(())
-}
+//     let file = StdOpenOptions::new().read(true).write(true).open(device_path)?;
+//     unsafe {
+//         let mut mmap = MmapOptions::new()
+//             .len(map_len)
+//             .offset(map_offset)
+//             .map_mut(&file)?; // map_mut for writing
+//         let ptr = mmap.as_mut_ptr().add(value_addr_bytes) as *mut u32;
+//         ptr.write_volatile(value); // Use write_volatile for MMIO
+//         // For some devices/memory types, a flush might be needed.
+//         // mmap.flush()?;
+//     }
+//     Ok(())
+// }
 
 impl IPCReader {
     /// Reads a batch of GC values from the gc_read_file.

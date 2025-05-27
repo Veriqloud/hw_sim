@@ -107,7 +107,6 @@ async fn app_main() -> Result<(), crate::errors::Error> {
     let writer_handle = IPCWriterActorHandle::new(
         gcr_file_writer, // Pass renamed variable (For GCR data)
         angles_file_writer,   // For angles data
-        simu_handle.clone(),
     );
     // The IPC connection loop will now also open files needed by the reader per connection attempt.
     run_ipc_connection_loop(&configuration.ipc_config, simu_handle, writer_handle).await;

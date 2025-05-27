@@ -23,7 +23,6 @@ impl IPCWriterActor {
         gcr_file: File,    // For GCR data (GC + result bit)
         angles_file: File, // For angles data
         receiver: mpsc::Receiver<WriterMessage>,
-        _simulator_handle: SimulatorHandle, // Kept for signature compatibility, but not used
     ) -> Self {
         // Attempt to set the file handles. If already set (e.g. actor restarted without process restart),
         // this might panic. Consider using get_or_init for robustness if actor can be re-created.
@@ -141,10 +140,9 @@ impl IPCWriterActorHandle {
     pub fn new(
         gcr_file: File, // Renamed parameter to match usage
         angles_file: File,
-        simulator_handle: SimulatorHandle, // Kept for signature, not directly used by new writer
     ) -> Self {
         let (sender, receiver) = mpsc::channel(8); // Channel for messages to the actor
-        let actor = IPCWriterActor::new(gcr_file, angles_file, receiver, simulator_handle); // Use gcr_file
+        let actor = IPCWriterActor::new(gcr_file, angles_file, receiver); // Use gcr_file
         tokio::spawn(run_writer_actor(actor)); // Spawn the actor task
         Self { sender }
     }
