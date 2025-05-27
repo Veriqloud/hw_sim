@@ -50,13 +50,31 @@ async fn generate_bytes() {
         .with_now(now)
         .build();
 
-    let va1 = sim_a.read_angles().await.unwrap();
-    let vb1 = sim_b.read_angles().await.unwrap();
-    assert_eq!(va1, vb1);
+    sim_a.start_session().unwrap();
+    sim_b.start_session().unwrap();
 
-    let va2 = sim_a.read_angles().await.unwrap();
-    let vb2 = sim_b.read_angles().await.unwrap();
-    assert_eq!(va2, vb2);
+    // Batch 1
+    let gcr_a1 = sim_a.generate_gcr_and_angles_batch().await.unwrap();
+    let angles_a1 = sim_a.retrieve_pending_angles_batch(vec![]).await.unwrap(); // Dummy GCs
+
+    let gcr_b1 = sim_b.generate_gcr_and_angles_batch().await.unwrap();
+    let angles_b1 = sim_b.retrieve_pending_angles_batch(vec![]).await.unwrap(); // Dummy GCs
+
+    assert_eq!(gcr_a1, gcr_b1, "GCR data for batch 1 should be identical");
+    assert_eq!(angles_a1, angles_b1, "Angle data for batch 1 should be identical");
+
+    // Batch 2
+    let gcr_a2 = sim_a.generate_gcr_and_angles_batch().await.unwrap();
+    let angles_a2 = sim_a.retrieve_pending_angles_batch(vec![]).await.unwrap(); // Dummy GCs
+
+    let gcr_b2 = sim_b.generate_gcr_and_angles_batch().await.unwrap();
+    let angles_b2 = sim_b.retrieve_pending_angles_batch(vec![]).await.unwrap(); // Dummy GCs
+    
+    assert_eq!(gcr_a2, gcr_b2, "GCR data for batch 2 should be identical");
+    assert_eq!(angles_a2, angles_b2, "Angle data for batch 2 should be identical");
+
+    sim_a.stop_session().unwrap();
+    sim_b.stop_session().unwrap();
 }
 
 #[tokio::test]
@@ -104,65 +122,106 @@ async fn qkd_statistics_ok() {
         .build();
 
     println!(
-        "Simulator A : {:?}",
-        (sim_a.global_counter, sim_a.hw.gc_offset)
+        "Simulator A initial GC (not directly used for seeding in new model): {:?}",
+        sim_a.global_counter // This is the initial GC from builder, start_session will reset it.
     );
 
-    let gc_a = sim_a.get_global_counter().unwrap();
-    sim_a.seed_and_start_generation(gc_a).unwrap();
-    sim_b.seed_and_start_generation(gc_a).unwrap();
-    sim_c.seed_and_start_generation(gc_a).unwrap();
+    sim_a.start_session().unwrap();
+    sim_b.start_session().unwrap();
+    sim_c.start_session().unwrap();
 
-    let mut a = sim_a.read_angles().await.unwrap().to_vec();
-    let mut b = sim_b.read_angles().await.unwrap().to_vec();
-    let mut c = sim_c.read_angles().await.unwrap().to_vec();
+    let mut angles_a_all = Vec::new();
+    let mut results_a_all = Vec::new();
+    let mut angles_b_all = Vec::new();
+    let mut results_b_all = Vec::new();
+    let mut angles_c_all = Vec::new();
+    let mut results_c_all = Vec::new();
 
-    a.extend(sim_a.read_angles().await.unwrap());
-    b.extend(sim_b.read_angles().await.unwrap());
-    c.extend(sim_c.read_angles().await.unwrap());
+    // Helper to decode GCR into result bits
+    // The result bit is (buf_gcr[6] >> 1) & 1;
+    // Our encode_gcr takes a u8 result_bit and stores (result_bit & 1) << 1 in buf[6].
+    // So, to get the original (result_bit & 1), we do (gcr_item[6] >> 1) & 1.
+    let extract_result_from_gcr = |gcr_item: &[u8; 8]| (gcr_item[6] >> 1) & 1;
 
-    a.extend(sim_a.read_angles().await.unwrap());
-    b.extend(sim_b.read_angles().await.unwrap());
-    c.extend(sim_c.read_angles().await.unwrap());
+    for _ in 0..3 { // Simulate 3 batches of data
+        let gcr_a = sim_a.generate_gcr_and_angles_batch().await.unwrap();
+        angles_a_all.extend(sim_a.retrieve_pending_angles_batch(vec![]).await.unwrap());
+        results_a_all.extend(gcr_a.iter().map(extract_result_from_gcr));
+
+        let gcr_b = sim_b.generate_gcr_and_angles_batch().await.unwrap();
+        angles_b_all.extend(sim_b.retrieve_pending_angles_batch(vec![]).await.unwrap());
+        results_b_all.extend(gcr_b.iter().map(extract_result_from_gcr));
+
+        let gcr_c = sim_c.generate_gcr_and_angles_batch().await.unwrap();
+        angles_c_all.extend(sim_c.retrieve_pending_angles_batch(vec![]).await.unwrap());
+        results_c_all.extend(gcr_c.iter().map(extract_result_from_gcr));
+    }
+
     // go idle
-    sim_a.stop().unwrap();
-    sim_b.stop().unwrap();
-    sim_c.stop().unwrap();
+    sim_a.stop_session().unwrap();
+    sim_b.stop_session().unwrap();
+    sim_c.stop_session().unwrap();
 
-    let gc_a = sim_a.get_global_counter().unwrap() + 1000;
-    sim_a.seed_and_start_generation(gc_a).unwrap();
-    sim_b.seed_and_start_generation(gc_a).unwrap();
-    sim_c.seed_and_start_generation(gc_a).unwrap();
+    // Restart sessions
+    sim_a.start_session().unwrap();
+    sim_b.start_session().unwrap();
+    sim_c.start_session().unwrap();
 
-    // read several times to one last time
-    a.extend(sim_a.read_angles().await.unwrap());
-    b.extend(sim_b.read_angles().await.unwrap());
-    c.extend(sim_c.read_angles().await.unwrap());
+    // read one more batch
+    let gcr_a = sim_a.generate_gcr_and_angles_batch().await.unwrap();
+    angles_a_all.extend(sim_a.retrieve_pending_angles_batch(vec![]).await.unwrap());
+    results_a_all.extend(gcr_a.iter().map(extract_result_from_gcr));
+
+    let gcr_b = sim_b.generate_gcr_and_angles_batch().await.unwrap();
+    angles_b_all.extend(sim_b.retrieve_pending_angles_batch(vec![]).await.unwrap());
+    results_b_all.extend(gcr_b.iter().map(extract_result_from_gcr));
+
+    let gcr_c = sim_c.generate_gcr_and_angles_batch().await.unwrap();
+    angles_c_all.extend(sim_c.retrieve_pending_angles_batch(vec![]).await.unwrap());
+    results_c_all.extend(gcr_c.iter().map(extract_result_from_gcr));
 
     // analyze statistics
-    assert_eq!(a.len(), b.len());
-    assert_eq!(b.len(), c.len());
+    assert_eq!(angles_a_all.len(), angles_b_all.len());
+    assert_eq!(angles_b_all.len(), angles_c_all.len());
+    assert_eq!(results_a_all.len(), angles_a_all.len());
+    assert_eq!(results_b_all.len(), angles_b_all.len());
+    assert_eq!(results_c_all.len(), angles_c_all.len());
 
-    let l = a.len();
+
+    let l = angles_a_all.len();
     println!("length : {}", l);
     let mut num_correct = 0;
     let mut num_basismatch = 0;
     let mut num_result_matching = 0;
 
-    // loop through angles of alice and bob
-    for (e1, e2, e3) in izip!(a.iter(), b.iter(), c.iter(),) {
-        num_result_matching += (((e1 & 0b1) == (e2 & 0b1)) && ((e1 & 0b1) == (e3 & 0b1))) as u32;
-        // basis match
-        let r = e1 & 0b1;
-        let angle = ((e1 >> 1) as u32 + (e2 >> 1) as u32 + (e3 >> 1) as u32) % 128;
-        if angle == 0 {
+    // loop through angles and results of alice, bob, and charlie
+    for i in 0..l {
+        let res_a = results_a_all[i];
+        let res_b = results_b_all[i];
+        let res_c = results_c_all[i];
+
+        let angle_a = angles_a_all[i];
+        let angle_b = angles_b_all[i];
+        let angle_c = angles_c_all[i];
+
+        num_result_matching += ((res_a == res_b) && (res_a == res_c)) as u32;
+        
+        // The old test's angle logic:
+        // let r = e1 & 0b1; (result bit)
+        // let angle = ((e1 >> 1) as u32 + (e2 >> 1) as u32 + (e3 >> 1) as u32) % 128;
+        // Here, (e1 >> 1) was the angle part. Now, angle_a, angle_b, angle_c are the angle parts.
+        // The result bit is res_a (assuming all parties get the same result bit if bases match).
+        let r = res_a; // Use Alice's result bit for basis match check
+        let combined_angle_info = (angle_a as u32 + angle_b as u32 + angle_c as u32) % 128;
+
+        if combined_angle_info == 0 { // Basis match condition from old test
             num_basismatch += 1;
-            if r == 0 {
+            if r == 0 { // Result bit condition from old test
                 num_correct += 1
             }
-        } else if angle == 64 {
+        } else if combined_angle_info == 64 { // Basis match condition from old test
             num_basismatch += 1;
-            if r == 1 {
+            if r == 1 { // Result bit condition from old test
                 num_correct += 1
             }
         }
