@@ -177,39 +177,7 @@ async fn run_ipc_connection_loop(
         );
         // Files and handlers are dropped here as they go out of scope.
         // A small delay before restarting the loop to prevent tight looping on persistent errors.
-                sleep(Duration::from_secs(5)).await;
-                continue; // Retry the loop
-            }
-        };
-
-        tracing::info!("All IPC files opened successfully. Initializing IPC handlers.");
-        // Pass the command_path from the config to the IPCReader
-        let ipc_reader = ipc::reader::IPCReader::new(
-            config.command_path.clone(),
-            gc_file,
-            simu_handle.clone(),
-            writer_handle.clone(),
-        );
-
-        tracing::info!("IPC handlers initialized. Starting IPC command processing loop.");
-        if let Err(e) = ipc_reader.start().await {
-            match e {
-                _ => {
-                    tracing::warn!(
-                        "IPC processing ended with an error: {:?}. Preparing for new connection.",
-                        e
-                    );
-                }
-            }
-        } else {
-            tracing::info!("IPCReader exited cleanly (this is unexpected if it's meant to run indefinitely). Preparing for new connection.");
-        }
-
-        tracing::info!(
-            "Current IPC session ended. Will attempt to listen for a new controller connection."
-        );
-        // Files and handlers are dropped here as they go out of scope.
-        // A small delay before restarting the loop to prevent tight looping on persistent errors.
-        sleep(Duration::from_secs(1)).await;
+        sleep(Duration::from_secs(5)).await;
+        continue; // Retry the loop
     }
 }

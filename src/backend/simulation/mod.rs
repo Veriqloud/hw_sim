@@ -20,25 +20,26 @@ pub const BATCH_SIZE: usize = 1024;
 
 #[derive(Debug, PartialEq)]
 pub struct Simulator {
-    pub(crate) hw: Hardware,
-    pub role: Role,
-    pub(crate) rng: Pcg64Mcg,
+    pub(crate) angles: Vec<u8>,
+    pub(crate) current_fifo_size: usize,
     /// Total qubit detection efficiency
     pub eta: f64,
-    /// Qubit error rate
-    pub qb_err: f64,
-    pub now: Instant,
-    pub(crate) time_of_last_read: f64,
+    /// Size of the physical FIFO, for realistic HardwareError, "Size" means number of bytes.
+    pub(crate) fifo_max_size: u64,
     /// Offset is taken care of automatically.
     /// Equivalent to Bob broadcasting his global counter in the real world.
     /// Probably not required ...
     pub(crate) global_counter: u64,
+    pub(crate) hw: Hardware,
     pub(crate) modulator_state: ModulatorState,
-    pub(crate) angles: Vec<u8>,
-    /// Size of the physical FIFO, for realistic HardwareError, "Size" means number of bytes.
-    pub(crate) fifo_max_size: u64,
-    // pub(crate) current_fifo_size: usize, // Replaced by batch-oriented processing
-    pub(crate) pending_angles_batch: Option<Vec<u8>>, // Stores 1024 generated angle values
+    pub now: Instant,
+    // Replaced by batch-oriented processing
+    pub(crate) pending_angles_batch: Option<Vec<u8>>,
+    /// Qubit error rate
+    pub qb_err: f64,
+    pub(crate) rng: Pcg64Mcg,
+    pub role: Role,
+    pub(crate) time_of_last_read: f64, // Stores 1024 generated angle values
     pub(crate) time_of_start: Option<Instant>, // To track time for potential future use or logging
 }
 
@@ -108,7 +109,10 @@ impl VqSim for Simulator {
         // Obtain raw random bytes for events.
         // Each event (GC, click, angle) needs 2 bytes from correlations_random based on user's logic.
         let raw_random_bytes = self.correlations_random(BATCH_SIZE * 2).map_err(|e| {
-            tracing::error!("Failed to get raw random bytes from correlations_random: {:?}", e);
+            tracing::error!(
+                "Failed to get raw random bytes from correlations_random: {:?}",
+                e
+            );
             HardwareError::Other {
                 reason: format!("correlations_random failed: {}", e),
             }
@@ -142,15 +146,14 @@ impl VqSim for Simulator {
             //  - bits 1 and 2 from byte2 become bits 2 and 3 of angle_byte.
             //  This would be: (((byte1 & 0b0110) >> 1) as u8) | (((byte2 & 0b0110) << 1) as u8)
             //  Let's stick to the user's provided formula:
-            let angle_byte = ((byte1 & 0b110) >> 1) | ((byte2 & 0b110) << (3-1)); // Corrected from previous attempt, to match user's `<<3` intent for the second part if it was meant to occupy higher bits.
-                                                                                // If it's `((byte1 & 0b110) >> 1) | ((byte2 & 0b110) << 3)` literally, then it's:
-                                                                                // part1 = (byte1 & 6) >> 1 -> values 0,1,2,3 from bits 1,2 of byte1
-                                                                                // part2 = (byte2 & 6) << 3 -> values 0, 16, 32, 48 from bits 1,2 of byte2
-                                                                                // angle_byte = part1 | part2. This seems plausible.
-            // The user's example: `let angle_byte = ((byte1 & 0b110) >> 1) | ((byte2 & 0b110) << 3);`
-            // Let's use this directly.
+            let angle_byte = ((byte1 & 0b110) >> 1) | ((byte2 & 0b110) << (3 - 1)); // Corrected from previous attempt, to match user's `<<3` intent for the second part if it was meant to occupy higher bits.
+                                                                                    // If it's `((byte1 & 0b110) >> 1) | ((byte2 & 0b110) << 3)` literally, then it's:
+                                                                                    // part1 = (byte1 & 6) >> 1 -> values 0,1,2,3 from bits 1,2 of byte1
+                                                                                    // part2 = (byte2 & 6) << 3 -> values 0, 16, 32, 48 from bits 1,2 of byte2
+                                                                                    // angle_byte = part1 | part2. This seems plausible.
+                                                                                    // The user's example: `let angle_byte = ((byte1 & 0b110) >> 1) | ((byte2 & 0b110) << 3);`
+                                                                                    // Let's use this directly.
             let angle_val = ((byte1 & 0b0000_0110) >> 1) | ((byte2 & 0b0000_0110) << 3);
-
 
             // Click result extraction: `(byte1 & 0b001) | ((byte2 & 0b001) << 4)`
             // This takes bit 0 from byte1 and bit 0 from byte2 (shifted to bit 4).
@@ -192,7 +195,9 @@ impl VqSim for Simulator {
             tracing::info!("Simulator: Returning {} pending angle bytes.", angles.len());
             Ok(angles)
         } else {
-            tracing::warn!("Simulator: retrieve_pending_angles_batch called but no pending angles found.");
+            tracing::warn!(
+                "Simulator: retrieve_pending_angles_batch called but no pending angles found."
+            );
             Err(HardwareError::Other {
                 reason: "No pending angles batch to retrieve.".to_string(),
             })
