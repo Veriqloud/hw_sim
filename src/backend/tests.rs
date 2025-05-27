@@ -10,7 +10,7 @@ use rand_pcg::Pcg64Mcg;
 
 use crate::backend::{
     protocols::random::CorrelationsRandom,
-    role::{Multiparty, Role},
+    role::{Multiparty, Role, SimulatorMode}, // Added SimulatorMode
     simulation::{
         builder::SimulatorBuilder,
         hardware::{builder::HardwareBuilder, modulator_state::ModulatorState},
@@ -26,6 +26,7 @@ async fn generate_bytes() {
     let mut sim_a: Simulator = SimulatorBuilder::new()
         .with_hardware(hw.clone())
         .with_rng(Pcg64Mcg::seed_from_u64(42))
+        .with_mode(SimulatorMode::Detector) // Added mode
         .with_eta(1e-2)
         .with_qb_err(0 as f64)
         .with_role(Role::OneOfMany(Multiparty {
@@ -39,6 +40,7 @@ async fn generate_bytes() {
     let mut sim_b = SimulatorBuilder::new()
         .with_hardware(hw.clone())
         .with_rng(Pcg64Mcg::seed_from_u64(42))
+        .with_mode(SimulatorMode::Detector) // Added mode
         .with_eta(1e-2)
         .with_qb_err(0 as f64)
         .with_role(Role::OneOfMany(Multiparty {
@@ -98,6 +100,7 @@ async fn qkd_statistics_ok() {
 
     let mut sim_a = SimulatorBuilder::new()
         .with_hardware(hw.clone())
+        .with_mode(SimulatorMode::Source) // Example: Alice is Source
         .with_eta(1e-2)
         .with_qb_err(qb_err)
         .with_angles(vec![0, 32, 64, 96])
@@ -108,6 +111,7 @@ async fn qkd_statistics_ok() {
         .build();
     let mut sim_b = SimulatorBuilder::new()
         .with_hardware(hw.clone())
+        .with_mode(SimulatorMode::Detector) // Example: Bob is Detector
         .with_eta(1e-2)
         .with_qb_err(qb_err)
         .with_angles(vec![0, 32, 64, 96])
@@ -118,6 +122,7 @@ async fn qkd_statistics_ok() {
         .build();
     let mut sim_c = SimulatorBuilder::new()
         .with_hardware(hw)
+        .with_mode(SimulatorMode::Detector) // Example: Charlie is Detector
         .with_eta(1e-2)
         .with_qb_err(qb_err)
         .with_angles(vec![0, 32, 64, 96])
