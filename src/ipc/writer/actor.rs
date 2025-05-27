@@ -27,9 +27,9 @@ impl IPCWriterActor {
     ) -> Self {
         // Attempt to set the file handles. If already set (e.g. actor restarted without process restart),
         // this might panic. Consider using get_or_init for robustness if actor can be re-created.
-        GC_WRITE_FILE
+        GCR_FILE // Corrected: Use the already renamed static variable GCR_FILE
             .set(Mutex::new(gcr_file))
-            .expect("GC_WRITE_FILE static OnceCell already set");
+            .expect("GCR_FILE static OnceCell already set"); // Corrected: Expect message for GCR_FILE
         ANGLES_FILE
             .set(Mutex::new(angles_file))
             .expect("ANGLES_FILE static OnceCell already set");
@@ -139,12 +139,12 @@ pub struct IPCWriterActorHandle {
 
 impl IPCWriterActorHandle {
     pub fn new(
-        gc_write_file: File,
+        gcr_file: File, // Renamed parameter to match usage
         angles_file: File,
         simulator_handle: SimulatorHandle, // Kept for signature, not directly used by new writer
     ) -> Self {
         let (sender, receiver) = mpsc::channel(8); // Channel for messages to the actor
-        let actor = IPCWriterActor::new(gc_write_file, angles_file, receiver, simulator_handle);
+        let actor = IPCWriterActor::new(gcr_file, angles_file, receiver, simulator_handle); // Use gcr_file
         tokio::spawn(run_writer_actor(actor)); // Spawn the actor task
         Self { sender }
     }
