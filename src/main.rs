@@ -93,19 +93,19 @@ async fn app_main() -> Result<(), crate::errors::Error> {
         "Opened angles_file for writer: {}",
         &configuration.ipc_config.angle_file_path
     );
-    let gc_write_file_writer = tokio::fs::OpenOptions::new()
+    let gcr_file_writer = tokio::fs::OpenOptions::new() // Renamed variable
         .write(true)
-        .open(&configuration.ipc_config.gc_write_file_path) // Use new config field
+        .open(&configuration.ipc_config.gcr_file_path) // Use renamed config field
         .await
         .context(errors::IOSnafu)?;
     tracing::info!(
-        "Opened gc_write_file for writer: {}",
-        &configuration.ipc_config.gc_write_file_path // Use new config field
+        "Opened gcr_file for writer: {}", // Renamed variable in log
+        &configuration.ipc_config.gcr_file_path // Use renamed config field
     );
 
     tracing::info!("Writer-side IPC files opened successfully. Initializing IPCWriterActorHandle.");
     let writer_handle = IPCWriterActorHandle::new(
-        gc_write_file_writer, // For GCR data
+        gcr_file_writer, // Pass renamed variable (For GCR data)
         angles_file_writer,   // For angles data
         simu_handle.clone(),
     );

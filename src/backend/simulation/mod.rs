@@ -79,8 +79,9 @@ impl VqSim for Simulator {
         self.modulator_state = ModulatorState::Random; // Ready to generate
         self.pending_angles_batch = None;
         self.reset_time(); // Reset self.now for internal time calculations if any
-                           // Seed RNG based on a new seed
-        self.reset_seed(self.time_of_start.unwrap().elapsed().as_nanos() as u64);
+                           // RNG will use the seed it was initialized with.
+                           // To change the seed, a different mechanism would be needed (e.g. a dedicated actor message or config reload).
+        // self.reset_seed(self.time_of_start.unwrap().elapsed().as_nanos() as u64); // Keep seed constant for now
         Ok(())
     }
 

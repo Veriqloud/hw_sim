@@ -9,7 +9,7 @@ use super::errors::Error;
 
 // Static OnceCell for file handles, managed by the actor.
 // CLICK_RESULTS is removed as it's part of GCR stream now.
-static GC_WRITE_FILE: OnceCell<Mutex<File>> = OnceCell::const_new();
+static GCR_FILE: OnceCell<Mutex<File>> = OnceCell::const_new(); // Renamed
 static ANGLES_FILE: OnceCell<Mutex<File>> = OnceCell::const_new();
 
 pub struct IPCWriterActor {
@@ -20,15 +20,15 @@ pub struct IPCWriterActor {
 
 impl IPCWriterActor {
     pub fn new(
-        gc_write_file: File, // For GCR data (GC + result bit)
-        angles_file: File,   // For angles data
+        gcr_file: File,    // For GCR data (GC + result bit)
+        angles_file: File, // For angles data
         receiver: mpsc::Receiver<WriterMessage>,
         _simulator_handle: SimulatorHandle, // Kept for signature compatibility, but not used
     ) -> Self {
         // Attempt to set the file handles. If already set (e.g. actor restarted without process restart),
         // this might panic. Consider using get_or_init for robustness if actor can be re-created.
         GC_WRITE_FILE
-            .set(Mutex::new(gc_write_file))
+            .set(Mutex::new(gcr_file))
             .expect("GC_WRITE_FILE static OnceCell already set");
         ANGLES_FILE
             .set(Mutex::new(angles_file))
@@ -44,7 +44,7 @@ impl IPCWriterActor {
                     "WriterActor: Received WriteGcrBatch ({} items).",
                     gcr_data_batch.len()
                 );
-                if let Some(file_mutex) = GC_WRITE_FILE.get() {
+                if let Some(file_mutex) = GCR_FILE.get() { // Renamed
                     let mut file_guard = file_mutex.lock().await;
                     for gcr_item in gcr_data_batch {
                         file_guard.write_all(&gcr_item).await.map_err(|e| {
@@ -54,17 +54,18 @@ impl IPCWriterActor {
                             }
                         })?;
                     }
-                    file_guard.flush().await.map_err(|e| { // Ensure data is sent
+                    file_guard.flush().await.map_err(|e| {
+                        // Ensure data is sent
                         tracing::error!("Failed to flush GCR FIFO: {:?}", e);
                         Error::Channel {
-                             e: format!("Failed to flush GCR FIFO: {}", e),
+                            e: format!("Failed to flush GCR FIFO: {}", e),
                         }
                     })?;
                     tracing::info!("WriterActor: Successfully wrote GCR batch.");
                 } else {
-                    tracing::error!("WriterActor: GC_WRITE_FILE not initialized.");
+                    tracing::error!("WriterActor: GCR_FILE not initialized."); // Renamed
                     return Err(Error::Channel {
-                        e: "GC_WRITE_FILE not initialized".to_string(),
+                        e: "GCR_FILE not initialized".to_string(), // Renamed
                     });
                 }
                 Ok(())
@@ -82,10 +83,11 @@ impl IPCWriterActor {
                             e: format!("Failed to write angles batch to FIFO: {}", e),
                         }
                     })?;
-                    file_guard.flush().await.map_err(|e| { // Ensure data is sent
+                    file_guard.flush().await.map_err(|e| {
+                        // Ensure data is sent
                         tracing::error!("Failed to flush angles FIFO: {:?}", e);
                         Error::Channel {
-                             e: format!("Failed to flush angles FIFO: {}", e),
+                            e: format!("Failed to flush angles FIFO: {}", e),
                         }
                     })?;
                     tracing::info!("WriterActor: Successfully wrote angles batch.");
@@ -115,7 +117,7 @@ impl IPCWriterActor {
 pub enum WriterMessage {
     WriteGcrBatch(Vec<[u8; 8]>), // Batch of GCR data (Global Counter + Result bit)
     WriteAnglesBatch(Vec<u8>),   // Batch of Angle values
-    Stop,                        // Command to stop (if needed for internal loops, currently informational)
+    Stop, // Command to stop (if needed for internal loops, currently informational)
 }
 
 pub async fn run_writer_actor(mut actor: IPCWriterActor) {
@@ -142,12 +144,7 @@ impl IPCWriterActorHandle {
         simulator_handle: SimulatorHandle, // Kept for signature, not directly used by new writer
     ) -> Self {
         let (sender, receiver) = mpsc::channel(8); // Channel for messages to the actor
-        let actor = IPCWriterActor::new(
-            gc_write_file,
-            angles_file,
-            receiver,
-            simulator_handle,
-        );
+        let actor = IPCWriterActor::new(gc_write_file, angles_file, receiver, simulator_handle);
         tokio::spawn(run_writer_actor(actor)); // Spawn the actor task
         Self { sender }
     }

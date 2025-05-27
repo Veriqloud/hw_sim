@@ -18,7 +18,7 @@ pub struct Configuration {
     pub angle_file_path: String, // Should be /dev/c2h_angles
     // click_result_file_path is no longer used as click results are part of the GCR stream.
     // pub click_result_file_path: String, 
-    pub gc_write_file_path: String, // FIFO for writing GCR data (GC + result bit)
+    pub gcr_file_path: String, // Renamed: FIFO for writing GCR data (GC + result bit)
     pub gc_read_file_path: String,  // FIFO for reading GC values echoed by controller
 }
 
@@ -28,7 +28,7 @@ impl Default for Configuration {
             command_path: String::from_str("/dev/xdma0_user").unwrap(),
             angle_file_path: String::from_str("/dev/c2h_angles").unwrap(),
             // click_result_file_path: String::from_str("/dev/c2h_click_results").unwrap(), // Removed
-            gc_write_file_path: String::from_str("./files/gc_write").unwrap(), // Adjusted default
+            gcr_file_path: String::from_str("./files/gcr").unwrap(), // Renamed and adjusted default
             gc_read_file_path: String::from_str("./files/gc_read").unwrap(),   // Adjusted default
         }
     }
@@ -42,7 +42,7 @@ impl Configuration {
         let ipc_fifo_paths = [
             &self.angle_file_path,
             // &self.click_result_file_path, // No longer a separate FIFO
-            &self.gc_write_file_path,
+            &self.gcr_file_path, // Renamed
             &self.gc_read_file_path,
         ];
 
@@ -230,7 +230,7 @@ mod tests {
                 command_path: "/dev/xdma0_user_test".to_owned(),
                 angle_file_path: "/dev/c2h_angles_test".to_owned(),
                 // click_result_file_path removed
-                gc_write_file_path: "/dev/h2c_gc_write_test".to_owned(),
+                gcr_file_path: "/dev/h2c_gcr_test".to_owned(), // Renamed
                 gc_read_file_path: "/dev/h2c_gc_read_test".to_owned()
             },
             config_input
