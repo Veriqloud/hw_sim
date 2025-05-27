@@ -166,7 +166,6 @@ async fn run_ipc_connection_loop(
         let ipc_reader = ipc::reader::IPCReader::new(
             config.command_path.clone(),
             gc_file,
-            gcr_file,
             simu_handle.clone(),
             writer_handle.clone(),
         );
