@@ -68,6 +68,8 @@ impl SimulatorBuilder {
             fifo_max_size: self.fifo_max_size,
             current_fifo_size: self.current_fifo_size,
             angles: self.angles.to_owned(),
+            pending_angles_batch: todo!(),
+            time_of_start: todo!(),
         }
     }
 
