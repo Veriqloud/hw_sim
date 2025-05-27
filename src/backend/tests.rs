@@ -10,7 +10,7 @@ use rand_pcg::Pcg64Mcg;
 
 use crate::backend::{
     protocols::random::CorrelationsRandom,
-    role::{Multiparty, Role, SimulatorMode}, // Added SimulatorMode
+    role::{Multiparty, Role}, // SimulatorMode is top-level in role.rs
     simulation::{
         builder::SimulatorBuilder,
         hardware::{builder::HardwareBuilder, modulator_state::ModulatorState},
