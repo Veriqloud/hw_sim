@@ -2,159 +2,132 @@ use std::fmt::Debug;
 use tokio::fs::File;
 use tokio::io::AsyncWriteExt;
 
-use tokio::sync::oneshot::Receiver;
-use tokio::sync::{mpsc, oneshot, Mutex, OnceCell};
+use tokio::sync::{mpsc, Mutex, OnceCell}; // Removed oneshot components for stop_chan
 
 use super::super::super::backend::actor::ActorHandle as SimulatorHandle;
 use super::errors::Error;
 
-static ANGLES_STREAM: OnceCell<Mutex<File>> = OnceCell::const_new();
-static CLICK_RESULTS: OnceCell<Mutex<File>> = OnceCell::const_new();
+// Static OnceCell for file handles, managed by the actor.
+// CLICK_RESULTS is removed as it's part of GCR stream now.
+static GC_WRITE_FILE: OnceCell<Mutex<File>> = OnceCell::const_new();
+static ANGLES_FILE: OnceCell<Mutex<File>> = OnceCell::const_new();
 
 pub struct IPCWriterActor {
     receiver: mpsc::Receiver<WriterMessage>,
-    simulator_handle: SimulatorHandle,
-    stop_chan: Option<oneshot::Sender<()>>,
+    // simulator_handle is no longer needed here as the writer only writes what it's told.
+    // stop_chan is removed; the actor stops when its message channel closes or by a specific message if needed.
 }
 
 impl IPCWriterActor {
     pub fn new(
-        angles_stream: File,
-        click_results_stream: File,
+        gc_write_file: File, // For GCR data (GC + result bit)
+        angles_file: File,   // For angles data
         receiver: mpsc::Receiver<WriterMessage>,
-        simulator_handle: SimulatorHandle,
+        _simulator_handle: SimulatorHandle, // Kept for signature compatibility, but not used
     ) -> Self {
-        ANGLES_STREAM.set(Mutex::new(angles_stream)).unwrap();
-        CLICK_RESULTS.set(Mutex::new(click_results_stream)).unwrap();
+        // Attempt to set the file handles. If already set (e.g. actor restarted without process restart),
+        // this might panic. Consider using get_or_init for robustness if actor can be re-created.
+        GC_WRITE_FILE
+            .set(Mutex::new(gc_write_file))
+            .expect("GC_WRITE_FILE static OnceCell already set");
+        ANGLES_FILE
+            .set(Mutex::new(angles_file))
+            .expect("ANGLES_FILE static OnceCell already set");
 
-        IPCWriterActor {
-            receiver,
-            simulator_handle,
-            stop_chan: Default::default(),
-        }
+        IPCWriterActor { receiver }
     }
 
     async fn handle_message(&mut self, msg: WriterMessage) -> Result<(), Error> {
         match msg {
-            WriterMessage::Start => {
-                tracing::info!("Writer actor received Start message, spawning write_loop.");
-                // Simulator is started and seeded by IPCReader now.
-                let sim_h_cpy = self.simulator_handle.clone();
-                let (send, recv) = oneshot::channel();
-                self.stop_chan = Some(send);
-                tokio::spawn(async move { Self::write_loop(sim_h_cpy, recv).await });
+            WriterMessage::WriteGcrBatch(gcr_data_batch) => {
+                tracing::info!(
+                    "WriterActor: Received WriteGcrBatch ({} items).",
+                    gcr_data_batch.len()
+                );
+                if let Some(file_mutex) = GC_WRITE_FILE.get() {
+                    let mut file_guard = file_mutex.lock().await;
+                    for gcr_item in gcr_data_batch {
+                        file_guard.write_all(&gcr_item).await.map_err(|e| {
+                            tracing::error!("Failed to write GCR item: {:?}", e);
+                            Error::Channel {
+                                e: format!("Failed to write GCR item to FIFO: {}", e),
+                            }
+                        })?;
+                    }
+                    file_guard.flush().await.map_err(|e| { // Ensure data is sent
+                        tracing::error!("Failed to flush GCR FIFO: {:?}", e);
+                        Error::Channel {
+                             e: format!("Failed to flush GCR FIFO: {}", e),
+                        }
+                    })?;
+                    tracing::info!("WriterActor: Successfully wrote GCR batch.");
+                } else {
+                    tracing::error!("WriterActor: GC_WRITE_FILE not initialized.");
+                    return Err(Error::Channel {
+                        e: "GC_WRITE_FILE not initialized".to_string(),
+                    });
+                }
+                Ok(())
+            }
+            WriterMessage::WriteAnglesBatch(angles_batch) => {
+                tracing::info!(
+                    "WriterActor: Received WriteAnglesBatch ({} bytes).",
+                    angles_batch.len()
+                );
+                if let Some(file_mutex) = ANGLES_FILE.get() {
+                    let mut file_guard = file_mutex.lock().await;
+                    file_guard.write_all(&angles_batch).await.map_err(|e| {
+                        tracing::error!("Failed to write angles batch: {:?}", e);
+                        Error::Channel {
+                            e: format!("Failed to write angles batch to FIFO: {}", e),
+                        }
+                    })?;
+                    file_guard.flush().await.map_err(|e| { // Ensure data is sent
+                        tracing::error!("Failed to flush angles FIFO: {:?}", e);
+                        Error::Channel {
+                             e: format!("Failed to flush angles FIFO: {}", e),
+                        }
+                    })?;
+                    tracing::info!("WriterActor: Successfully wrote angles batch.");
+                } else {
+                    tracing::error!("WriterActor: ANGLES_FILE not initialized.");
+                    return Err(Error::Channel {
+                        e: "ANGLES_FILE not initialized".to_string(),
+                    });
+                }
                 Ok(())
             }
             WriterMessage::Stop => {
-                tracing::info!("Writer actor received Stop message");
-                // Simulator is stopped by IPCReader now.
-                // This actor only needs to stop its own write_loop.
-                {
-                    let stop_chan = self.stop_chan.take();
-                    match stop_chan {
-                        Some(chan) => {
-                            if chan.send(()).is_err() {
-                                // Log if sending fails, but don't error out the actor handling
-                                // as the loop might already be stopping or stopped.
-                                tracing::warn!("Failed to send on stop_chan; write_loop might already be stopped.");
-                            }
-                        }
-                        None => {
-                            // If stop_chan is None, it means stop has already been called.
-                            // This is not an error condition for the actor's message handling.
-                            tracing::debug!("Stop channel already taken; stop process likely initiated or completed.");
-                        }
-                    }
-                }
-                tracing::info!("Writing inactive!"); // This log might be reached multiple times if Stop is processed repeatedly by reader
+                // The writer actor itself doesn't have a loop to stop other than processing messages.
+                // If the sender (IPCReader) stops sending messages, this actor's loop will end.
+                // This message can be used for graceful shutdown if the actor had internal tasks.
+                tracing::info!("WriterActor: Received Stop message. No active loops to stop in writer itself. Will stop processing further messages if channel closes.");
+                // To explicitly stop the actor from processing more messages, we could close its own receiver,
+                // but typically the owner (IPCReader) dropping its sender handle achieves this.
                 Ok(())
             }
         }
     }
-
-    async fn write_loop(simulator_handle: SimulatorHandle, mut stop_recv: Receiver<()>) {
-        loop {
-            tokio::select! {
-                _ = &mut stop_recv =>{
-                    return
-                }
-                _ = tokio::time::sleep(tokio::time::Duration::from_nanos(10))=>{
-
-                }
-            }
-
-            match simulator_handle.read_angles().await {
-                Ok(data) => {
-                    if data.len() % 2 != 0 {
-                        tracing::error!(
-                            "Received data with odd length {}, cannot process in pairs.",
-                            data.len()
-                        );
-                        break;
-                    }
-                    let (angles_data, click_results_data): (Vec<u8>, Vec<u8>) = data
-                        .chunks_exact(2)
-                        .map(|chunk| {
-                            let byte1 = chunk[0];
-                            let byte2 = chunk[1];
-                            let angle_byte = ((byte1 & 0b110) >> 1) | ((byte2 & 0b110) << 3);
-                            let result_byte = (byte1 & 0b001) | ((byte2 & 0b001) << 4);
-                            (angle_byte, result_byte)
-                        })
-                        .unzip();
-
-                    if let Some(angles_stream_mutex) = ANGLES_STREAM.get() {
-                        if let Err(e) = angles_stream_mutex
-                            .lock()
-                            .await
-                            .write_all(&angles_data)
-                            .await
-                        {
-                            tracing::error!("Failed to write angles_data: {:?}", e);
-                            break; // Or handle error appropriately
-                        }
-                    } else {
-                        tracing::error!("ANGLES_STREAM not initialized");
-                        break;
-                    }
-
-                    if let Some(click_results_mutex) = CLICK_RESULTS.get() {
-                        if let Err(e) = click_results_mutex
-                            .lock()
-                            .await
-                            .write_all(&click_results_data)
-                            .await
-                        {
-                            tracing::error!("Failed to write click_results_data: {:?}", e);
-                            break; // Or handle error appropriately
-                        }
-                    } else {
-                        tracing::error!("CLICK_RESULTS not initialized");
-                        break;
-                    }
-                }
-                Err(e) => {
-                    tracing::error!("Failed to read angles (raw data) from simulator: {:?}", e);
-                    break;
-                }
-            }
-        }
-    }
 }
 
+// Message enum for the writer actor
 #[derive(Debug)]
 pub enum WriterMessage {
-    Start,
-    Stop,
+    WriteGcrBatch(Vec<[u8; 8]>), // Batch of GCR data (Global Counter + Result bit)
+    WriteAnglesBatch(Vec<u8>),   // Batch of Angle values
+    Stop,                        // Command to stop (if needed for internal loops, currently informational)
 }
 
 pub async fn run_writer_actor(mut actor: IPCWriterActor) {
+    tracing::info!("IPCWriterActor running.");
     while let Some(msg) = actor.receiver.recv().await {
-        tracing::info!("Received message: {:?}", msg);
+        tracing::debug!("IPCWriterActor: Received message: {:?}", msg);
         if let Err(e) = actor.handle_message(msg).await {
-            tracing::error!("Failed to handle message: {:?}", e);
+            tracing::error!("IPCWriterActor: Failed to handle message: {:?}", e);
+            // Depending on the error, might want to break or continue
         }
     }
+    tracing::info!("IPCWriterActor finished.");
 }
 
 #[derive(Debug, Clone)]
@@ -164,30 +137,50 @@ pub struct IPCWriterActorHandle {
 
 impl IPCWriterActorHandle {
     pub fn new(
-        angles_stream: File,
-        click_results_stream: File,
-        simulator_handle: SimulatorHandle,
+        gc_write_file: File,
+        angles_file: File,
+        simulator_handle: SimulatorHandle, // Kept for signature, not directly used by new writer
     ) -> Self {
-        let (sender, receiver) = mpsc::channel(8);
+        let (sender, receiver) = mpsc::channel(8); // Channel for messages to the actor
         let actor = IPCWriterActor::new(
-            angles_stream,
-            click_results_stream,
+            gc_write_file,
+            angles_file,
             receiver,
             simulator_handle,
         );
-        tokio::spawn(run_writer_actor(actor));
+        tokio::spawn(run_writer_actor(actor)); // Spawn the actor task
         Self { sender }
     }
 
-    pub async fn start(&self) -> Result<(), Error> {
-        let message = WriterMessage::Start;
-        let _ = self.sender.send(message).await;
-        Ok(())
+    pub async fn write_gcr_batch(&self, gcr_data: Vec<[u8; 8]>) -> Result<(), Error> {
+        let message = WriterMessage::WriteGcrBatch(gcr_data);
+        self.sender.send(message).await.map_err(|e| {
+            tracing::error!("Failed to send WriteGcrBatch to IPCWriterActor: {}", e);
+            Error::Channel {
+                e: format!("Send GCR batch failed: {}", e),
+            }
+        })
     }
 
+    pub async fn write_angles_batch(&self, angles_data: Vec<u8>) -> Result<(), Error> {
+        let message = WriterMessage::WriteAnglesBatch(angles_data);
+        self.sender.send(message).await.map_err(|e| {
+            tracing::error!("Failed to send WriteAnglesBatch to IPCWriterActor: {}", e);
+            Error::Channel {
+                e: format!("Send angles batch failed: {}", e),
+            }
+        })
+    }
+
+    // Optional: A stop message if explicit cleanup or signaling is needed in the writer actor.
+    // For now, the writer stops when its command channel is closed by the reader.
     pub async fn stop(&self) -> Result<(), Error> {
         let message = WriterMessage::Stop;
-        let _ = self.sender.send(message).await;
-        Ok(())
+        self.sender.send(message).await.map_err(|e| {
+            tracing::error!("Failed to send Stop to IPCWriterActor: {}", e);
+            Error::Channel {
+                e: format!("Send Stop failed: {}", e),
+            }
+        })
     }
 }
