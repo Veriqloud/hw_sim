@@ -6,7 +6,7 @@ use async_trait::async_trait;
 
 use crate::backend::protocols::random::CorrelationsRandom;
 use crate::backend::role::{Multiparty, Role};
-use rand::SeedableRng;
+// Removed: use rand::SeedableRng;
 use rand_pcg::Pcg64Mcg;
 use std::time::Instant;
 
@@ -104,12 +104,9 @@ impl VqSim for Simulator {
             self.global_counter
         );
 
-        let mut gcr_batch = Vec::with_capacity(BATCH_SIZE);
-        let mut angles_this_batch = Vec::with_capacity(BATCH_SIZE);
-
         // Obtain raw random bytes for events.
         // Each event (GC, click, angle) needs 2 bytes from correlations_random based on user's logic.
-        let raw_random_bytes = self.correlations_random(BATCH_SIZE * 2).map_err(|e| {
+        let data = self.correlations_random(BATCH_SIZE * 2).map_err(|e| {
             tracing::error!(
                 "Failed to get raw random bytes from correlations_random: {:?}",
                 e
@@ -119,60 +116,51 @@ impl VqSim for Simulator {
             }
         })?;
 
-        if raw_random_bytes.len() < BATCH_SIZE * 2 {
+        // Ensure we have enough data for BATCH_SIZE pairs.
+        // The user's provided snippet checks data.len() % 2 != 0,
+        // but chunks_exact(2) handles this by processing only full chunks.
+        // The critical part is having at least BATCH_SIZE * 2 bytes.
+        if data.len() < BATCH_SIZE * 2 {
             return Err(HardwareError::Other {
                 reason: format!(
-                    "correlations_random returned insufficient data: got {}, expected {}",
-                    raw_random_bytes.len(),
+                    "correlations_random returned insufficient data: got {}, expected at least {}",
+                    data.len(),
                     BATCH_SIZE * 2
                 ),
             });
         }
 
+        // Implement the user's specified separation logic
+        // We take exactly BATCH_SIZE items from the iterator produced by chunks_exact(2).map(...)
+        // to ensure angles_data and click_results_data have BATCH_SIZE elements.
+        let (angles_data, click_results_data): (Vec<u8>, Vec<u8>) = data
+            .chunks_exact(2)
+            .take(BATCH_SIZE) // Ensure we process exactly BATCH_SIZE pairs
+            .map(|chunk| {
+                let byte1 = chunk[0];
+                let byte2 = chunk[1];
+                // angle_byte = ((byte1 & 0b110) >> 1) | ((byte2 & 0b110) << 3);
+                let angle_byte = ((byte1 & 0x06) >> 1) | ((byte2 & 0x06) << 3);
+                // result_byte = (byte1 & 0b001) | ((byte2 & 0b001) << 4);
+                let result_byte = (byte1 & 0x01) | ((byte2 & 0x01) << 4);
+                (angle_byte, result_byte)
+            })
+            .unzip();
+
+        self.pending_angles_batch = Some(angles_data);
+
+        let mut gcr_batch = Vec::with_capacity(BATCH_SIZE);
         for i in 0..BATCH_SIZE {
             let gc_value = self.global_counter + i as u64;
-
-            let byte_pair_index = i * 2;
-            let byte1 = raw_random_bytes[byte_pair_index];
-            let byte2 = raw_random_bytes[byte_pair_index + 1];
-
-            // Angle extraction: ((byte1 & 0b110) >> 1) | ((byte2 & 0b110) << 3)
-            // This seems to intend to take 2 bits from byte1 (shifted) and 2 bits from byte2 (shifted)
-            // to form a 4-bit angle.
-            // ((byte1 & 0b0000_0110) >> 1) gives bits 1,2 of byte1 in positions 0,1.
-            // ((byte2 & 0b0000_0110) << 3) would shift bits 1,2 of byte2 to positions 4,5.
-            // The original request was: let angle_byte = ((byte1 & 0b110) >> 1) | ((byte2 & 0b110) << 3);
-            // Assuming this means:
-            //  - bits 1 and 2 from byte1 become bits 0 and 1 of angle_byte.
-            //  - bits 1 and 2 from byte2 become bits 2 and 3 of angle_byte.
-            //  This would be: (((byte1 & 0b0110) >> 1) as u8) | (((byte2 & 0b0110) << 1) as u8)
-            //  Let's stick to the user's provided formula:
-            // let angle_byte = ((byte1 & 0b110) >> 1) | ((byte2 & 0b110) << (3 - 1)); // This variable is unused. angle_val is used.
-                                                                                    // If it's `((byte1 & 0b110) >> 1) | ((byte2 & 0b110) << 3)` literally, then it's:
-                                                                                    // part1 = (byte1 & 6) >> 1 -> values 0,1,2,3 from bits 1,2 of byte1
-                                                                                    // part2 = (byte2 & 6) << 3 -> values 0, 16, 32, 48 from bits 1,2 of byte2
-                                                                                    // angle_byte = part1 | part2. This seems plausible.
-                                                                                    // The user's example: `let angle_byte = ((byte1 & 0b110) >> 1) | ((byte2 & 0b110) << 3);`
-                                                                                    // Let's use this directly.
-            let angle_val = ((byte1 & 0b0000_0110) >> 1) | ((byte2 & 0b0000_0110) << 3);
-
-            // Click result extraction: `(byte1 & 0b001) | ((byte2 & 0b001) << 4)`
-            // This takes bit 0 from byte1 and bit 0 from byte2 (shifted to bit 4).
-            // The problem description says "bit 0 is the measurement result (all parties have this result...)"
-            // and "If the quber is not zero, the result bit will flip sometimes".
-            // The GCR encoding only has space for a *single* result bit.
-            // Let's assume the click result is just one bit, e.g., from byte1.
-            // The user's GCR encoding `split_gcr` implies a single result bit.
-            // `let result_byte = (byte1 & 0b001) | ((byte2 & 0b001) << 4);` -> this creates a byte with two bits.
-            // We need a single click bit for `encode_gcr`. Let's take it from `byte1 & 1`.
-            let click_bit = byte1 & 0b0000_0001;
-
-            angles_this_batch.push(angle_val);
-            let gcr_item = self.encode_gcr(gc_value, click_bit);
+            // The click_results_data contains the `result_byte` which is a u8.
+            // The `encode_gcr` function takes a u8 for the result bit.
+            // The `split_gcr` function extracts a single bit `(buf_gcr[6] >> 1) & 1;`.
+            // So, we should pass only the relevant bit from result_byte to encode_gcr.
+            // Assuming the LSB of result_byte is the intended single click result bit.
+            let result_byte_for_gcr = click_results_data[i]; 
+            let gcr_item = self.encode_gcr(gc_value, result_byte_for_gcr);
             gcr_batch.push(gcr_item);
         }
-
-        self.pending_angles_batch = Some(angles_this_batch);
         self.global_counter += BATCH_SIZE as u64; // Advance base GC for next batch
 
         tracing::info!(

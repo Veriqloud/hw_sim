@@ -4,7 +4,7 @@ use tokio::io::AsyncWriteExt;
 
 use tokio::sync::{mpsc, Mutex, OnceCell}; // Removed oneshot components for stop_chan
 
-use super::super::super::backend::actor::ActorHandle as SimulatorHandle;
+// Removed: use super::super::super::backend::actor::ActorHandle as SimulatorHandle;
 use super::errors::Error;
 
 // Static OnceCell for file handles, managed by the actor.
