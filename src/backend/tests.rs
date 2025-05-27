@@ -55,23 +55,29 @@ async fn generate_bytes() {
 
     // Batch 1
     let gcr_a1 = sim_a.generate_gcr_and_angles_batch().await.unwrap();
-    let angles_a1 = sim_a.retrieve_pending_angles_batch(vec![]).await.unwrap(); // Dummy GCs
+    let angles_a1 = sim_a.retrieve_pending_angles_batch(vec![]).unwrap(); // Dummy GCs
 
     let gcr_b1 = sim_b.generate_gcr_and_angles_batch().await.unwrap();
-    let angles_b1 = sim_b.retrieve_pending_angles_batch(vec![]).await.unwrap(); // Dummy GCs
+    let angles_b1 = sim_b.retrieve_pending_angles_batch(vec![]).unwrap(); // Dummy GCs
 
     assert_eq!(gcr_a1, gcr_b1, "GCR data for batch 1 should be identical");
-    assert_eq!(angles_a1, angles_b1, "Angle data for batch 1 should be identical");
+    assert_eq!(
+        angles_a1, angles_b1,
+        "Angle data for batch 1 should be identical"
+    );
 
     // Batch 2
     let gcr_a2 = sim_a.generate_gcr_and_angles_batch().await.unwrap();
-    let angles_a2 = sim_a.retrieve_pending_angles_batch(vec![]).await.unwrap(); // Dummy GCs
+    let angles_a2 = sim_a.retrieve_pending_angles_batch(vec![]).unwrap(); // Dummy GCs
 
     let gcr_b2 = sim_b.generate_gcr_and_angles_batch().await.unwrap();
-    let angles_b2 = sim_b.retrieve_pending_angles_batch(vec![]).await.unwrap(); // Dummy GCs
-    
+    let angles_b2 = sim_b.retrieve_pending_angles_batch(vec![]).unwrap(); // Dummy GCs
+
     assert_eq!(gcr_a2, gcr_b2, "GCR data for batch 2 should be identical");
-    assert_eq!(angles_a2, angles_b2, "Angle data for batch 2 should be identical");
+    assert_eq!(
+        angles_a2, angles_b2,
+        "Angle data for batch 2 should be identical"
+    );
 
     sim_a.stop_session().unwrap();
     sim_b.stop_session().unwrap();
@@ -143,17 +149,18 @@ async fn qkd_statistics_ok() {
     // So, to get the original (result_bit & 1), we do (gcr_item[6] >> 1) & 1.
     let extract_result_from_gcr = |gcr_item: &[u8; 8]| (gcr_item[6] >> 1) & 1;
 
-    for _ in 0..3 { // Simulate 3 batches of data
+    for _ in 0..3 {
+        // Simulate 3 batches of data
         let gcr_a = sim_a.generate_gcr_and_angles_batch().await.unwrap();
-        angles_a_all.extend(sim_a.retrieve_pending_angles_batch(vec![]).await.unwrap());
+        angles_a_all.extend(sim_a.retrieve_pending_angles_batch(vec![]).unwrap());
         results_a_all.extend(gcr_a.iter().map(extract_result_from_gcr));
 
         let gcr_b = sim_b.generate_gcr_and_angles_batch().await.unwrap();
-        angles_b_all.extend(sim_b.retrieve_pending_angles_batch(vec![]).await.unwrap());
+        angles_b_all.extend(sim_b.retrieve_pending_angles_batch(vec![]).unwrap());
         results_b_all.extend(gcr_b.iter().map(extract_result_from_gcr));
 
         let gcr_c = sim_c.generate_gcr_and_angles_batch().await.unwrap();
-        angles_c_all.extend(sim_c.retrieve_pending_angles_batch(vec![]).await.unwrap());
+        angles_c_all.extend(sim_c.retrieve_pending_angles_batch(vec![]).unwrap());
         results_c_all.extend(gcr_c.iter().map(extract_result_from_gcr));
     }
 
@@ -169,15 +176,15 @@ async fn qkd_statistics_ok() {
 
     // read one more batch
     let gcr_a = sim_a.generate_gcr_and_angles_batch().await.unwrap();
-    angles_a_all.extend(sim_a.retrieve_pending_angles_batch(vec![]).await.unwrap());
+    angles_a_all.extend(sim_a.retrieve_pending_angles_batch(vec![]).unwrap());
     results_a_all.extend(gcr_a.iter().map(extract_result_from_gcr));
 
     let gcr_b = sim_b.generate_gcr_and_angles_batch().await.unwrap();
-    angles_b_all.extend(sim_b.retrieve_pending_angles_batch(vec![]).await.unwrap());
+    angles_b_all.extend(sim_b.retrieve_pending_angles_batch(vec![]).unwrap());
     results_b_all.extend(gcr_b.iter().map(extract_result_from_gcr));
 
     let gcr_c = sim_c.generate_gcr_and_angles_batch().await.unwrap();
-    angles_c_all.extend(sim_c.retrieve_pending_angles_batch(vec![]).await.unwrap());
+    angles_c_all.extend(sim_c.retrieve_pending_angles_batch(vec![]).unwrap());
     results_c_all.extend(gcr_c.iter().map(extract_result_from_gcr));
 
     // analyze statistics
@@ -186,7 +193,6 @@ async fn qkd_statistics_ok() {
     assert_eq!(results_a_all.len(), angles_a_all.len());
     assert_eq!(results_b_all.len(), angles_b_all.len());
     assert_eq!(results_c_all.len(), angles_c_all.len());
-
 
     let l = angles_a_all.len();
     println!("length : {}", l);
@@ -205,7 +211,7 @@ async fn qkd_statistics_ok() {
         let angle_c = angles_c_all[i];
 
         num_result_matching += ((res_a == res_b) && (res_a == res_c)) as u32;
-        
+
         // The old test's angle logic:
         // let r = e1 & 0b1; (result bit)
         // let angle = ((e1 >> 1) as u32 + (e2 >> 1) as u32 + (e3 >> 1) as u32) % 128;
@@ -214,14 +220,18 @@ async fn qkd_statistics_ok() {
         let r = res_a; // Use Alice's result bit for basis match check
         let combined_angle_info = (angle_a as u32 + angle_b as u32 + angle_c as u32) % 128;
 
-        if combined_angle_info == 0 { // Basis match condition from old test
+        if combined_angle_info == 0 {
+            // Basis match condition from old test
             num_basismatch += 1;
-            if r == 0 { // Result bit condition from old test
+            if r == 0 {
+                // Result bit condition from old test
                 num_correct += 1
             }
-        } else if combined_angle_info == 64 { // Basis match condition from old test
+        } else if combined_angle_info == 64 {
+            // Basis match condition from old test
             num_basismatch += 1;
-            if r == 1 { // Result bit condition from old test
+            if r == 1 {
+                // Result bit condition from old test
                 num_correct += 1
             }
         }
