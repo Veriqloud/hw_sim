@@ -83,28 +83,33 @@ async fn app_main() -> Result<(), crate::errors::Error> {
     tracing::info!("Simulator modulator: {:?}", sim.role);
     let simu_handle = backend::actor::ActorHandle::new(sim);
 
-    let angle_file = tokio::fs::OpenOptions::new()
+    // Files for IPCWriterActor
+    let angles_file_writer = tokio::fs::OpenOptions::new()
         .write(true)
         .open(&configuration.ipc_config.angle_file_path)
         .await
         .context(errors::IOSnafu)?;
     tracing::info!(
-        "Opened angle_file for writing: {}",
+        "Opened angles_file for writer: {}",
         &configuration.ipc_config.angle_file_path
     );
-    let click_result_file = tokio::fs::OpenOptions::new()
+    let gc_write_file_writer = tokio::fs::OpenOptions::new()
         .write(true)
-        .open(&configuration.ipc_config.click_result_file_path)
+        .open(&configuration.ipc_config.gc_write_file_path) // Use new config field
         .await
         .context(errors::IOSnafu)?;
     tracing::info!(
-        "Opened click_result_file for writing: {}",
-        &configuration.ipc_config.click_result_file_path
+        "Opened gc_write_file for writer: {}",
+        &configuration.ipc_config.gc_write_file_path // Use new config field
     );
 
     tracing::info!("Writer-side IPC files opened successfully. Initializing IPCWriterActorHandle.");
-    let writer_handle =
-        IPCWriterActorHandle::new(angle_file, click_result_file, simu_handle.clone());
+    let writer_handle = IPCWriterActorHandle::new(
+        gc_write_file_writer, // For GCR data
+        angles_file_writer,   // For angles data
+        simu_handle.clone(),
+    );
+    // The IPC connection loop will now also open files needed by the reader per connection attempt.
     run_ipc_connection_loop(&configuration.ipc_config, simu_handle, writer_handle).await;
 
     Ok(())
@@ -114,25 +119,25 @@ async fn app_main() -> Result<(), crate::errors::Error> {
 async fn run_ipc_connection_loop(
     config: &IPCConfiguration,
     simu_handle: backend::actor::ActorHandle,
-    writer_handle: IPCWriterActorHandle,
+    writer_handle: IPCWriterActorHandle, // Writer handle is created once and passed in
 ) {
     loop {
         tracing::info!("Attempting to establish IPC connections. Waiting for a controller...");
 
-        // Open gc_file (hw_sim: Read, controller: Write)
-        let gc_file = match tokio::fs::OpenOptions::new()
+        // Open gc_read_file (hw_sim: Read, controller: Write)
+        let gc_read_file_handle = match tokio::fs::OpenOptions::new() // Renamed variable for clarity
             .read(true)
-            .open(&config.gc_file_path)
+            .open(&config.gc_read_file_path) // Use new config field
             .await
         {
             Ok(file) => {
-                tracing::info!("Opened gc_file: {}", &config.gc_file_path);
+                tracing::info!("Opened gc_read_file: {}", &config.gc_read_file_path); // Use new config field
                 file
             }
             Err(e) => {
                 tracing::error!(
-                    "Failed to open gc_file '{}': {}. Retrying in 5s.",
-                    &config.gc_file_path,
+                    "Failed to open gc_read_file '{}': {}. Retrying in 5s.",
+                    &config.gc_read_file_path, // Use new config field
                     e
                 );
                 sleep(Duration::from_secs(5)).await;
@@ -140,22 +145,38 @@ async fn run_ipc_connection_loop(
             }
         };
 
-        // Open gcr_file (hw_sim: Write, controller: Read)
-        let gcr_file = match tokio::fs::OpenOptions::new()
-            .write(true) // Open for writing
-            .open(&config.gcr_file_path)
-            .await
-        {
-            Ok(file) => {
-                tracing::info!("Opened gcr_file for writing: {}", &config.gcr_file_path);
-                file
+        // Note: gcr_file (old name for gc_write_file) is now handled by the writer actor,
+        // and its File handle is created in app_main and passed to the writer_handle.
+        // The reader no longer directly interacts with a "gcr_file" for writing.
+
+        tracing::info!("Reader-side IPC files opened successfully. Initializing IPCReader.");
+        // Pass the command_path from the config to the IPCReader
+        let ipc_reader = ipc::reader::IPCReader::new(
+            config.command_path.clone(),
+            gc_read_file_handle, // Pass the opened file handle
+            simu_handle.clone(),
+            writer_handle.clone(),
+        );
+
+        tracing::info!("IPC handlers initialized. Starting IPC command processing loop.");
+        if let Err(e) = ipc_reader.start().await {
+            match e {
+                _ => {
+                    tracing::warn!(
+                        "IPC processing ended with an error: {:?}. Preparing for new connection.",
+                        e
+                    );
+                }
             }
-            Err(e) => {
-                tracing::error!(
-                    "Failed to open gcr_file '{}': {}. Retrying in 5s.",
-                    &config.gcr_file_path,
-                    e
-                );
+        } else {
+            tracing::info!("IPCReader exited cleanly (this is unexpected if it's meant to run indefinitely). Preparing for new connection.");
+        }
+
+        tracing::info!(
+            "Current IPC session ended. Will attempt to listen for a new controller connection."
+        );
+        // Files and handlers are dropped here as they go out of scope.
+        // A small delay before restarting the loop to prevent tight looping on persistent errors.
                 sleep(Duration::from_secs(5)).await;
                 continue; // Retry the loop
             }

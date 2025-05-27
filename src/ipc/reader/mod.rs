@@ -1,13 +1,13 @@
 pub mod errors;
 
 use memmap2::MmapOptions;
-use rand::Rng;
+// Removed unused: use rand::Rng;
 // Removed unused: use snafu::ResultExt;
 use std::fs::OpenOptions as StdOpenOptions;
 use std::time::Duration;
 use tokio::{
     fs::File,
-    io::{AsyncReadExt, AsyncSeekExt /* AsyncWriteExt removed */},
+    io::{AsyncReadExt /* AsyncSeekExt removed, AsyncWriteExt removed */},
     task, time,
 };
 

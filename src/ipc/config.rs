@@ -14,11 +14,12 @@ use self::errors::{Error, FifoCreationSnafu, MockMmioFileSetupSnafu};
 
 #[derive(Debug, Deserialize, Serialize, PartialEq)]
 pub struct Configuration {
-    pub command_path: String,           // e.g., /dev/xdma0_user or a mock file path
-    pub angle_file_path: String,        // Should be /dev/c2h_angles
-    pub click_result_file_path: String, // Should be /dev/c2h_click_results
-    pub gc_file_path: String,           // Should be /dev/h2c_gc
-    pub gcr_file_path: String,          // Should be ./files/gcr (gc and result)
+    pub command_path: String,    // e.g., /dev/xdma0_user or a mock file path
+    pub angle_file_path: String, // Should be /dev/c2h_angles
+    // click_result_file_path is no longer used as click results are part of the GCR stream.
+    // pub click_result_file_path: String, 
+    pub gc_write_file_path: String, // FIFO for writing GCR data (GC + result bit)
+    pub gc_read_file_path: String,  // FIFO for reading GC values echoed by controller
 }
 
 impl Default for Configuration {
@@ -26,9 +27,9 @@ impl Default for Configuration {
         Self {
             command_path: String::from_str("/dev/xdma0_user").unwrap(),
             angle_file_path: String::from_str("/dev/c2h_angles").unwrap(),
-            click_result_file_path: String::from_str("/dev/c2h_click_results").unwrap(),
-            gc_file_path: String::from_str("./files/gc").unwrap(), // Adjusted default for local testing
-            gcr_file_path: String::from_str("./files/gcr").unwrap(), // Default for gc and result
+            // click_result_file_path: String::from_str("/dev/c2h_click_results").unwrap(), // Removed
+            gc_write_file_path: String::from_str("./files/gc_write").unwrap(), // Adjusted default
+            gc_read_file_path: String::from_str("./files/gc_read").unwrap(),   // Adjusted default
         }
     }
 }
@@ -36,12 +37,13 @@ impl Default for Configuration {
 impl Configuration {
     pub fn setup_ipc_fifos(&self) -> Result<(), Error> {
         tracing::info!("Ensuring IPC FIFOs are set up for IPC config...");
-        // Note: xdma_device_path is not a FIFO, so it's not created here.
+        // Note: command_path (xdma_device_path) is not a FIFO if it's a real device,
+        // or it's a regular file if mocked (handled separately).
         let ipc_fifo_paths = [
             &self.angle_file_path,
-            &self.click_result_file_path,
-            &self.gc_file_path,
-            &self.gcr_file_path,
+            // &self.click_result_file_path, // No longer a separate FIFO
+            &self.gc_write_file_path,
+            &self.gc_read_file_path,
         ];
 
         for path_str in &ipc_fifo_paths {
@@ -123,7 +125,7 @@ fn ensure_mock_mmio_file_exists(path_str: &str, required_size: usize) -> Result<
             path_str,
             required_size
         );
-        let mut file = fs::OpenOptions::new()
+        let file = fs::OpenOptions::new() // Removed mut
             .read(true) // Need read for existing content check, write for modification
             .write(true)
             .create(true) // Create if it doesn't exist
@@ -221,13 +223,15 @@ mod tests {
 
         let config_input: crate::ipc::config::Configuration =
             serde_json::from_str(&config_input_string).unwrap();
+        // Test data file "src/ipc/test_data/valid_config.json" was updated in a previous step.
+        // This assertion should now match the structure of that updated file.
         assert_eq!(
             crate::ipc::config::Configuration {
                 command_path: "/dev/xdma0_user_test".to_owned(),
                 angle_file_path: "/dev/c2h_angles_test".to_owned(),
-                click_result_file_path: "/dev/c2h_click_results_test".to_owned(),
-                gc_file_path: "/dev/h2c_gc_test".to_owned(),
-                gcr_file_path: "/dev/gcr_test".to_owned()
+                // click_result_file_path removed
+                gc_write_file_path: "/dev/h2c_gc_write_test".to_owned(),
+                gc_read_file_path: "/dev/h2c_gc_read_test".to_owned()
             },
             config_input
         );
