@@ -3,8 +3,6 @@ use rand_pcg::Pcg64Mcg;
 use std::time::Instant;
 
 use crate::backend::config::Configuration;
-// use crate::backend::role::Multiparty; // Removed
-// use crate::backend::role::Role; // Removed
 use crate::backend::role::SimulatorMode; // Keep SimulatorMode
 
 use super::hardware::builder::HardwareBuilder;
@@ -29,7 +27,6 @@ pub struct SimulatorBuilder {
     /// Qubit error rate
     pub qb_err: f64,
     pub rng: Pcg64Mcg,
-    // pub role: Role, // Removed
     pub mode: SimulatorMode, // Mode is still needed
     pub time_of_last_read: f64,
 }
@@ -46,21 +43,19 @@ impl SimulatorBuilder {
         SimulatorBuilder::default()
             .with_hardware(hw)
             .with_angles(conf.angles.to_owned())
-            // .with_role(Role::OneOfMany(Multiparty { // Removed
-            //     number_of_parties: conf.number_of_parties, // Removed
-            //     position: conf.position, // Removed
-            // })) // Removed
             .with_qb_err(conf.qberr)
             .with_eta(conf.eta)
             .with_rng(Pcg64Mcg::seed_from_u64(conf.seed))
-            // .with_mode(conf.mode) // Ensure mode is set from config
+            // .with_mode(conf.mode) // Mode should be set if it comes from a higher-level config.
+                                  // Assuming SimulatorBuilder::default() or a specific with_mode() call handles it.
+                                  // If conf (backend::config::Configuration) had a mode, it would be:
+                                  // .with_mode(conf.mode) 
             .build()
     }
 
     pub fn build(&self) -> Simulator {
         Simulator {
             hw: self.hw.to_owned(),
-            // role: self.role.to_owned(), // Removed
             simulator_mode: self.mode, // Ensure mode is assigned from builder's mode field
             rng: self.rng.to_owned(),
             eta: self.eta,
@@ -86,11 +81,6 @@ impl SimulatorBuilder {
         self.hw = hw;
         self
     }
-
-    // pub fn with_role(&mut self, role: Role) -> &mut Self { // Removed
-    //     self.role = role; // Removed
-    //     self // Removed
-    // } // Removed
 
     pub fn with_rng(&mut self, rng: Pcg64Mcg) -> &mut Self {
         self.rng = rng;
@@ -146,7 +136,6 @@ impl Default for SimulatorBuilder {
             now: Instant::now(),
             qb_err: Default::default(),
             rng: Pcg64Mcg::seed_from_u64(10),
-            // role: Default::default(), // Removed
             mode: SimulatorMode::default(), // Add mode default
             time_of_last_read: Default::default(),
         }
@@ -155,7 +144,6 @@ impl Default for SimulatorBuilder {
 
 #[cfg(test)]
 pub mod tests {
-    // use crate::backend::role::Role; // Removed
     use crate::backend::role::SimulatorMode; // Ensure SimulatorMode is imported
     use crate::backend::simulation::builder::SimulatorBuilder;
     use crate::backend::simulation::hardware::builder::HardwareBuilder;
@@ -174,7 +162,6 @@ pub mod tests {
             .build();
         let sim = SimulatorBuilder::new()
             .with_hardware(hw.clone())
-            // .with_role(Role::default()) // Removed
             .with_mode(SimulatorMode::Detector) // Add with_mode for testing
             .with_rng(Pcg64Mcg::seed_from_u64(5))
             .with_eta(13.)
@@ -190,10 +177,6 @@ pub mod tests {
         assert_eq!(
             Simulator {
                 hw,
-                // role: Role::OneOfMany(crate::backend::role::Multiparty { // Removed
-                //     number_of_parties: 1, // Removed
-                //     position: 0 // Removed
-                // }), // Removed
                 simulator_mode: SimulatorMode::Detector, // Add mode to assertion
                 rng: Pcg64Mcg::seed_from_u64(5),
                 eta: 13.,

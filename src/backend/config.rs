@@ -3,8 +3,6 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Deserialize, Serialize, PartialEq)]
 pub struct Configuration {
     pub angles: Vec<u8>,
-    // pub number_of_parties: u32, // Removed
-    // pub position: u32, // Removed
     pub seed: u64,
     pub eta: f64,
     pub qberr: f64,
@@ -15,8 +13,6 @@ impl Default for Configuration {
     fn default() -> Self {
         Self {
             angles: vec![0, 32, 64, 96],
-            // number_of_parties: 1, // Removed
-            // position: 0, // Removed
             seed: 42,
             eta: 0.,
             qberr: 0.,
@@ -40,15 +36,19 @@ mod tests {
         assert_eq!(
             crate::backend::config::Configuration {
                 angles: vec![0, 10, 11, 12],
-                // number_of_parties: 2, // Removed
-                // position: 1, // Removed
                 seed: 33,
                 eta: 0.1,
                 qberr: 0.02,
                 pulse_distance: 1e-8,
-                mode: crate::backend::role::SimulatorMode::Detector, // mode is still relevant
+                // mode: crate::backend::role::SimulatorMode::Detector, // This field is not part of backend::config::Configuration
             },
             config_input
         );
+        // If mode needs to be checked, it should be done after parsing into the main Configuration struct,
+        // not the backend::config::Configuration which doesn't store it.
+        // For example, if the main config struct (e.g. crate::config::Configuration) holds a backend_config
+        // and a mode separately, that's where `mode` would be asserted.
+        // Based on the current structure of backend::config::Configuration, `mode` is not a field here.
+        // Assuming the test intends to check the fields of `crate::backend::config::Configuration` only.
     }
 }

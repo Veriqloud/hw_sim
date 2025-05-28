@@ -1,5 +1,4 @@
 use crate::backend::protocols::errors::ProtocolError;
-// Removed: use crate::backend::role::Role;
 use crate::backend::simulation::hardware::modulator_state::ModulatorState;
 use crate::backend::simulation::Simulator;
 //use itertools::izip;
