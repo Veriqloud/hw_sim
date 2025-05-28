@@ -10,7 +10,7 @@ use rand_pcg::Pcg64Mcg;
 
 use crate::backend::{
     protocols::random::CorrelationsRandom,
-    role::{Multiparty, Role, SimulatorMode}, // Explicitly import SimulatorMode here
+    role::{Multiparty, Role, SimulatorMode}, // SimulatorMode is correctly imported here
     simulation::{
         builder::SimulatorBuilder,
         hardware::{builder::HardwareBuilder, modulator_state::ModulatorState},
