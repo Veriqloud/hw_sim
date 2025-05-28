@@ -1,5 +1,5 @@
 use clap::Parser;
-use hw_sim::backend::role::SimulatorMode;
+use crate::backend::role::SimulatorMode; // Changed hw_sim:: to crate::
 use memmap2::MmapOptions;
 use rand::Rng;
 use serde::Deserialize;
@@ -169,7 +169,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Helper function to decode GCR item
     // Matches the logic in hw_sim's tests and simulator's encode_gcr
     fn split_gcr(buf_gcr: [u8; 8]) -> (u64, u8) {
-        let mut buf: [u8; 8] = buf_gcr;
+        let buf: [u8; 8] = buf_gcr; // Removed mut
         // The original GC value was shifted right by 1, and its LSB stored in bit 0 of buf[6].
         // So, to reconstruct, we take the value from buf (with bits 0,1 of buf[6] zeroed for this part),
         // shift left by 1, and add the LSB.
