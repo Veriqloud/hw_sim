@@ -40,7 +40,6 @@ mod tests {
                 eta: 0.1,
                 qberr: 0.02,
                 pulse_distance: 1e-8,
-                // mode: crate::backend::role::SimulatorMode::Detector, // This field is not part of backend::config::Configuration
             },
             config_input
         );
