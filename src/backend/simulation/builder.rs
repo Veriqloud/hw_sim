@@ -197,6 +197,8 @@ pub mod tests {
                 fifo_max_size: 10_000,
                 current_fifo_size: 0,
                 angles: vec![0, 32, 34, 96],
+                pending_angles_batch: None,
+                time_of_start: None,
             },
             sim
         )
