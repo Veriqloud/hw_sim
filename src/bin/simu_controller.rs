@@ -67,6 +67,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .await?;
     tracing::info!("SimuController: Opened angle file successfully.");
 
+    // GCR file (read-only for controller) - Opened before GC file to match hw_sim writer init
+    tracing::info!(
+        "SimuController: Opening GCR file: {}",
+        config.ipc_config.gcr_file_path
+    );
+    let mut gcr_file = OpenOptions::new()
+        .read(true)
+        .open(&config.ipc_config.gcr_file_path)
+        .await?;
+    tracing::info!("SimuController: Opened GCR file successfully.");
+
     // Global Counter file (write-only for controller)
     tracing::info!(
         "SimuController: Opening GC file (from gc_read_file_path): {}",
@@ -77,17 +88,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .open(&config.ipc_config.gc_read_file_path)
         .await?;
     tracing::info!("SimuController: Opened GC file successfully.");
-
-    // 4. GCR file (read-only for controller)
-    tracing::info!(
-        "SimuController: Opening GCR file: {}",
-        config.ipc_config.gcr_file_path
-    );
-    let mut gcr_file = OpenOptions::new()
-        .read(true)
-        .open(&config.ipc_config.gcr_file_path)
-        .await?;
-    tracing::info!("SimuController: Opened GCR file successfully.");
 
     // MMIO device path is taken from config.ipc_config.command_path
     // No file handle is kept open for MMIO by the controller; writes are discrete operations.
