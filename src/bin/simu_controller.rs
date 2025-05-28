@@ -1,5 +1,5 @@
 use clap::Parser;
-use crate::backend::role::SimulatorMode; // Changed hw_sim:: to crate::
+use hw_sim::backend::role::SimulatorMode; // Changed hw_sim:: to crate::
 use memmap2::MmapOptions;
 use rand::Rng;
 use serde::Deserialize;
