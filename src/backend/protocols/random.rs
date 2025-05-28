@@ -1,5 +1,5 @@
 use crate::backend::protocols::errors::ProtocolError;
-use crate::backend::role::Role;
+// Removed: use crate::backend::role::Role;
 use crate::backend::simulation::hardware::modulator_state::ModulatorState;
 use crate::backend::simulation::Simulator;
 //use itertools::izip;
@@ -28,14 +28,11 @@ impl CorrelationsRandom for Simulator {
 
     fn correlations_random(&mut self, l: usize) -> Result<Vec<u8>, ProtocolError> {
         // number of players n and my id k
-        let number_parties;
-        let position;
-        match &self.role {
-            Role::OneOfMany(m) => {
-                number_parties = m.number_of_parties;
-                position = m.position;
-            }
-        }
+        // FIXME: Role has been removed. The number_parties and position were derived from it.
+        // For now, hardcoding to a single-party equivalent for compilation.
+        // This needs to be revisited based on actual protocol requirements for randomness generation.
+        let number_parties: u32 = 1; // Placeholder
+        let position: u32 = 0;       // Placeholder
 
         // the output vector
         let mut v: Vec<u8> = Vec::with_capacity(l + cr_constants::BATCH);
