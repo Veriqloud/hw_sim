@@ -1,5 +1,5 @@
 use clap::Parser;
-use hw_sim::backend::role::SimulatorMode; // Changed hw_sim:: to crate::
+// use hw_sim::backend::role::SimulatorMode; // Removed import
 use memmap2::MmapOptions;
 use rand::Rng;
 use serde::Deserialize;
@@ -32,6 +32,13 @@ struct IpcConfig {
     // click_result_file_path is removed as it's obsolete in hw_sim
     gc_read_file_path: String, // Renamed from gc_file_path to match hw_sim's ipc_config
     gcr_file_path: String,
+}
+
+// Define SimulatorMode directly in this file
+#[derive(Deserialize, Debug, PartialEq, Clone, Copy)] // Added PartialEq, Clone, Copy
+pub enum SimulatorMode {
+    Source,
+    Detector,
 }
 
 #[derive(Deserialize, Debug)]
