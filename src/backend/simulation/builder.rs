@@ -82,6 +82,11 @@ impl SimulatorBuilder {
         self
     }
 
+    pub fn with_mode(&mut self, mode: SimulatorMode) -> &mut Self {
+        self.mode = mode;
+        self
+    }
+
     pub fn with_rng(&mut self, rng: Pcg64Mcg) -> &mut Self {
         self.rng = rng;
         self
