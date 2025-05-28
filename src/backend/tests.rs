@@ -11,7 +11,8 @@ use rand_pcg::Pcg64Mcg;
 
 use crate::backend::{
     protocols::random::CorrelationsRandom,
-    role::{Multiparty, Role}, // Keep this for Multiparty and Role
+    // role::{Multiparty, Role}, // Removed Multiparty and Role
+    role::SimulatorMode, // Keep SimulatorMode
     simulation::{
         builder::SimulatorBuilder,
         hardware::{builder::HardwareBuilder, modulator_state::ModulatorState},
@@ -30,10 +31,10 @@ async fn generate_bytes() {
         .with_mode(SimulatorMode::Detector) // Added mode
         .with_eta(1e-2)
         .with_qb_err(0 as f64)
-        .with_role(Role::OneOfMany(Multiparty {
-            number_of_parties: 3,
-            position: 0,
-        }))
+        // .with_role(Role::OneOfMany(Multiparty { // Removed
+        //     number_of_parties: 3, // Removed
+        //     position: 0, // Removed
+        // })) // Removed
         .with_angles(vec![0, 32, 64, 96])
         .with_modulator_state(ModulatorState::Random)
         .with_now(now)
@@ -44,10 +45,10 @@ async fn generate_bytes() {
         .with_mode(SimulatorMode::Detector) // Added mode
         .with_eta(1e-2)
         .with_qb_err(0 as f64)
-        .with_role(Role::OneOfMany(Multiparty {
-            number_of_parties: 3,
-            position: 0,
-        }))
+        // .with_role(Role::OneOfMany(Multiparty { // Removed
+        //     number_of_parties: 3, // Removed
+        //     position: 0, // Removed
+        // })) // Removed
         .with_angles(vec![0, 32, 64, 96])
         .with_modulator_state(ModulatorState::Random)
         .with_now(now)
@@ -105,10 +106,10 @@ async fn qkd_statistics_ok() {
         .with_eta(1e-2)
         .with_qb_err(qb_err)
         .with_angles(vec![0, 32, 64, 96])
-        .with_role(Role::OneOfMany(Multiparty {
-            number_of_parties: 3,
-            position: 0,
-        }))
+        // .with_role(Role::OneOfMany(Multiparty { // Removed
+        //     number_of_parties: 3, // Removed
+        //     position: 0, // Removed
+        // })) // Removed
         .build();
     let mut sim_b = SimulatorBuilder::new()
         .with_hardware(hw.clone())
@@ -116,21 +117,21 @@ async fn qkd_statistics_ok() {
         .with_eta(1e-2)
         .with_qb_err(qb_err)
         .with_angles(vec![0, 32, 64, 96])
-        .with_role(Role::OneOfMany(Multiparty {
-            number_of_parties: 3,
-            position: 1,
-        }))
+        // .with_role(Role::OneOfMany(Multiparty { // Removed
+        //     number_of_parties: 3, // Removed
+        //     position: 1, // Removed
+        // })) // Removed
         .build();
     let mut sim_c = SimulatorBuilder::new()
-        .with_hardware(hw)
+        .with_hardware(hw.clone()) // Use hw.clone() for consistency
         .with_mode(SimulatorMode::Detector) // Example: Charlie is Detector
         .with_eta(1e-2)
         .with_qb_err(qb_err)
         .with_angles(vec![0, 32, 64, 96])
-        .with_role(Role::OneOfMany(Multiparty {
-            number_of_parties: 3,
-            position: 2,
-        }))
+        // .with_role(Role::OneOfMany(Multiparty { // Removed
+        //     number_of_parties: 3, // Removed
+        //     position: 2, // Removed
+        // })) // Removed
         .build();
 
     println!(

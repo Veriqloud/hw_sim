@@ -3,8 +3,8 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Deserialize, Serialize, PartialEq)]
 pub struct Configuration {
     pub angles: Vec<u8>,
-    pub number_of_parties: u32,
-    pub position: u32,
+    // pub number_of_parties: u32, // Removed
+    // pub position: u32, // Removed
     pub seed: u64,
     pub eta: f64,
     pub qberr: f64,
@@ -15,8 +15,8 @@ impl Default for Configuration {
     fn default() -> Self {
         Self {
             angles: vec![0, 32, 64, 96],
-            number_of_parties: 1,
-            position: 0,
+            // number_of_parties: 1, // Removed
+            // position: 0, // Removed
             seed: 42,
             eta: 0.,
             qberr: 0.,
@@ -40,12 +40,13 @@ mod tests {
         assert_eq!(
             crate::backend::config::Configuration {
                 angles: vec![0, 10, 11, 12],
-                number_of_parties: 2,
-                position: 1,
+                // number_of_parties: 2, // Removed
+                // position: 1, // Removed
                 seed: 33,
                 eta: 0.1,
                 qberr: 0.02,
-                pulse_distance: 1e-8
+                pulse_distance: 1e-8,
+                mode: crate::backend::role::SimulatorMode::Detector, // mode is still relevant
             },
             config_input
         );

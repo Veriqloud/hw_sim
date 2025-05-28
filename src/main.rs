@@ -80,7 +80,7 @@ async fn app_main() -> Result<(), crate::errors::Error> {
     tracing::info!("IPC with configuration : {:?}", &configuration.ipc_config);
 
     let sim = SimulatorBuilder::from_config(&configuration.backend_config);
-    tracing::info!("Simulator modulator: {:?}", sim.role);
+    // tracing::info!("Simulator modulator: {:?}", sim.role); // sim.role removed
     let simu_handle = backend::actor::ActorHandle::new(sim);
 
     // Files for IPCWriterActor

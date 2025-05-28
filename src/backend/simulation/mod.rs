@@ -5,7 +5,8 @@ pub mod hardware;
 use async_trait::async_trait;
 
 use crate::backend::protocols::random::CorrelationsRandom;
-use crate::backend::role::{Multiparty, Role};
+// use crate::backend::role::{Multiparty, Role}; // Role and Multiparty removed
+use crate::backend::role::SimulatorMode; // SimulatorMode is still needed
 // Removed: use rand::SeedableRng;
 use rand_pcg::Pcg64Mcg;
 use std::time::Instant;
@@ -38,7 +39,8 @@ pub struct Simulator {
     /// Qubit error rate
     pub qb_err: f64,
     pub(crate) rng: Pcg64Mcg,
-    pub role: Role,
+    // pub role: Role, // Removed
+    pub simulator_mode: SimulatorMode, // Added simulator_mode field
     pub(crate) time_of_last_read: f64, // Stores 1024 generated angle values
     pub(crate) time_of_start: Option<Instant>, // To track time for potential future use or logging
 }
@@ -65,9 +67,9 @@ pub trait VqSim {
         received_gc_values: Vec<u64>,
     ) -> Result<Vec<u8>, HardwareError>;
 
-    // set_angles and set_role remain for configuration purposes
+    // set_angles remains for configuration purposes
     fn set_angles(&mut self, angles: [u8; 4]) -> Result<(), HardwareError>;
-    fn set_role(&mut self, nb_parties: u32, position: u32) -> Result<(), HardwareError>;
+    // fn set_role(&mut self, nb_parties: u32, position: u32) -> Result<(), HardwareError>; // Removed
 }
 
 #[async_trait]
@@ -198,13 +200,13 @@ impl VqSim for Simulator {
         Ok(())
     }
 
-    fn set_role(&mut self, nb_parties: u32, position: u32) -> Result<(), HardwareError> {
-        self.role = Role::OneOfMany(Multiparty {
-            number_of_parties: nb_parties,
-            position,
-        });
-        Ok(())
-    }
+    // fn set_role(&mut self, nb_parties: u32, position: u32) -> Result<(), HardwareError> { // Removed
+    //     self.role = Role::OneOfMany(Multiparty { // Removed
+    //         number_of_parties: nb_parties, // Removed
+    //         position, // Removed
+    //     }); // Removed
+    //     Ok(()) // Removed
+    // } // Removed
 }
 
 impl Simulator {

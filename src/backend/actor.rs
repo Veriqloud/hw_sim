@@ -61,19 +61,7 @@ impl<T: BytesGenerator> Actor<T> {
                 let _ = reply_to.send(result);
                 Ok(())
             }
-            ActorMessage::SetRole {
-                nb_parties,
-                position,
-                reply_to,
-            } => {
-                tracing::debug!("SimulatorActor: Processing SetRole");
-                let result = self
-                    .simulator
-                    .set_role(nb_parties, position)
-                    .context(HardwareSnafu);
-                let _ = reply_to.send(result);
-                Ok(())
-            }
+            // ActorMessage::SetRole was removed
         }
     }
 }
@@ -97,11 +85,7 @@ pub enum ActorMessage {
         angles: [u8; 4],
         reply_to: oneshot::Sender<Result<(), Error>>,
     },
-    SetRole {
-        nb_parties: u32,
-        position: u32,
-        reply_to: oneshot::Sender<Result<(), Error>>,
-    },
+    // SetRole was removed
     // Old messages like ReadAngles, GetGlobalCounter, SeedAndStartGeneration, Start, Stop might be obsolete
     // depending on whether the VqSim trait still needs them directly or if all interaction is through new messages.
     // For now, keeping them if they are still part of VqSim trait used by other parts,
@@ -185,14 +169,14 @@ impl ActorHandle {
         recv.await.context(errors::ActorDiedSnafu)?
     }
 
-    pub async fn set_role(&self, nb_parties: u32, position: u32) -> Result<(), Error> {
-        let (send, recv) = oneshot::channel();
-        let message = ActorMessage::SetRole {
-            nb_parties,
-            position,
-            reply_to: send,
-        };
-        let _ = self.sender.send(message).await;
-        recv.await.context(errors::ActorDiedSnafu)?
-    }
+    // pub async fn set_role(&self, nb_parties: u32, position: u32) -> Result<(), Error> { // Removed
+    //     let (send, recv) = oneshot::channel(); // Removed
+    //     let message = ActorMessage::SetRole { // Removed
+    //         nb_parties, // Removed
+    //         position, // Removed
+    //         reply_to: send, // Removed
+    //     }; // Removed
+    //     let _ = self.sender.send(message).await; // Removed
+    //     recv.await.context(errors::ActorDiedSnafu)? // Removed
+    // } // Removed
 }

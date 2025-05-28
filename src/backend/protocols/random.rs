@@ -28,11 +28,13 @@ impl CorrelationsRandom for Simulator {
 
     fn correlations_random(&mut self, l: usize) -> Result<Vec<u8>, ProtocolError> {
         // number of players n and my id k
-        // FIXME: Role has been removed. The number_parties and position were derived from it.
-        // For now, hardcoding to a single-party equivalent for compilation.
-        // This needs to be revisited based on actual protocol requirements for randomness generation.
-        let number_parties: u32 = 1; // Placeholder
-        let position: u32 = 0;       // Placeholder
+        // Deriving number_parties and position from SimulatorMode as per new design.
+        // Source maps to position 0, Detector to position 1, in a 2-party setup.
+        let number_parties: u32 = 2; // Fixed to 2 parties
+        let position: u32 = match self.simulator_mode {
+            crate::backend::role::SimulatorMode::Source => 0,
+            crate::backend::role::SimulatorMode::Detector => 1,
+        };
 
         // the output vector
         let mut v: Vec<u8> = Vec::with_capacity(l + cr_constants::BATCH);
