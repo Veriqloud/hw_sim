@@ -185,8 +185,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         (gc, result)
     }
 
-
-    );
+    // Removed stray );
     sleep(Duration::from_millis(500)).await; // Give hw_sim time to react
 
 
