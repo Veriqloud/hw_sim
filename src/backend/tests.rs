@@ -4,13 +4,14 @@ use core::time;
 use std::{thread, time::Instant};
 
 use itertools::izip;
+use crate::backend::role::SimulatorMode; // Add direct import for SimulatorMode
 
 use rand::SeedableRng;
 use rand_pcg::Pcg64Mcg;
 
 use crate::backend::{
     protocols::random::CorrelationsRandom,
-    role::{Multiparty, Role, SimulatorMode}, // SimulatorMode is correctly imported here
+    role::{Multiparty, Role}, // Keep this for Multiparty and Role
     simulation::{
         builder::SimulatorBuilder,
         hardware::{builder::HardwareBuilder, modulator_state::ModulatorState},
