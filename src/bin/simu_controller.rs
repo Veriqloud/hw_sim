@@ -15,11 +15,11 @@ const MMIO_MAP_LEN: usize = 0x1000; // General memory map length, ensure it cove
 // Structs to deserialize the relevant parts of config/valid_config_alice.json
 #[derive(Deserialize, Debug)]
 struct IpcConfig {
-    command_path: String, // Renamed from xdma_device_path
+    command_path: String,
     angle_file_path: String,
-    click_result_file_path: String,
-    gc_file_path: String,
-    gcr_file_path: String, // Added for reading GCR data
+    // click_result_file_path is removed as it's obsolete in hw_sim
+    gc_read_file_path: String, // Renamed from gc_file_path to match hw_sim's ipc_config
+    gcr_file_path: String,
 }
 
 #[derive(Deserialize, Debug)]
@@ -53,8 +53,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     //
     // simu_controller complementary order for FIFOs:
     // 1. angle_file (read by controller)
-    // 2. click_result_file (read by controller)
-    // 3. gc_file (write by controller)
+    // 2. gc_read_file (write by controller, named gc_file internally in this controller)
     // MMIO device (command_path) is written to by controller for commands.
 
     // 1. Angle file (read-only for controller)
@@ -68,25 +67,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .await?;
     tracing::info!("SimuController: Opened angle file successfully.");
 
-    // 2. Click Result file (read-only for controller)
+    // Global Counter file (write-only for controller)
     tracing::info!(
-        "SimuController: Opening click result file: {}",
-        config.ipc_config.click_result_file_path
-    );
-    let mut click_result_file = OpenOptions::new()
-        .read(true)
-        .open(&config.ipc_config.click_result_file_path)
-        .await?;
-    tracing::info!("SimuController: Opened click result file successfully.");
-
-    // 3. Global Counter file (write-only for controller)
-    tracing::info!(
-        "SimuController: Opening GC file: {}",
-        config.ipc_config.gc_file_path
+        "SimuController: Opening GC file (from gc_read_file_path): {}",
+        config.ipc_config.gc_read_file_path
     );
     let mut gc_file = OpenOptions::new()
         .write(true)
-        .open(&config.ipc_config.gc_file_path)
+        .open(&config.ipc_config.gc_read_file_path)
         .await?;
     tracing::info!("SimuController: Opened GC file successfully.");
 
@@ -162,10 +150,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     sleep(Duration::from_millis(500)).await; // Give hw_sim time to react
 
-    // --- Step 3: Read angles and click results ---
-    tracing::info!("SimuController: Attempting to read data for ~2 seconds...");
+    // --- Step 3: Read angles ---
+    tracing::info!("SimuController: Attempting to read angle data for ~2 seconds...");
     let mut angle_buffer = vec![0u8; 1024]; // Based on simulator's read_angles output size
-    let mut click_buffer = vec![0u8; 1024]; // Assuming similar size for click results
 
     for i in 0..10 {
         // Loop 10 times, sleeping 200ms each time
@@ -198,37 +185,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             ),
             Err(_) => tracing::info!(
                 "SimuController: Angle file - Read attempt {} timed out.",
-                i + 1
-            ),
-        }
-
-        // Try reading click results with a timeout
-        match tokio::time::timeout(
-            Duration::from_millis(100),
-            click_result_file.read(&mut click_buffer),
-        )
-        .await
-        {
-            Ok(Ok(0)) => tracing::info!(
-                "SimuController: Click result file - EOF or no data read at attempt {}.",
-                i + 1
-            ),
-            Ok(Ok(n)) => tracing::info!(
-                "SimuController: Read {} bytes from click_result_file at attempt {}.",
-                n,
-                i + 1
-            ),
-            Ok(Err(e)) if e.kind() == std::io::ErrorKind::WouldBlock => tracing::info!(
-                "SimuController: Click result file - No data available (WouldBlock) at attempt {}.",
-                i + 1
-            ),
-            Ok(Err(e)) => tracing::warn!(
-                "SimuController: Error reading from click_result_file at attempt {}: {}",
-                i + 1,
-                e
-            ),
-            Err(_) => tracing::info!(
-                "SimuController: Click result file - Read attempt {} timed out.",
                 i + 1
             ),
         }
@@ -301,41 +257,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
 
-        // Try draining click_result_file
-        match tokio::time::timeout(
-            Duration::from_millis(50),
-            click_result_file.read(&mut click_buffer),
-        )
-        .await
-        {
-            Ok(Ok(0)) => {
-                tracing::debug!("SimuController: Click result file (drain) - EOF.");
-            }
-            Ok(Ok(n)) => {
-                tracing::info!(
-                    "SimuController: Drained {} bytes from click_result_file.",
-                    n
-                );
-                drained_something_in_iteration = true;
-            }
-            Ok(Err(e)) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                tracing::debug!(
-                    "SimuController: Click result file (drain) - No data (WouldBlock)."
-                );
-            }
-            Ok(Err(e)) => {
-                tracing::warn!("SimuController: Error draining click_result_file: {}", e);
-            }
-            Err(_) => {
-                // Timeout
-                tracing::debug!(
-                    "SimuController: Click result file (drain) - Read attempt timed out."
-                );
-            }
-        }
-
         if !drained_something_in_iteration {
-            tracing::info!("SimuController: Draining complete (no data read from either FIFO in last iteration).");
+            tracing::info!("SimuController: Draining complete (no data read from angle FIFO in last iteration).");
             break;
         }
     }

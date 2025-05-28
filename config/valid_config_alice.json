@@ -1,8 +1,6 @@
 {
     "backend_config": {
         "angles": [0, 32, 64, 96],
-        "number_of_parties": 3,
-        "position": 0,
         "seed": 42,
         "eta": 0.1,
         "qberr": 0.02,
@@ -11,9 +9,8 @@
     "ipc_config": {
         "command_path": "./files/xdma0_user",
         "angle_file_path": "./files/angle",
-        "click_result_file_path": "./files/click_result",
         "gc_read_file_path": "./files/gc",
-        "gcr_file_path": "./files/gcr" 
+        "gcr_file_path": "./files/gcr"
     },
     "log_level": "Info"
 }
