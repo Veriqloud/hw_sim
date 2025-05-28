@@ -12,7 +12,7 @@
         "command_path": "./files/xdma0_user",
         "angle_file_path": "./files/angle",
         "click_result_file_path": "./files/click_result",
-        "gc_file_path": "./files/gc",
+        "gc_read_file_path": "./files/gc",
         "gcr_file_path": "./files/gcr" 
     },
     "log_level": "Info"
