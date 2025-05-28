@@ -53,7 +53,7 @@ impl SimulatorBuilder {
             .with_qb_err(conf.qberr)
             .with_eta(conf.eta)
             .with_rng(Pcg64Mcg::seed_from_u64(conf.seed))
-            .with_mode(conf.mode) // Ensure mode is set from config
+            // .with_mode(conf.mode) // Ensure mode is set from config
             .build()
     }
 
