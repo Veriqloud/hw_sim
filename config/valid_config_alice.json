@@ -12,5 +12,6 @@
         "gc_read_file_path": "./files/gc",
         "gcr_file_path": "./files/gcr"
     },
-    "log_level": "Info"
+    "log_level": "Info",
+    "simulator_mode": "Source"
 }

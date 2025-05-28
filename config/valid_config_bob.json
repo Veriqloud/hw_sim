@@ -12,5 +12,6 @@
         "gc_read_file_path": "./files/gc_bob",
         "gcr_file_path": "./files/gcr_bob"
     },
-    "log_level": "Info"
+    "log_level": "Info",
+    "simulator_mode": "Detector"
 }

@@ -6,11 +6,23 @@ pub mod errors;
 
 use self::errors::Error;
 
-#[derive(Debug, Deserialize, Serialize, PartialEq, Default)]
+#[derive(Debug, Deserialize, Serialize, PartialEq)]
 pub struct Configuration {
     pub backend_config: crate::backend::config::Configuration,
     pub ipc_config: crate::ipc::config::Configuration,
     pub log_level: LogLevel,
+    pub simulator_mode: crate::backend::role::SimulatorMode,
+}
+
+impl Default for Configuration {
+    fn default() -> Self {
+        Self {
+            backend_config: Default::default(),
+            ipc_config: Default::default(),
+            log_level: Default::default(),
+            simulator_mode: Default::default(), // Uses SimulatorMode::default()
+        }
+    }
 }
 
 impl Configuration {

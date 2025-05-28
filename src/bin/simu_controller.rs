@@ -1,4 +1,7 @@
+use clap::Parser;
+use hw_sim::backend::role::SimulatorMode;
 use memmap2::MmapOptions;
+use rand::Rng;
 use serde::Deserialize;
 use std::fs::OpenOptions as StdOpenOptions; // For synchronous file operations in xdma_write
 use std::thread; // For the sleep in ddr_data_init sequence
@@ -6,6 +9,15 @@ use std::time as std_time; // For the sleep in ddr_data_init sequence
 use tokio::fs::OpenOptions;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::time::{sleep, Duration};
+
+// Command-line arguments structure
+#[derive(Parser, Debug)]
+#[clap(author, version, about = "Simulation Controller CLI", long_about = None)]
+struct CliArgs {
+    /// Path to the JSON configuration file for IPC settings.
+    #[clap(short, long)]
+    config_path: String,
+}
 
 // MMIO Constants
 const COMMAND_TRIGGER_OFFSET: u64 = 0x12000; // Base offset for the command trigger register
@@ -25,14 +37,19 @@ struct IpcConfig {
 #[derive(Deserialize, Debug)]
 struct ControllerConfig {
     ipc_config: IpcConfig,
+    simulator_mode: SimulatorMode, // Add simulator_mode
 }
+
+const BATCH_SIZE: usize = 1024; // Matching hw_sim's BATCH_SIZE
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize tracing for logging
     tracing_subscriber::fmt::init();
 
-    let config_path = "config/valid_config_alice.json";
+    let cli_args = CliArgs::parse();
+    let config_path = &cli_args.config_path;
+
     tracing::info!(
         "SimuController: Reading configuration from '{}'",
         config_path
@@ -41,7 +58,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config_content = tokio::fs::read_to_string(config_path).await?;
     let config: ControllerConfig = serde_json::from_str(&config_content)?;
 
-    tracing::info!("SimuController: Parsed IPC Config: {:?}", config.ipc_config);
+    tracing::info!(
+        "SimuController: Parsed Config: IPC={:?}, Mode={:?}",
+        config.ipc_config,
+        config.simulator_mode
+    );
 
     // Open FIFO files in an order complementary to hw_sim's combined opening sequence.
     // hw_sim effective order for FIFOs:
@@ -145,53 +166,118 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    tracing::info!(
-        "SimuController: Waiting a moment for hw_sim to start processing angles/clicks..."
+    // Helper function to decode GCR item
+    // Matches the logic in hw_sim's tests and simulator's encode_gcr
+    fn split_gcr(buf_gcr: [u8; 8]) -> (u64, u8) {
+        let mut buf: [u8; 8] = buf_gcr;
+        // The original GC value was shifted right by 1, and its LSB stored in bit 0 of buf[6].
+        // So, to reconstruct, we take the value from buf (with bits 0,1 of buf[6] zeroed for this part),
+        // shift left by 1, and add the LSB.
+        let gc_upper_part = {
+            let mut temp_buf = buf;
+            temp_buf[6] &= 0b1111_1100; // Clear bits 0 and 1 for GC reconstruction base
+            u64::from_le_bytes(temp_buf)
+        };
+        let gc_lsb = (buf_gcr[6] & 1) as u64;
+        let gc = gc_upper_part | gc_lsb; // This is effectively (gc_val_stored_in_most_bytes * 2) + gc_lsb_stored_in_buf6_bit0
+
+        let result: u8 = (buf_gcr[6] >> 1) & 1;
+        (gc, result)
+    }
+
+
     );
     sleep(Duration::from_millis(500)).await; // Give hw_sim time to react
 
-    // --- Step 3: Read angles ---
-    tracing::info!("SimuController: Attempting to read angle data for ~2 seconds...");
-    let mut angle_buffer = vec![0u8; 1024]; // Based on simulator's read_angles output size
 
-    for i in 0..10 {
-        // Loop 10 times, sleeping 200ms each time
-        tracing::debug!("SimuController: Read attempt #{}", i + 1);
+    // Mode-specific interaction loop
+    let num_batches_to_process = 3; // Example: process 3 batches
+    match config.simulator_mode {
+        SimulatorMode::Detector => {
+            tracing::info!("SimuController: Operating in Detector-compatible mode.");
+            for batch_num in 0..num_batches_to_process {
+                tracing::info!("SimuController (Detector): Processing batch #{}", batch_num + 1);
 
-        // Try reading angles with a timeout for each attempt
-        match tokio::time::timeout(
-            Duration::from_millis(100),
-            angle_file.read(&mut angle_buffer),
-        )
-        .await
-        {
-            Ok(Ok(0)) => tracing::info!(
-                "SimuController: Angle file - EOF or no data read at attempt {}.",
-                i + 1
-            ),
-            Ok(Ok(n)) => tracing::info!(
-                "SimuController: Read {} bytes from angle_file at attempt {}.",
-                n,
-                i + 1
-            ),
-            Ok(Err(e)) if e.kind() == std::io::ErrorKind::WouldBlock => tracing::info!(
-                "SimuController: Angle file - No data available (WouldBlock) at attempt {}.",
-                i + 1
-            ),
-            Ok(Err(e)) => tracing::warn!(
-                "SimuController: Error reading from angle_file at attempt {}: {}",
-                i + 1,
-                e
-            ),
-            Err(_) => tracing::info!(
-                "SimuController: Angle file - Read attempt {} timed out.",
-                i + 1
-            ),
+                // Read BATCH_SIZE GCRs
+                let mut gcr_batch_buffer = vec![0u8; BATCH_SIZE * 8];
+                tracing::info!("SimuController (Detector): Attempting to read {} GCR bytes.", gcr_batch_buffer.len());
+                match gcr_file.read_exact(&mut gcr_batch_buffer).await {
+                    Ok(_) => {
+                        tracing::info!("SimuController (Detector): Successfully read GCR batch.");
+                        let mut received_gc_values = Vec::with_capacity(BATCH_SIZE);
+                        for (i, gcr_chunk) in gcr_batch_buffer.chunks_exact(8).enumerate() {
+                            let gcr_item: [u8; 8] = gcr_chunk.try_into().unwrap();
+                            let (gc, result) = split_gcr(gcr_item);
+                            received_gc_values.push(gc);
+                            if i < 5 { // Log first few GCRs for brevity
+                                tracing::debug!("SimuController (Detector): GCR item {}: gc={}, result={}", i, gc, result);
+                            }
+                        }
+
+                        // Send back received GC values
+                        tracing::info!("SimuController (Detector): Sending {} GC values back to hw_sim.", received_gc_values.len());
+                        for gc_val in received_gc_values {
+                            gc_file.write_u64_le(gc_val).await?;
+                        }
+                        gc_file.flush().await?;
+                        tracing::info!("SimuController (Detector): GC values sent.");
+
+                        // Read corresponding angles
+                        let mut angle_batch_buffer = vec![0u8; BATCH_SIZE]; // Expect BATCH_SIZE angle bytes
+                        tracing::info!("SimuController (Detector): Attempting to read {} angle bytes.", angle_batch_buffer.len());
+                        match angle_file.read_exact(&mut angle_batch_buffer).await {
+                            Ok(_) => {
+                                tracing::info!("SimuController (Detector): Successfully read angle batch ({} bytes).", angle_batch_buffer.len());
+                                // Process/log angles if needed
+                            }
+                            Err(e) => {
+                                tracing::error!("SimuController (Detector): Failed to read angle batch: {}", e);
+                                break; // Exit loop on error
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        tracing::error!("SimuController (Detector): Failed to read GCR batch: {}", e);
+                        break; // Exit loop on error
+                    }
+                }
+                sleep(Duration::from_millis(100)).await; // Small delay between batches
+            }
         }
+        SimulatorMode::Source => {
+            tracing::info!("SimuController: Operating in Source-compatible mode.");
+            let mut rng = rand::thread_rng();
+            for batch_num in 0..num_batches_to_process {
+                tracing::info!("SimuController (Source): Processing batch #{}", batch_num + 1);
 
-        if i < 9 {
-            // Avoid sleep after the last iteration
-            sleep(Duration::from_millis(200)).await;
+                // Generate and send BATCH_SIZE random GC values
+                let mut random_gc_values = Vec::with_capacity(BATCH_SIZE);
+                for _ in 0..BATCH_SIZE {
+                    random_gc_values.push(rng.gen::<u64>());
+                }
+
+                tracing::info!("SimuController (Source): Sending {} random GC values to hw_sim.", random_gc_values.len());
+                for gc_val in random_gc_values {
+                    gc_file.write_u64_le(gc_val).await?;
+                }
+                gc_file.flush().await?;
+                tracing::info!("SimuController (Source): Random GC values sent.");
+
+                // Read corresponding angles
+                let mut angle_batch_buffer = vec![0u8; BATCH_SIZE]; // Expect BATCH_SIZE angle bytes
+                tracing::info!("SimuController (Source): Attempting to read {} angle bytes.", angle_batch_buffer.len());
+                match angle_file.read_exact(&mut angle_batch_buffer).await {
+                    Ok(_) => {
+                        tracing::info!("SimuController (Source): Successfully read angle batch ({} bytes).", angle_batch_buffer.len());
+                        // Process/log angles if needed
+                    }
+                    Err(e) => {
+                        tracing::error!("SimuController (Source): Failed to read angle batch: {}", e);
+                        break; // Exit loop on error
+                    }
+                }
+                sleep(Duration::from_millis(100)).await; // Small delay between batches
+            }
         }
     }
 
@@ -209,8 +295,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     )?;
     tracing::info!("SimuController: Stop command sent via MMIO.");
 
-    // --- Step 5: Drain remaining data ---
-    tracing::info!("SimuController: Attempting to empty FIFOs...");
+    // --- Step 5: Drain remaining data from readable FIFOs ---
+    tracing::info!("SimuController: Attempting to empty readable FIFOs...");
+    let mut angle_buffer = vec![0u8; BATCH_SIZE]; // Re-use buffer for draining
+    let mut gcr_buffer_drain = vec![0u8; BATCH_SIZE * 8]; // Buffer for draining GCR
+
     let mut drained_something_in_iteration;
     let mut drain_attempts = 0;
     const MAX_DRAIN_ATTEMPTS: u32 = 20; // Safety break for the drain loop
@@ -249,16 +338,41 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             Ok(Err(e)) => {
                 tracing::warn!("SimuController: Error draining angle_file: {}", e);
-                // Potentially break or handle specific errors if they are persistent and critical
             }
             Err(_) => {
-                // Timeout
                 tracing::debug!("SimuController: Angle file (drain) - Read attempt timed out.");
             }
         }
 
+        // Try draining gcr_file only if in Detector mode (as it's opened in that mode)
+        if config.simulator_mode == SimulatorMode::Detector {
+            match tokio::time::timeout(
+                Duration::from_millis(50),
+                gcr_file.read(&mut gcr_buffer_drain),
+            )
+            .await
+            {
+                Ok(Ok(0)) => {
+                    tracing::debug!("SimuController: GCR file (drain) - EOF.");
+                }
+                Ok(Ok(n)) => {
+                    tracing::info!("SimuController: Drained {} bytes from gcr_file.", n);
+                    drained_something_in_iteration = true;
+                }
+                Ok(Err(e)) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    tracing::debug!("SimuController: GCR file (drain) - No data (WouldBlock).");
+                }
+                Ok(Err(e)) => {
+                    tracing::warn!("SimuController: Error draining gcr_file: {}", e);
+                }
+                Err(_) => {
+                    tracing::debug!("SimuController: GCR file (drain) - Read attempt timed out.");
+                }
+            }
+        }
+
         if !drained_something_in_iteration {
-            tracing::info!("SimuController: Draining complete (no data read from angle FIFO in last iteration).");
+            tracing::info!("SimuController: Draining complete (no data read from FIFOs in last iteration).");
             break;
         }
     }
