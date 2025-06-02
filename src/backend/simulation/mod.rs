@@ -142,9 +142,9 @@ impl VqSim for Simulator {
                 // Bits from byte2 form the upper 2 bits of angle_byte.
                 // e.g., angle_byte = [byte2_bit7, byte2_bit6, byte1_bit7, byte1_bit6]
                 // angle_byte = ((byte1 & 0b11000000) >> 6) | (((byte2 & 0b11000000) >> 6) << 2);
-                let angle_byte = ((byte1 & 0xC0) >> 6) | (((byte2 & 0xC0) >> 6) << 2);
+                let angle_byte = ((byte1 & 0b11000000) >> 6) | (((byte2 & 0b11000000) >> 6) << 2);
                 // result_byte = (byte1 & 0b001) | ((byte2 & 0b001) << 4);
-                let result_byte = (byte1 & 0x01) | ((byte2 & 0x01) << 4);
+                let result_byte = (byte1 & 0b00000001) | ((byte2 & 0b00000001) << 4);
                 (angle_byte, result_byte)
             })
             .unzip();
