@@ -210,6 +210,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         match angle_file.read_exact(&mut angle_batch_buffer).await {
                             Ok(_) => {
                                 tracing::info!("SimuController (Detector): Successfully read angle batch ({} bytes).", angle_batch_buffer.len());
+                                for i in 0..std::cmp::min(5, angle_batch_buffer.len()) { // Log first 5 angles
+                                    tracing::debug!("SimuController (Detector): Angle item {}: {}", i, angle_batch_buffer[i]);
+                                }
                                 // Process/log angles if needed
                             }
                             Err(e) => {
@@ -267,6 +270,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 match angle_file.read_exact(&mut angle_batch_buffer).await {
                     Ok(_) => {
                         tracing::info!("SimuController (Source): Successfully read angle batch ({} bytes).", angle_batch_buffer.len());
+                        for i in 0..std::cmp::min(5, angle_batch_buffer.len()) { // Log first 5 angles
+                            tracing::debug!("SimuController (Source): Angle item {}: {}", i, angle_batch_buffer[i]);
+                        }
                         // Process/log angles if needed
                     }
                     Err(e) => {
