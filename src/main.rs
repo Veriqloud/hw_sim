@@ -99,14 +99,14 @@ async fn app_main() -> Result<(), crate::errors::Error> {
         .await
         .context(errors::IOSnafu)?;
     tracing::info!(
-        "Opened gcr_file for writer: {}", // Renamed variable in log
-        &configuration.ipc_config.gcr_file_path // Use renamed config field
+        "Opened gcr_file for writer: {}",        // Renamed variable in log
+        &configuration.ipc_config.gcr_file_path  // Use renamed config field
     );
 
     tracing::info!("Writer-side IPC files opened successfully. Initializing IPCWriterActorHandle.");
     let writer_handle = IPCWriterActorHandle::new(
-        gcr_file_writer, // Pass renamed variable (For GCR data)
-        angles_file_writer,   // For angles data
+        gcr_file_writer,    // Pass renamed variable (For GCR data)
+        angles_file_writer, // For angles data
     );
     // The IPC connection loop will now also open files needed by the reader per connection attempt.
     run_ipc_connection_loop(&configuration.ipc_config, simu_handle, writer_handle).await;
