@@ -61,6 +61,7 @@ async fn app_main() -> Result<(), crate::errors::Error> {
     // For robust applications, consider using `set_global_default` and handling its Result,
     // or ensuring `init` is only called once. For this refactor, we assume it's called once.
     tracing_subscriber::fmt()
+        .with_max_level(log_level_filter) // Apply the global log level filter
         .with_writer(stdout_writer.and(logfile_appender))
         .init();
 
