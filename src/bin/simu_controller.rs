@@ -1,11 +1,11 @@
 use clap::Parser;
 // use hw_sim::backend::role::SimulatorMode; // Removed import
 use memmap2::MmapOptions;
-use rand::Rng;
+// use rand::Rng; // No longer needed for Source mode GC generation
 use serde::Deserialize;
 use std::fs::OpenOptions as StdOpenOptions; // For synchronous file operations in xdma_write
 use std::thread; // For the sleep in ddr_data_init sequence
-use std::time as std_time; // For the sleep in ddr_data_init sequence
+use std::time as std_time; // For the sleep in ddr_data_init sequence, and for Instant
 use tokio::fs::OpenOptions;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::time::{sleep, Duration};
@@ -41,10 +41,23 @@ pub enum SimulatorMode {
     Detector,
 }
 
+fn default_gc_offset() -> u64 {
+    0 // Default GC offset if not specified in config, matching hw_sim's typical default
+}
+
+#[derive(Deserialize, Debug)]
+struct BackendConfig {
+    pulse_distance: f64,
+    eta: f64,
+    #[serde(default = "default_gc_offset")]
+    gc_offset: u64,
+}
+
 #[derive(Deserialize, Debug)]
 struct ControllerConfig {
+    backend_config: BackendConfig, // Added backend_config
     ipc_config: IpcConfig,
-    simulator_mode: SimulatorMode, // Add simulator_mode
+    simulator_mode: SimulatorMode,
 }
 
 const BATCH_SIZE: usize = 1024; // Matching hw_sim's BATCH_SIZE
@@ -136,6 +149,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     thread::sleep(std_time::Duration::from_millis(100)); // From ddr_data_init
     tracing::info!("SimuController: Start command sent via MMIO.");
 
+    let start_time = std_time::Instant::now(); // Record start time for GC calculation in Source mode
+
     // Helper function to decode GCR item
     // Matches the logic in hw_sim's tests and simulator's encode_gcr
     fn split_gcr(buf_gcr: [u8; 8]) -> (u64, u8) {
@@ -213,22 +228,38 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         SimulatorMode::Source => {
             tracing::info!("SimuController: Operating in Source-compatible mode.");
-            let mut rng = rand::thread_rng();
+            // let mut rng = rand::thread_rng(); // Replaced by time-based calculation
             for batch_num in 0..num_batches_to_process {
                 tracing::info!("SimuController (Source): Processing batch #{}", batch_num + 1);
 
-                // Generate and send BATCH_SIZE random GC values
-                let mut random_gc_values = Vec::with_capacity(BATCH_SIZE);
-                for _ in 0..BATCH_SIZE {
-                    random_gc_values.push(rng.gen::<u64>());
+                let t_elapsed_secs = start_time.elapsed().as_secs_f64();
+                
+                let pulse_periods = t_elapsed_secs / config.backend_config.pulse_distance;
+                let effective_periods = pulse_periods - config.backend_config.gc_offset as f64;
+                
+                let calculated_l_float = if effective_periods > 0.0 {
+                    effective_periods * config.backend_config.eta
+                } else {
+                    0.0
+                };
+                let base_gc_for_batch = calculated_l_float as u64;
+
+                let mut gc_values_to_send = Vec::with_capacity(BATCH_SIZE);
+                for i in 0..BATCH_SIZE {
+                    gc_values_to_send.push(base_gc_for_batch + i as u64);
                 }
 
-                tracing::info!("SimuController (Source): Sending {} random GC values to hw_sim.", random_gc_values.len());
-                for gc_val in random_gc_values {
-                    gc_file.write_u64_le(gc_val).await?;
+                tracing::info!(
+                    "SimuController (Source): t={:.3}s, L_base={}, Sending {} GC values starting from L_base.",
+                    t_elapsed_secs,
+                    base_gc_for_batch,
+                    gc_values_to_send.len()
+                );
+                for gc_val in &gc_values_to_send {
+                    gc_file.write_u64_le(*gc_val).await?;
                 }
                 gc_file.flush().await?;
-                tracing::info!("SimuController (Source): Random GC values sent.");
+                tracing::info!("SimuController (Source): Calculated GC values sent.");
 
                 // Read corresponding angles
                 let mut angle_batch_buffer = vec![0u8; BATCH_SIZE]; // Expect BATCH_SIZE angle bytes
