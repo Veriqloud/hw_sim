@@ -155,7 +155,13 @@ impl VqSim for Simulator {
             // The `split_gcr` function extracts a single bit `(buf_gcr[6] >> 1) & 1;`.
             // So, we should pass only the relevant bit from result_byte to encode_gcr.
             // Assuming the LSB of result_byte is the intended single click result bit.
-            let result_byte_for_gcr = click_results_data[i]; 
+            let result_byte_for_gcr = click_results_data[i];
+            tracing::debug!(
+                "Simulator: Encoding GC={}, ResultByte={} for GCR item #{}",
+                gc_value,
+                result_byte_for_gcr,
+                i
+            );
             let gcr_item = self.encode_gcr(gc_value, result_byte_for_gcr);
             gcr_batch.push(gcr_item);
         }
