@@ -136,65 +136,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     thread::sleep(std_time::Duration::from_millis(100)); // From ddr_data_init
     tracing::info!("SimuController: Start command sent via MMIO.");
 
-    // --- Step 2: Send GC value ---
-    // This should trigger seed_and_start_generation in hw_sim
-    let gc_value = 12345u64; // Example Global Counter value
-    tracing::info!("SimuController: Sending GC value: {}", gc_value);
-    gc_file.write_u64_le(gc_value).await?;
-    gc_file.flush().await?; // Ensure the GC value is sent
-    tracing::info!("SimuController: GC value sent. Waiting for GCR data from hw_sim...");
-
-    // --- Step 2b: Read GCR data from hw_sim ---
-    // hw_sim writes 8 bytes to gcr_file after it processes the Start command and before reading GC.
-    let mut gcr_buffer = [0u8; 8];
-    match tokio::time::timeout(Duration::from_secs(5), gcr_file.read_exact(&mut gcr_buffer)).await {
-        Ok(Ok(_)) => {
-            tracing::info!("SimuController: Read GCR data: {:?}", gcr_buffer);
-            // Optionally, decode using split_gcr and log the (gc, result)
-            // fn split_gcr(buf_gcr: [u8;8]) -> (u64, u8){
-            //     let mut buf: [u8; 8] = buf_gcr;
-            //     buf[6] = 0;
-            //     buf[7] = 0;
-            //     let mut gc: u64 = u64::from_le_bytes(buf);
-            //     gc = gc*2 + (buf_gcr[6] & 1) as u64;
-            //     let result: u8 = (buf_gcr[6] >> 1) & 1;
-            //     return (gc, result)
-            // }
-            // let (decoded_gc, decoded_result) = split_gcr(gcr_buffer);
-            // tracing::info!("SimuController: Decoded GCR: gc={}, result={}", decoded_gc, decoded_result);
-        }
-        Ok(Err(e)) => {
-            tracing::error!("SimuController: Failed to read GCR data: {}", e);
-            // Decide if this is fatal or if the controller should continue
-        }
-        Err(_) => {
-            tracing::error!("SimuController: Timeout reading GCR data.");
-            // Decide if this is fatal
-        }
-    }
-
     // Helper function to decode GCR item
     // Matches the logic in hw_sim's tests and simulator's encode_gcr
     fn split_gcr(buf_gcr: [u8; 8]) -> (u64, u8) {
         let buf: [u8; 8] = buf_gcr; // Removed mut
-        // The original GC value was shifted right by 1, and its LSB stored in bit 0 of buf[6].
-        // So, to reconstruct, we take the value from buf (with bits 0,1 of buf[6] zeroed for this part),
-        // shift left by 1, and add the LSB.
-        let gc_upper_part = {
+        // The original GC value was shifted right by 1 (shifted_gc), and its LSB (gc_lsb) stored in bit 0 of buf_gcr[6].
+        // encode_gcr stores shifted_gc into an 8-byte buffer, then modifies buf_gcr[6] by clearing its
+        // lowest 2 bits and ORing in gc_lsb and the result_bit.
+        // So, gc_upper_part correctly reconstructs shifted_gc.
+        let gc_upper_part = { // This is shifted_gc
             let mut temp_buf = buf;
-            temp_buf[6] &= 0b1111_1100; // Clear bits 0 and 1 for GC reconstruction base
-            u64::from_le_bytes(temp_buf)
+            temp_buf[6] &= 0b1111_1100; // Clear bits 0 and 1 (gc_lsb and result_bit) from buf_gcr[6]
+            u64::from_le_bytes(temp_buf) // The rest of the buffer contains shifted_gc
         };
-        let gc_lsb = (buf_gcr[6] & 1) as u64;
-        let gc = gc_upper_part | gc_lsb; // This is effectively (gc_val_stored_in_most_bytes * 2) + gc_lsb_stored_in_buf6_bit0
+        let gc_lsb = (buf_gcr[6] & 1) as u64; // Extract the original LSB of gc
+        // Reconstruct gc: (shifted_gc * 2) + gc_lsb
+        let gc = (gc_upper_part << 1) | gc_lsb;
 
-        let result: u8 = (buf_gcr[6] >> 1) & 1;
+        let result: u8 = (buf_gcr[6] >> 1) & 1; // Extract the result bit
         (gc, result)
     }
-
-    // Removed stray );
-    sleep(Duration::from_millis(500)).await; // Give hw_sim time to react
-
 
     // Mode-specific interaction loop
     let num_batches_to_process = 3; // Example: process 3 batches
