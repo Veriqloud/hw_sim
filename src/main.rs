@@ -156,6 +156,7 @@ async fn run_ipc_connection_loop(
             gc_read_file_handle, // Pass the opened file handle
             simu_handle.clone(),
             writer_handle.clone(),
+            configuration.simulator_mode, // Pass the simulator_mode
         );
 
         tracing::info!("IPC handlers initialized. Starting IPC command processing loop.");

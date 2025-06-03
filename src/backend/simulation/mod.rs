@@ -64,6 +64,13 @@ pub trait VqSim {
         received_gc_values: Vec<u64>,
     ) -> Result<Vec<u8>, HardwareError>;
 
+    /// Generates a batch of angles based on received GCs (primarily for Source mode).
+    /// This method does not generate GCRs or affect the internal global_counter.
+    async fn generate_angles_for_gcs(
+        &mut self,
+        received_gcs: Vec<u64>, // Used to determine BATCH_SIZE, actual values not used in random generation
+    ) -> Result<Vec<u8>, HardwareError>;
+
     // set_angles remains for configuration purposes
     fn set_angles(&mut self, angles: [u8; 4]) -> Result<(), HardwareError>;
 }
@@ -204,6 +211,65 @@ impl VqSim for Simulator {
     fn set_angles(&mut self, angles_config: [u8; 4]) -> Result<(), HardwareError> {
         self.angles = angles_config.to_vec(); // These are configuration angles (bases)
         Ok(())
+    }
+
+    async fn generate_angles_for_gcs(
+        &mut self,
+        received_gcs: Vec<u64>,
+    ) -> Result<Vec<u8>, HardwareError> {
+        if self.modulator_state != ModulatorState::Random {
+            return Err(HardwareError::ModulatorStateNotSupported);
+        }
+        let current_batch_size = received_gcs.len();
+        if current_batch_size == 0 {
+            // Or handle as appropriate, e.g., return empty Vec or specific error
+            return Err(HardwareError::Other { reason: "Received empty GC batch for angle generation.".to_string() });
+        }
+
+        tracing::info!(
+            "Simulator (Source Mode Flow): Generating angles batch ({} items) based on received GCs.",
+            current_batch_size
+        );
+
+        // Obtain raw random bytes for events.
+        let data = self.correlations_random(current_batch_size * 2).map_err(|e| {
+            tracing::error!(
+                "Failed to get raw random bytes from correlations_random: {:?}",
+                e
+            );
+            HardwareError::Other {
+                reason: format!("correlations_random failed: {}", e),
+            }
+        })?;
+
+        if data.len() < current_batch_size * 2 {
+            return Err(HardwareError::Other {
+                reason: format!(
+                    "correlations_random returned insufficient data: got {}, expected at least {}",
+                    data.len(),
+                    current_batch_size * 2
+                ),
+            });
+        }
+
+        // Extract angles using the same logic as in generate_gcr_and_angles_batch
+        let (angles_data, _click_results_data): (Vec<u8>, Vec<u8>) = data
+            .chunks_exact(2)
+            .take(current_batch_size)
+            .map(|chunk| {
+                let byte1 = chunk[0];
+                let byte2 = chunk[1];
+                let angle_byte = ((byte1 & 0b11000000) >> 6) | (((byte2 & 0b11000000) >> 6) << 2);
+                let result_byte = (byte1 & 0b00000001) | ((byte2 & 0b00000001) << 4);
+                (angle_byte, result_byte)
+            })
+            .unzip();
+        
+        tracing::info!(
+            "Simulator (Source Mode Flow): Generated {} angle bytes.",
+            angles_data.len()
+        );
+        Ok(angles_data)
     }
 }
 

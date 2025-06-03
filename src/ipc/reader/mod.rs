@@ -29,6 +29,7 @@ pub struct IPCReader {
     writer_handle: IPCWriterActorHandle,
     simulator_handle: SimulatorHandle,
     last_known_command_trigger_value: u32,
+    simulator_mode: crate::backend::role::SimulatorMode, // Add simulator_mode field
 }
 
 /// Synchronously reads a u32 value from a memory-mapped device.
@@ -133,6 +134,7 @@ impl IPCReader {
         // gcr_file removed
         simulator_handle: SimulatorHandle,
         writer_handle: IPCWriterActorHandle,
+        simulator_mode: crate::backend::role::SimulatorMode, // Add simulator_mode parameter
     ) -> Self {
         IPCReader {
             command_path,
@@ -141,6 +143,7 @@ impl IPCReader {
             writer_handle,
             simulator_handle,
             last_known_command_trigger_value: 0,
+            simulator_mode, // Store simulator_mode
         }
     }
 
@@ -222,54 +225,87 @@ impl IPCReader {
 
                     // Main generation and IPC loop
                     loop {
-                        // 1. Tell SimulatorActor to generate GCR and angles batch
-                        tracing::debug!("IPCReader: Requesting GCR and angles batch from simulator...");
-                        let gcr_batch = self.simulator_handle.generate_gcr_and_angles_batch().await.map_err(|e| {
-                            errors::Error::Unexpected {
-                                reason: format!("Simulator generate_gcr_and_angles_batch failed: {}", e),
-                            }
-                        })?;
-                        tracing::info!("IPCReader: Received GCR batch ({} items) from simulator.", gcr_batch.len());
+                        match self.simulator_mode {
+                            crate::backend::role::SimulatorMode::Detector => {
+                                // --- Detector Mode Flow (hw_sim) ---
+                                // 1. Tell SimulatorActor to generate GCR and angles batch (calculates GCs internally)
+                                tracing::debug!("IPCReader (Detector): Requesting GCR and angles batch from simulator...");
+                                let gcr_batch = self.simulator_handle.generate_gcr_and_angles_batch().await.map_err(|e| {
+                                    errors::Error::Unexpected {
+                                        reason: format!("Simulator generate_gcr_and_angles_batch failed: {}", e),
+                                    }
+                                })?;
+                                tracing::info!("IPCReader (Detector): Received GCR batch ({} items) from simulator.", gcr_batch.len());
 
-                        // 2. Tell IPCWriterActor to write the GCR batch
-                        tracing::debug!("IPCReader: Sending GCR batch to writer...");
-                        self.writer_handle.write_gcr_batch(gcr_batch).await.map_err(|e| {
-                            errors::Error::Unexpected {
-                                reason: format!("IPCWriter write_gcr_batch failed: {}", e),
-                            }
-                        })?;
-                        tracing::info!("IPCReader: GCR batch sent to writer.");
+                                // 2. Tell IPCWriterActor to write the GCR batch
+                                tracing::debug!("IPCReader (Detector): Sending GCR batch to writer...");
+                                self.writer_handle.write_gcr_batch(gcr_batch).await.map_err(|e| {
+                                    errors::Error::Unexpected {
+                                        reason: format!("IPCWriter write_gcr_batch failed: {}", e),
+                                    }
+                                })?;
+                                tracing::info!("IPCReader (Detector): GCR batch sent to writer.");
 
-                        // 3. Read a batch of GC values from gc_read_file
-                        tracing::debug!("IPCReader: Reading GC batch from controller...");
-                        let received_gc_values = self.read_gc_batch_from_file().await?;
-                        tracing::info!("IPCReader: Received GC batch ({} items) from controller.", received_gc_values.len());
-                        if received_gc_values.len() != BATCH_SIZE {
-                            let reason = format!("Expected {} GC values from controller, got {}. Stopping.", BATCH_SIZE, received_gc_values.len());
-                            tracing::error!("{}", reason);
-                            // This is a critical error, break the inner loop and proceed to Stop handling
-                            return Err(errors::Error::Unexpected{ reason });
+                                // 3. Read a batch of GC values (echoed) from gc_read_file (from simu_controller)
+                                tracing::debug!("IPCReader (Detector): Reading echoed GC batch from controller...");
+                                let echoed_gc_values = self.read_gc_batch_from_file().await?;
+                                tracing::info!("IPCReader (Detector): Received echoed GC batch ({} items) from controller.", echoed_gc_values.len());
+                                if echoed_gc_values.len() != BATCH_SIZE {
+                                    let reason = format!("Expected {} echoed GC values from controller, got {}. Stopping.", BATCH_SIZE, echoed_gc_values.len());
+                                    tracing::error!("{}", reason);
+                                    return Err(errors::Error::Unexpected{ reason });
+                                }
+
+                                // 4. Tell SimulatorActor to retrieve pending angles, passing echoed GCs
+                                tracing::debug!("IPCReader (Detector): Requesting pending angles batch from simulator...");
+                                let angles_batch = self.simulator_handle.retrieve_pending_angles_batch(echoed_gc_values).await.map_err(|e| {
+                                    errors::Error::Unexpected {
+                                        reason: format!("Simulator retrieve_pending_angles_batch failed: {}", e),
+                                    }
+                                })?;
+                                tracing::info!("IPCReader (Detector): Received angles batch ({} bytes) from simulator.", angles_batch.len());
+
+                                // 5. Tell IPCWriterActor to write the angles batch
+                                tracing::debug!("IPCReader (Detector): Sending angles batch to writer...");
+                                self.writer_handle.write_angles_batch(angles_batch).await.map_err(|e| {
+                                    errors::Error::Unexpected {
+                                        reason: format!("IPCWriter write_angles_batch failed: {}", e),
+                                    }
+                                })?;
+                                tracing::info!("IPCReader (Detector): Angles batch sent to writer.");
+                            }
+                            crate::backend::role::SimulatorMode::Source => {
+                                // --- Source Mode Flow (hw_sim) ---
+                                // 1. Read a batch of GC values from gc_read_file (from simu_controller)
+                                tracing::debug!("IPCReader (Source): Reading GC batch from controller...");
+                                let received_gc_values = self.read_gc_batch_from_file().await?;
+                                tracing::info!("IPCReader (Source): Received GC batch ({} items) from controller.", received_gc_values.len());
+                                if received_gc_values.len() != BATCH_SIZE {
+                                    let reason = format!("Expected {} GC values from controller, got {}. Stopping.", BATCH_SIZE, received_gc_values.len());
+                                    tracing::error!("{}", reason);
+                                    return Err(errors::Error::Unexpected{ reason });
+                                }
+
+                                // 2. Tell SimulatorActor to generate angles based on these GCs
+                                tracing::debug!("IPCReader (Source): Requesting angles batch from simulator using received GCs...");
+                                let angles_batch = self.simulator_handle.generate_angles_for_gcs(received_gc_values).await.map_err(|e| {
+                                    errors::Error::Unexpected {
+                                        reason: format!("Simulator generate_angles_for_gcs failed: {}", e),
+                                    }
+                                })?;
+                                tracing::info!("IPCReader (Source): Received angles batch ({} bytes) from simulator.", angles_batch.len());
+
+                                // 3. Tell IPCWriterActor to write the angles batch
+                                tracing::debug!("IPCReader (Source): Sending angles batch to writer...");
+                                self.writer_handle.write_angles_batch(angles_batch).await.map_err(|e| {
+                                    errors::Error::Unexpected {
+                                        reason: format!("IPCWriter write_angles_batch failed: {}", e),
+                                    }
+                                })?;
+                                tracing::info!("IPCReader (Source): Angles batch sent to writer.");
+                                // GCR generation/writing is skipped in Source mode.
+                            }
                         }
-
-
-                        // 4. Tell SimulatorActor to retrieve pending angles, passing received GCs
-                        tracing::debug!("IPCReader: Requesting pending angles batch from simulator...");
-                        let angles_batch = self.simulator_handle.retrieve_pending_angles_batch(received_gc_values).await.map_err(|e| {
-                            errors::Error::Unexpected {
-                                reason: format!("Simulator retrieve_pending_angles_batch failed: {}", e),
-                            }
-                        })?;
-                        tracing::info!("IPCReader: Received angles batch ({} bytes) from simulator.", angles_batch.len());
-
-                        // 5. Tell IPCWriterActor to write the angles batch
-                        tracing::debug!("IPCReader: Sending angles batch to writer...");
-                        self.writer_handle.write_angles_batch(angles_batch).await.map_err(|e| {
-                            errors::Error::Unexpected {
-                                reason: format!("IPCWriter write_angles_batch failed: {}", e),
-                            }
-                        })?;
-                        tracing::info!("IPCReader: Angles batch sent to writer.");
-
                         // Check for stop command before starting next iteration
                         // This requires a non-blocking check or integrating MMIO polling into this loop.
                         // For simplicity, this example assumes the loop continues until an external Stop command
