@@ -103,10 +103,36 @@ impl VqSim for Simulator {
         if self.modulator_state != ModulatorState::Random {
             return Err(HardwareError::ModulatorStateNotSupported);
         }
+
+        // Calculate the base GC for this batch based on elapsed time.
+        let elapsed_since_start = self
+            .time_of_start
+            .ok_or_else(|| HardwareError::Other {
+                reason: "Simulator session not started (time_of_start is None).".to_string(),
+            })?
+            .elapsed()
+            .as_secs_f64();
+
+        let pulse_periods = elapsed_since_start / self.hw.pulse_distance;
+        // gc_offset is u64, ensure it's correctly used in f64 context
+        let effective_periods = pulse_periods - self.hw.gc_offset as f64; 
+        
+        let calculated_l_float = if effective_periods > 0.0 {
+            effective_periods * self.eta // self.eta is the Simulator's eta
+        } else {
+            0.0
+        };
+        let expected_base_gc = calculated_l_float as u64;
+
+        // Update self.global_counter to the calculated base for this batch.
+        // This ensures that GCs start from a time-aware value.
+        self.global_counter = expected_base_gc;
+
         tracing::info!(
-            "Simulator: Generating GCR and angles batch ({} items). Current base GC: {}",
+            "Simulator: Generating GCR and angles batch ({} items). Calculated base GC for this batch: {} (elapsed: {:.3}s)",
             BATCH_SIZE,
-            self.global_counter
+            self.global_counter,
+            elapsed_since_start
         );
 
         // Obtain raw random bytes for events.
