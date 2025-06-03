@@ -36,7 +36,7 @@ impl SimulatorBuilder {
         SimulatorBuilder::default()
     }
 
-    pub fn from_config(conf: &Configuration) -> Simulator {
+    pub fn from_config(conf: &Configuration, mode: SimulatorMode) -> Simulator {
         let hw = HardwareBuilder::new()
             .with_pulse_distance(conf.pulse_distance)
             .build();
@@ -46,10 +46,7 @@ impl SimulatorBuilder {
             .with_qb_err(conf.qberr)
             .with_eta(conf.eta)
             .with_rng(Pcg64Mcg::seed_from_u64(conf.seed))
-            // .with_mode(conf.mode) // Mode should be set if it comes from a higher-level config.
-                                  // Assuming SimulatorBuilder::default() or a specific with_mode() call handles it.
-                                  // If conf (backend::config::Configuration) had a mode, it would be:
-                                  // .with_mode(conf.mode) 
+            .with_mode(mode) // Set the mode from the passed argument
             .build()
     }
 

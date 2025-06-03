@@ -80,7 +80,10 @@ async fn app_main() -> Result<(), crate::errors::Error> {
     );
     tracing::info!("IPC with configuration : {:?}", &configuration.ipc_config);
 
-    let sim = SimulatorBuilder::from_config(&configuration.backend_config);
+    let sim = SimulatorBuilder::from_config(
+        &configuration.backend_config,
+        configuration.simulator_mode,
+    );
     // tracing::info!("Simulator modulator: {:?}", sim.role); // sim.role removed
     let simu_handle = backend::actor::ActorHandle::new(sim);
 
@@ -110,7 +113,13 @@ async fn app_main() -> Result<(), crate::errors::Error> {
         angles_file_writer, // For angles data
     );
     // The IPC connection loop will now also open files needed by the reader per connection attempt.
-    run_ipc_connection_loop(&configuration.ipc_config, simu_handle, writer_handle).await;
+    run_ipc_connection_loop(
+        &configuration.ipc_config,
+        simu_handle,
+        writer_handle,
+        configuration.simulator_mode,
+    )
+    .await;
 
     Ok(())
 }
@@ -120,6 +129,7 @@ async fn run_ipc_connection_loop(
     config: &IPCConfiguration,
     simu_handle: backend::actor::ActorHandle,
     writer_handle: IPCWriterActorHandle, // Writer handle is created once and passed in
+    simulator_mode: crate::backend::role::SimulatorMode, // Add simulator_mode parameter
 ) {
     loop {
         tracing::info!("Attempting to establish IPC connections. Waiting for a controller...");
@@ -156,7 +166,7 @@ async fn run_ipc_connection_loop(
             gc_read_file_handle, // Pass the opened file handle
             simu_handle.clone(),
             writer_handle.clone(),
-            configuration.simulator_mode, // Pass the simulator_mode
+            simulator_mode, // Use the passed simulator_mode parameter
         );
 
         tracing::info!("IPC handlers initialized. Starting IPC command processing loop.");
