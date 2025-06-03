@@ -61,6 +61,19 @@ impl<T: BytesGenerator> Actor<T> {
                 let _ = reply_to.send(result);
                 Ok(())
             }
+            ActorMessage::GenerateAnglesForGcs {
+                received_gcs,
+                reply_to,
+            } => {
+                tracing::debug!("SimulatorActor: Processing GenerateAnglesForGcs");
+                let result = self
+                    .simulator
+                    .generate_angles_for_gcs(received_gcs) // This is async
+                    .await
+                    .context(HardwareSnafu);
+                let _ = reply_to.send(result);
+                Ok(())
+            }
             // ActorMessage::SetRole was removed
         }
     }
@@ -84,6 +97,10 @@ pub enum ActorMessage {
     SetAngles { // For configuring bases
         angles: [u8; 4],
         reply_to: oneshot::Sender<Result<(), Error>>,
+    },
+    GenerateAnglesForGcs {
+        received_gcs: Vec<u64>,
+        reply_to: oneshot::Sender<Result<Vec<u8>, Error>>, // Returns Angles data
     },
     // SetRole was removed
     // Old messages like ReadAngles, GetGlobalCounter, SeedAndStartGeneration, Start, Stop might be obsolete
@@ -166,6 +183,22 @@ impl ActorHandle {
             reply_to: send,
         };
         let _ = self.sender.send(message).await;
+        recv.await.context(errors::ActorDiedSnafu)?
+    }
+
+    pub async fn generate_angles_for_gcs(
+        &self,
+        received_gcs: Vec<u64>,
+    ) -> Result<Vec<u8>, Error> {
+        let (send, recv) = oneshot::channel();
+        let message = ActorMessage::GenerateAnglesForGcs {
+            received_gcs,
+            reply_to: send,
+        };
+        self.sender
+            .send(message)
+            .await
+            .map_err(|e| errors::Error::ActorSend { e: e.to_string() })?;
         recv.await.context(errors::ActorDiedSnafu)?
     }
 
