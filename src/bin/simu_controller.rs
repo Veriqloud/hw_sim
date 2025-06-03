@@ -4,8 +4,8 @@ use memmap2::MmapOptions;
 // use rand::Rng; // No longer needed for Source mode GC generation
 use serde::Deserialize;
 use std::fs::OpenOptions as StdOpenOptions; // For synchronous file operations in xdma_write
-use std::thread; // For the sleep in ddr_data_init sequence
-use std::time as std_time; // For the sleep in ddr_data_init sequence, and for Instant
+// use std::thread; // Replaced with tokio::time::sleep
+use std::time as std_time; // For std_time::Instant and std_time::Duration
 use tokio::fs::OpenOptions;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::time::{sleep, Duration};
@@ -67,7 +67,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize tracing for logging
     tracing_subscriber::fmt::init();
 
-    let cli_args = CliArgs::parse();
+    let result = async {
+        let cli_args = CliArgs::parse();
     let config_path = &cli_args.config_path;
 
     tracing::info!(
@@ -146,7 +147,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         COMMAND_TRIGGER_ADDR_BYTES,
         1, // Value for Start
     )?;
-    thread::sleep(std_time::Duration::from_millis(100)); // From ddr_data_init
+    // Replaced std::thread::sleep with tokio::time::sleep for non-blocking behavior in async context
+    sleep(std_time::Duration::from_millis(100)).await; // From ddr_data_init
     tracing::info!("SimuController: Start command sent via MMIO.");
 
     let start_time = std_time::Instant::now(); // Record start time for GC calculation in Source mode
@@ -381,8 +383,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    tracing::info!("SimuController: Finished.");
-    Ok(())
+        tracing::info!("SimuController: Main logic finished. Files will be dropped now.");
+        Ok(())
+    }
+    .await; // Run the inner async block
+
+    if result.is_ok() {
+        tracing::info!("SimuController: Files have been dropped. Runtime should exit shortly.");
+    } else if let Err(e) = &result {
+        tracing::error!("SimuController: Error occurred: {}", e);
+    }
+    
+    // The final tokio::time::sleep (previously here for diagnostics) has been removed.
+    
+    result
 }
 
 /// Synchronously writes a u32 value to a memory-mapped device.
