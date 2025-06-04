@@ -135,9 +135,8 @@ impl VqSim for Simulator {
             elapsed_since_start
         );
 
-        // Obtain raw random bytes for events.
-        // Each event (GC, click, angle) needs 2 bytes from correlations_random based on user's logic.
-        let data = self.correlations_random(BATCH_SIZE * 2).map_err(|e| {
+        // Obtain raw random bytes for events. Each byte from correlations_random is one event (angle + result).
+        let data = self.correlations_random(BATCH_SIZE).map_err(|e| {
             tracing::error!(
                 "Failed to get raw random bytes from correlations_random: {:?}",
                 e
@@ -147,56 +146,36 @@ impl VqSim for Simulator {
             }
         })?;
 
-        // Ensure we have enough data for BATCH_SIZE pairs.
-        // The user's provided snippet checks data.len() % 2 != 0,
-        // but chunks_exact(2) handles this by processing only full chunks.
-        // The critical part is having at least BATCH_SIZE * 2 bytes.
-        if data.len() < BATCH_SIZE * 2 {
+        if data.len() < BATCH_SIZE {
             return Err(HardwareError::Other {
                 reason: format!(
-                    "correlations_random returned insufficient data: got {}, expected at least {}",
+                    "correlations_random returned insufficient data: got {}, expected {}",
                     data.len(),
-                    BATCH_SIZE * 2
+                    BATCH_SIZE
                 ),
             });
         }
 
-        // Implement the user's specified separation logic
-        // We take exactly BATCH_SIZE items from the iterator produced by chunks_exact(2).map(...)
-        // to ensure angles_data and click_results_data have BATCH_SIZE elements.
-        let (angles_data, click_results_data): (Vec<u8>, Vec<u8>) = data
-            .chunks_exact(2)
-            .take(BATCH_SIZE) // Ensure we process exactly BATCH_SIZE pairs
-            .map(|chunk| {
-                let byte1 = chunk[0];
-                let byte2 = chunk[1];
-                // angle_byte extracts the two most significant bits (7 and 6) from byte1 and byte2.
-                // Bits from byte1 form the lower 2 bits of angle_byte.
-                // Bits from byte2 form the upper 2 bits of angle_byte.
-                // e.g., angle_byte = [byte2_bit7, byte2_bit6, byte1_bit7, byte1_bit6]
-                // angle_byte = ((byte1 & 0b11000000) >> 6) | (((byte2 & 0b11000000) >> 6) << 2);
-                let angle_byte = ((byte1 & 0b11000000) >> 6) | (((byte2 & 0b11000000) >> 6) << 2);
-                // result_byte = (byte1 & 0b001) | ((byte2 & 0b001) << 4);
-                let result_byte = (byte1 & 0b00000001) | ((byte2 & 0b00000001) << 4);
-                (angle_byte, result_byte)
-            })
-            .unzip();
+        let mut angles_data = Vec::with_capacity(BATCH_SIZE);
+        let mut click_results_data = Vec::with_capacity(BATCH_SIZE);
+
+        for byte_val in data {
+            // Angle is in bits 7-1, result is in bit 0, as per correlations_random encoding: res | (angle << 1)
+            angles_data.push(byte_val >> 1);
+            click_results_data.push(byte_val & 1);
+        }
 
         self.pending_angles_batch = Some(angles_data);
 
         let mut gcr_batch = Vec::with_capacity(BATCH_SIZE);
         for i in 0..BATCH_SIZE {
             let gc_value = self.global_counter + i as u64;
-            // The click_results_data contains the `result_byte` which is a u8.
-            // The `encode_gcr` function takes a u8 for the result bit.
-            // The `split_gcr` function extracts a single bit `(buf_gcr[6] >> 1) & 1;`.
-            // So, we should pass only the relevant bit from result_byte to encode_gcr.
-            // Assuming the LSB of result_byte is the intended single click result bit.
-            let result_byte_for_gcr = click_results_data[i];
+            // click_results_data[i] is now a single bit (0 or 1).
+            let result_bit_for_gcr = click_results_data[i];
             tracing::debug!(
-                "Simulator: Encoding GC={}, ResultByte={} for GCR item #{}",
+                "Simulator: Encoding GC={}, ResultBit={} for GCR item #{}",
                 gc_value,
-                result_byte_for_gcr,
+                result_bit_for_gcr,
                 i
             );
             let gcr_item = self.encode_gcr(gc_value, result_byte_for_gcr);
@@ -257,8 +236,8 @@ impl VqSim for Simulator {
             current_batch_size
         );
 
-        // Obtain raw random bytes for events.
-        let data = self.correlations_random(current_batch_size * 2).map_err(|e| {
+        // Obtain raw random bytes for events. Each byte from correlations_random is one event (angle + result).
+        let data = self.correlations_random(current_batch_size).map_err(|e| {
             tracing::error!(
                 "Failed to get raw random bytes from correlations_random: {:?}",
                 e
@@ -268,28 +247,18 @@ impl VqSim for Simulator {
             }
         })?;
 
-        if data.len() < current_batch_size * 2 {
+        if data.len() < current_batch_size {
             return Err(HardwareError::Other {
                 reason: format!(
-                    "correlations_random returned insufficient data: got {}, expected at least {}",
+                    "correlations_random returned insufficient data: got {}, expected {}",
                     data.len(),
-                    current_batch_size * 2
+                    current_batch_size
                 ),
             });
         }
 
-        // Extract angles using the same logic as in generate_gcr_and_angles_batch
-        let (angles_data, _click_results_data): (Vec<u8>, Vec<u8>) = data
-            .chunks_exact(2)
-            .take(current_batch_size)
-            .map(|chunk| {
-                let byte1 = chunk[0];
-                let byte2 = chunk[1];
-                let angle_byte = ((byte1 & 0b11000000) >> 6) | (((byte2 & 0b11000000) >> 6) << 2);
-                let result_byte = (byte1 & 0b00000001) | ((byte2 & 0b00000001) << 4);
-                (angle_byte, result_byte)
-            })
-            .unzip();
+        // Extract angles directly. Result bits are not used in this flow by the caller.
+        let angles_data: Vec<u8> = data.iter().map(|byte_val| byte_val >> 1).collect();
         
         tracing::info!(
             "Simulator (Source Mode Flow): Generated {} angle bytes.",
