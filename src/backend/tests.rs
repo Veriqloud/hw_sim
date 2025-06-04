@@ -114,17 +114,6 @@ async fn qkd_statistics_ok() {
         //     position: 1, // Removed
         // })) // Removed
         .build();
-    let mut sim_c = SimulatorBuilder::new()
-        .with_hardware(hw.clone()) // Use hw.clone() for consistency
-        .with_mode(SimulatorMode::Detector) // Example: Charlie is Detector
-        .with_eta(1e-2)
-        .with_qb_err(qb_err)
-        .with_angles(vec![0, 32, 64, 96])
-        // .with_role(Role::OneOfMany(Multiparty { // Removed
-        //     number_of_parties: 3, // Removed
-        //     position: 2, // Removed
-        // })) // Removed
-        .build();
 
     println!(
         "Simulator A initial GC (not directly used for seeding in new model): {:?}",
@@ -133,14 +122,11 @@ async fn qkd_statistics_ok() {
 
     sim_a.start_session().unwrap();
     sim_b.start_session().unwrap();
-    sim_c.start_session().unwrap();
 
     let mut angles_a_all = Vec::new();
     let mut results_a_all = Vec::new();
     let mut angles_b_all = Vec::new();
     let mut results_b_all = Vec::new();
-    let mut angles_c_all = Vec::new();
-    let mut results_c_all = Vec::new();
 
     // Helper to decode GCR into result bits
     // The result bit is (buf_gcr[6] >> 1) & 1;
@@ -157,21 +143,15 @@ async fn qkd_statistics_ok() {
         let gcr_b = sim_b.generate_gcr_and_angles_batch().await.unwrap();
         angles_b_all.extend(sim_b.retrieve_pending_angles_batch(vec![]).unwrap());
         results_b_all.extend(gcr_b.iter().map(extract_result_from_gcr));
-
-        let gcr_c = sim_c.generate_gcr_and_angles_batch().await.unwrap();
-        angles_c_all.extend(sim_c.retrieve_pending_angles_batch(vec![]).unwrap());
-        results_c_all.extend(gcr_c.iter().map(extract_result_from_gcr));
     }
 
     // go idle
     sim_a.stop_session().unwrap();
     sim_b.stop_session().unwrap();
-    sim_c.stop_session().unwrap();
 
     // Restart sessions
     sim_a.start_session().unwrap();
     sim_b.start_session().unwrap();
-    sim_c.start_session().unwrap();
 
     // read one more batch
     let gcr_a = sim_a.generate_gcr_and_angles_batch().await.unwrap();
@@ -182,16 +162,10 @@ async fn qkd_statistics_ok() {
     angles_b_all.extend(sim_b.retrieve_pending_angles_batch(vec![]).unwrap());
     results_b_all.extend(gcr_b.iter().map(extract_result_from_gcr));
 
-    let gcr_c = sim_c.generate_gcr_and_angles_batch().await.unwrap();
-    angles_c_all.extend(sim_c.retrieve_pending_angles_batch(vec![]).unwrap());
-    results_c_all.extend(gcr_c.iter().map(extract_result_from_gcr));
-
     // analyze statistics
     assert_eq!(angles_a_all.len(), angles_b_all.len());
-    assert_eq!(angles_b_all.len(), angles_c_all.len());
     assert_eq!(results_a_all.len(), angles_a_all.len());
     assert_eq!(results_b_all.len(), angles_b_all.len());
-    assert_eq!(results_c_all.len(), angles_c_all.len());
 
     let l = angles_a_all.len();
     println!("length : {}", l);
@@ -199,28 +173,24 @@ async fn qkd_statistics_ok() {
     let mut num_basismatch = 0;
     let mut num_result_matching = 0;
 
-    // loop through angles and results of alice, bob, and charlie
+    // loop through angles and results of alice and bob
     for i in 0..l {
         let res_a = results_a_all[i];
         let res_b = results_b_all[i];
-        let res_c = results_c_all[i];
 
         let angle_a = angles_a_all[i];
         let angle_b = angles_b_all[i];
-        let angle_c = angles_c_all[i];
 
-        num_result_matching += ((res_a == res_b) && (res_a == res_c)) as u32;
+        num_result_matching += (res_a == res_b) as u32;
 
-        // The old test's angle logic:
-        // let r = e1 & 0b1; (result bit)
-        // let angle = ((e1 >> 1) as u32 + (e2 >> 1) as u32 + (e3 >> 1) as u32) % 128;
-        // Here, (e1 >> 1) was the angle part. Now, angle_a, angle_b, angle_c are the angle parts.
-        // The result bit is res_a (assuming all parties get the same result bit if bases match).
-        let r = res_a; // Use Alice's result bit for basis match check
-        let combined_angle_info = (angle_a as u32 + angle_b as u32 + angle_c as u32) % 128;
+        // The result bit is res_a (assuming both parties get the same result bit if bases match,
+        // consistent with correlations_random documentation where QBER affects the generated bit).
+        let r = res_a; // Use Alice's (Source's) result bit for basis match check against combined angle.
+        let combined_angle_info = (angle_a as u32 + angle_b as u32) % 128; // Sum of Source and Detector angles
 
         if combined_angle_info == 0 {
-            // Basis match condition from old test
+            // Basis match condition: e.g., Source sends |0>, Detector measures in Z-basis.
+            // Expected result bit `r` (which is `res_a`) should be 0.
             num_basismatch += 1;
             if r == 0 {
                 // Result bit condition from old test
