@@ -28,13 +28,9 @@ async fn generate_bytes() {
     let mut sim_a: Simulator = SimulatorBuilder::new()
         .with_hardware(hw.clone())
         .with_rng(Pcg64Mcg::seed_from_u64(42))
-        .with_mode(SimulatorMode::Detector) // Added mode
+        .with_mode(SimulatorMode::Source) // Added mode
         .with_eta(1e-2)
         .with_qb_err(0 as f64)
-        // .with_role(Role::OneOfMany(Multiparty { // Removed
-        //     number_of_parties: 3, // Removed
-        //     position: 0, // Removed
-        // })) // Removed
         .with_angles(vec![0, 32, 64, 96])
         .with_modulator_state(ModulatorState::Random)
         .with_now(now)
@@ -45,10 +41,6 @@ async fn generate_bytes() {
         .with_mode(SimulatorMode::Detector) // Added mode
         .with_eta(1e-2)
         .with_qb_err(0 as f64)
-        // .with_role(Role::OneOfMany(Multiparty { // Removed
-        //     number_of_parties: 3, // Removed
-        //     position: 0, // Removed
-        // })) // Removed
         .with_angles(vec![0, 32, 64, 96])
         .with_modulator_state(ModulatorState::Random)
         .with_now(now)
