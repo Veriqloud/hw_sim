@@ -50,29 +50,45 @@ async fn generate_bytes() {
     sim_b.start_session().unwrap();
 
     // Batch 1
-    let gcr_a1 = sim_a.generate_gcr_and_angles_batch().await.unwrap();
-    let angles_a1 = sim_a.retrieve_pending_angles_batch(vec![]).unwrap(); // Dummy GCs
+    let gcr_a1_raw = sim_a.generate_gcr_and_angles_batch().await.unwrap();
+    let angles_a1 = sim_a.retrieve_pending_angles_batch(vec![]).unwrap();
 
-    let gcr_b1 = sim_b.generate_gcr_and_angles_batch().await.unwrap();
-    let angles_b1 = sim_b.retrieve_pending_angles_batch(vec![]).unwrap(); // Dummy GCs
+    let gcr_b1_raw = sim_b.generate_gcr_and_angles_batch().await.unwrap();
+    let angles_b1 = sim_b.retrieve_pending_angles_batch(vec![]).unwrap();
 
-    assert_eq!(gcr_a1, gcr_b1, "GCR data for batch 1 should be identical");
+    // Helper to decode GCR into result bits.
+    // (buf_gcr[6] >> 1) & 1 extracts the result bit encoded by Simulator::encode_gcr
+    let extract_result = |gcr_item: &[u8; 8]| (gcr_item[6] >> 1) & 1;
+
+    let results_a1: Vec<u8> = gcr_a1_raw.iter().map(|gcr| extract_result(gcr)).collect();
+    let results_b1: Vec<u8> = gcr_b1_raw.iter().map(|gcr| extract_result(gcr)).collect();
+
     assert_eq!(
         angles_a1, angles_b1,
         "Angle data for batch 1 should be identical"
     );
+    assert_eq!(
+        results_a1, results_b1,
+        "Result bits for batch 1 should be identical"
+    );
 
     // Batch 2
-    let gcr_a2 = sim_a.generate_gcr_and_angles_batch().await.unwrap();
-    let angles_a2 = sim_a.retrieve_pending_angles_batch(vec![]).unwrap(); // Dummy GCs
+    let gcr_a2_raw = sim_a.generate_gcr_and_angles_batch().await.unwrap();
+    let angles_a2 = sim_a.retrieve_pending_angles_batch(vec![]).unwrap();
 
-    let gcr_b2 = sim_b.generate_gcr_and_angles_batch().await.unwrap();
-    let angles_b2 = sim_b.retrieve_pending_angles_batch(vec![]).unwrap(); // Dummy GCs
+    let gcr_b2_raw = sim_b.generate_gcr_and_angles_batch().await.unwrap();
+    let angles_b2 = sim_b.retrieve_pending_angles_batch(vec![]).unwrap();
 
-    assert_eq!(gcr_a2, gcr_b2, "GCR data for batch 2 should be identical");
+    let results_a2: Vec<u8> = gcr_a2_raw.iter().map(|gcr| extract_result(gcr)).collect();
+    let results_b2: Vec<u8> = gcr_b2_raw.iter().map(|gcr| extract_result(gcr)).collect();
+
     assert_eq!(
         angles_a2, angles_b2,
         "Angle data for batch 2 should be identical"
+    );
+    assert_eq!(
+        results_a2, results_b2,
+        "Result bits for batch 2 should be identical"
     );
 
     sim_a.stop_session().unwrap();
