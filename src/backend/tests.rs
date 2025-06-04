@@ -38,7 +38,7 @@ async fn generate_bytes() {
     let mut sim_b = SimulatorBuilder::new()
         .with_hardware(hw.clone())
         .with_rng(Pcg64Mcg::seed_from_u64(42))
-        .with_mode(SimulatorMode::Detector) // Added mode
+        .with_mode(SimulatorMode::Source) // Changed to Source for identical comparison
         .with_eta(1e-2)
         .with_qb_err(0 as f64)
         .with_angles(vec![0, 32, 64, 96])
