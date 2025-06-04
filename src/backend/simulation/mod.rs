@@ -178,7 +178,7 @@ impl VqSim for Simulator {
                 result_bit_for_gcr,
                 i
             );
-            let gcr_item = self.encode_gcr(gc_value, result_byte_for_gcr);
+            let gcr_item = self.encode_gcr(gc_value, result_bit_for_gcr);
             gcr_batch.push(gcr_item);
         }
         self.global_counter += BATCH_SIZE as u64; // Advance base GC for next batch
