@@ -110,7 +110,7 @@ async fn qkd_statistics_ok() {
 
     let mut sim_a = SimulatorBuilder::new()
         .with_hardware(hw.clone())
-        .with_rng(Pcg64Mcg::seed_from_u64(101)) // Added explicit RNG seeding
+        .with_rng(Pcg64Mcg::seed_from_u64(102)) // Added explicit RNG seeding
         .with_mode(SimulatorMode::Source) // Example: Alice is Source
         .with_eta(1e-2)
         .with_qb_err(qb_err)
