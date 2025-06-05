@@ -54,7 +54,8 @@ impl Configuration {
         tracing::info!("IPC FIFOs setup complete for IPC config.");
 
         // If command_path looks like a local mock file, ensure it exists and is sized.
-        if self.command_path.starts_with("./files/") {
+        // Mock paths can be relative (e.g., "./files/") or absolute in /tmp/ for simulation.
+        if self.command_path.starts_with("./files/") || self.command_path.starts_with("/tmp/") {
             // Constants from ipc/reader: MMIO_MAP_OFFSET (0x12000), MMIO_MAP_LEN (0x1000)
             // Constants from simu_controller: START_TRIGGER_OFFSET (0x12000), MMIO_MAP_LEN (0x1000)
             // The reset command in simu_controller uses offset 0x1000.
