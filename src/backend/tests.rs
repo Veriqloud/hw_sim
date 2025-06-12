@@ -107,6 +107,7 @@ async fn qkd_statistics_ok() {
 
     let qb_err = 0.05;
     let hw = HardwareBuilder::new().with_pulse_distance(1e-9).build();
+    let test_config_angles = vec![0u8, 32u8, 64u8, 96u8]; // Define angles used in this test
 
     let mut sim_a = SimulatorBuilder::new()
         .with_hardware(hw.clone())
@@ -114,7 +115,7 @@ async fn qkd_statistics_ok() {
         .with_mode(SimulatorMode::Source) // Example: Alice is Source
         .with_eta(1e-2)
         .with_qb_err(qb_err)
-        .with_angles(vec![0, 32, 64, 96])
+        .with_angles(test_config_angles.clone()) // Use defined test angles
         // .with_role(Role::OneOfMany(Multiparty { // Removed
         //     number_of_parties: 3, // Removed
         //     position: 0, // Removed
@@ -122,11 +123,13 @@ async fn qkd_statistics_ok() {
         .build();
     let mut sim_b = SimulatorBuilder::new()
         .with_hardware(hw.clone())
-        .with_rng(Pcg64Mcg::seed_from_u64(102)) // Added explicit RNG seeding (different seed)
+        .with_rng(Pcg64Mcg::seed_from_u64(102)) // Using the same seed for sim_b to ensure its internal state evolves predictably relative to sim_a for basis choice.
+                                               // The `correlations_random` protocol uses `position` (derived from SimulatorMode)
+                                               // to differentiate random streams for basis choice.
         .with_mode(SimulatorMode::Detector) // Example: Bob is Detector
         .with_eta(1e-2)
         .with_qb_err(qb_err)
-        .with_angles(vec![0, 32, 64, 96])
+        .with_angles(test_config_angles.clone()) // Use defined test angles
         // .with_role(Role::OneOfMany(Multiparty { // Removed
         //     number_of_parties: 3, // Removed
         //     position: 1, // Removed
@@ -191,34 +194,45 @@ async fn qkd_statistics_ok() {
     let mut num_basismatch = 0;
     let mut num_result_matching = 0;
 
+    // The `test_config_angles` vec is used as the map from index to actual angle.
+    let angle_map = &test_config_angles;
+
     // loop through angles and results of alice and bob
     for i in 0..l {
         let res_a = results_a_all[i];
-        let res_b = results_b_all[i];
+        let res_b = results_b_all[i]; // res_a and res_b should be identical due to correlations_random output
 
-        let angle_a = angles_a_all[i];
-        let angle_b = angles_b_all[i];
+        // angles_a_all[i] and angles_b_all[i] are 2-bit indices (0-3)
+        // as returned by `retrieve_pending_angles_batch` which gets them from `correlations_random`
+        // where `output[i] = chosen_basis_index << 1; output[i] |= result;`
+        // and then `angles_data.push(byte_val >> 1);`
+        let angle_idx_a = angles_a_all[i];
+        let angle_idx_b = angles_b_all[i];
+
+        // Map indices to actual angle values
+        let actual_angle_a = angle_map[angle_idx_a as usize];
+        let actual_angle_b = angle_map[angle_idx_b as usize];
 
         num_result_matching += (res_a == res_b) as u32;
 
-        // The result bit is res_a (assuming both parties get the same result bit if bases match,
-        // consistent with correlations_random documentation where QBER affects the generated bit).
-        let r = res_a; // Use Alice's (Source's) result bit for basis match check against combined angle.
-        let combined_angle_info = (angle_a as u32 + angle_b as u32) % 128; // Sum of Source and Detector angles
+        // The result bit is res_a (final result from correlations_random, QBER already applied).
+        let r = res_a;
+        // Calculate combined_angle_info using actual angle values
+        let combined_angle_info = (actual_angle_a as u32 + actual_angle_b as u32) % 128;
 
         if combined_angle_info == 0 {
-            // Basis match condition: e.g., Source sends |0>, Detector measures in Z-basis.
-            // Expected result bit `r` (which is `res_a`) should be 0.
+            // This condition implies a "basis match" for the purpose of this test's statistics.
+            // Expected result for sum 0 (e.g., 0+0, 32+96, 64+64, 96+32) is 0 (cos^2(0) = 1, high probability of 0).
             num_basismatch += 1;
             if r == 0 {
-                // Result bit condition from old test
-                num_correct += 1
+                num_correct += 1;
             }
         } else if combined_angle_info == 64 {
-            // Basis match condition from old test
+            // This condition implies another "basis match" for statistical purposes.
+            // Expected result for sum 64 (e.g. 0+64, 32+32, 64+0, 96+96) is 1 (cos^2(PI/2) = 0, high probability of 1).
+            // Note: The original test logic for result bit checking (r == 1 for sum 64) is kept.
             num_basismatch += 1;
             if r == 1 {
-                // Result bit condition from old test
                 num_correct += 1
             }
         }
