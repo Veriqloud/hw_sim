@@ -19,9 +19,12 @@ impl CorrelationsRandom for Simulator {
     ///
     /// Encoding for returned bytes:
     ///
-    /// - bit 0 is the measurement result (all parties have this result, not just Bob as in the real world)
-    /// - bit 1 to 7 is the angle where 0=128 corresponds to 2pi with result bit 0 and 64 to pi
-    ///   with result bit 1
+    /// - bit 0 is the measurement result (all parties have this result, not just Bob as in the real world).
+    /// - bits 1 and 2 (from shifted value `index << 1`) represent the 2-bit index (0-3) of the
+    ///   angle/basis chosen by this party (`self.angles[index]`).
+    /// - bits 3 to 7 are zero.
+    ///   Example: if chosen index is `0b10` (decimal 2) and result is `R` (0 or 1),
+    ///   the output byte is `(0b10 << 1) | R = 0b0000010R`.
     ///
     /// If the quber is not zero, the result bit will flip sometimes
 
@@ -139,9 +142,12 @@ impl CorrelationsRandom for Simulator {
                     result ^= 0b1
                 };
 
-                let index = (b_parties[position as usize][i] % num_angles) as usize;
-                output[i] = angles[index] << 1;
-                output[i] |= result;
+                let chosen_basis_index = (b_parties[position as usize][i] % num_angles) as u8; // Value will be 0, 1, 2, or 3
+                // The 2-bit index itself (0-3) is used as the "angle" information.
+                // It's shifted left by 1, so it occupies bits 1 and 2 of the output byte.
+                // Bit 0 is for the result. Bits 3-7 will be 0.
+                output[i] = chosen_basis_index << 1;
+                output[i] |= result; // result is in bit 0
             }
             v.extend(output.iter());
         }
