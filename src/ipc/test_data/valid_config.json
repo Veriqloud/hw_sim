@@ -1,5 +1,5 @@
 {
-    "command_path": "/dev/xdma0_user_test",
+    "command_path": null,
     "angle_file_path": "/dev/c2h_angles_test",
     "gcr_file_path": "/dev/h2c_gcr_test",
     "gc_read_file_path": "/dev/h2c_gc_read_test"
