@@ -7,11 +7,11 @@
         "pulse_distance": 1e-8
     },
     "ipc_config": {
-        "command_path": "./files/xdma0_user",
-        "angle_file_path": "./files/angle",
-        "gc_read_file_path": "./files/gc",
-        "gcr_file_path": "./files/gcr"
+        "command_path": "/dev/xdma0_user",
+        "angle_file_path": "/tmp/gc_alice_angle.fifo",
+        "gc_read_file_path": "/tmp/gc_alice_gc.fifo",
+        "gcr_file_path": "/tmp/gc_bob_gcr"
     },
-    "log_level": "Info",
+    "log_level": "Debug",
     "simulator_mode": "Source"
 }

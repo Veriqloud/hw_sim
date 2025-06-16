@@ -13,11 +13,13 @@ use backend::simulation::builder::SimulatorBuilder;
 use clap::Parser;
 use ipc::writer::actor::IPCWriterActorHandle;
 use snafu::ResultExt;
-use std::time::Duration;
+use std::{sync::OnceLock, time::Duration};
 use tokio::time::sleep;
 use tracing::trace_span;
 use tracing_subscriber::fmt::writer::MakeWriterExt;
 use uuid::Uuid;
+
+pub static CONFIG: OnceLock<Configuration> = OnceLock::new();
 
 #[tokio::main]
 async fn main() {
@@ -40,6 +42,10 @@ async fn app_main() -> Result<(), crate::errors::Error> {
         Configuration::default()
     };
 
+    CONFIG
+        .set(configuration)
+        .expect("failed to set the config global var\n");
+
     tracing::info!(
         "Running with configuration: {}",
         serde_json::to_string_pretty(&configuration)
@@ -47,9 +53,10 @@ async fn app_main() -> Result<(), crate::errors::Error> {
     );
 
     // Initialize logger
-    let log_level_filter =
-        TryInto::<tracing_subscriber::filter::LevelFilter>::try_into(configuration.log_level)
-            .context(errors::LoggerInitializationSnafu)?;
+    let log_level_filter = TryInto::<tracing_subscriber::filter::LevelFilter>::try_into(
+        CONFIG.get().unwrap().log_level,
+    )
+    .context(errors::LoggerInitializationSnafu)?;
 
     let log_id = Uuid::new_v4();
     let logfile_name = format!("simu_logs_{log_id}.log");
@@ -70,28 +77,35 @@ async fn app_main() -> Result<(), crate::errors::Error> {
     tracing::info!("log file path: {}", logfile_path_str);
 
     // Setup IPC FIFOs using the method on ipc_config
-    configuration
+    CONFIG
+        .get()
+        .unwrap()
         .ipc_config
         .setup_ipc_fifos()
         .context(errors::IpcConfigSnafu)?;
 
     tracing::info!(
         "Simulator with configuration : {:?}",
-        &configuration.backend_config
+        CONFIG.get().unwrap().backend_config
     );
-    tracing::info!("IPC with configuration : {:?}", &configuration.ipc_config);
+    tracing::info!(
+        "IPC with configuration : {:?}",
+        CONFIG.get().unwrap().ipc_config
+    );
 
-    let simulator_mode = match configuration.ipc_config {
+    let simulator_mode = match CONFIG.get().unwrap().ipc_config {
         ipc::config::Configuration::Alice(_) => SimulatorMode::Source,
         ipc::config::Configuration::Bob(_) => SimulatorMode::Detector,
     };
 
-    let sim =
-        SimulatorBuilder::from_config(&configuration.backend_config, simulator_mode.clone());
+    let sim = SimulatorBuilder::from_config(
+        &CONFIG.get().unwrap().backend_config,
+        simulator_mode.clone(),
+    );
     let simu_handle = backend::actor::ActorHandle::new(sim);
 
     // The logic now diverges based on the IPC configuration type
-    match configuration.ipc_config {
+    match CONFIG.get().unwrap().ipc_config {
         ipc::config::Configuration::Alice(alice_config) => {
             run_alice_workflow(&alice_config, simu_handle, simulator_mode).await;
             tracing::error!("Alice's workflow function returned unexpectedly.");
@@ -201,7 +215,10 @@ async fn run_bob_workflow(
     {
         Ok(f) => f,
         Err(e) => {
-            tracing::error!("Bob workflow failed to open angles_file_path: {}. Exiting.", e);
+            tracing::error!(
+                "Bob workflow failed to open angles_file_path: {}. Exiting.",
+                e
+            );
             return;
         }
     };
@@ -226,7 +243,10 @@ async fn run_bob_workflow(
     {
         Ok(f) => f,
         Err(e) => {
-            tracing::error!("Bob workflow failed to open gc_read_file_path: {}. Exiting.", e);
+            tracing::error!(
+                "Bob workflow failed to open gc_read_file_path: {}. Exiting.",
+                e
+            );
             return;
         }
     };

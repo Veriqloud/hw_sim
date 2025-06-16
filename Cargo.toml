@@ -25,3 +25,4 @@ clap = { version = "4", features = ["derive", "string"] } # For simu_controller 
 uuid = { version = "1.3.0", features = ["serde", "v4"] }
 nix = { version = "0.30.1", features = ["fs"] }
 memmap2 = "0.9.5"
+gc = { git = "ssh://git@github.com/Veriqloud/kiwi_hw_control.git", branch = "master"  }
