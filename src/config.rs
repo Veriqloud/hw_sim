@@ -11,16 +11,15 @@ pub struct Configuration {
     pub backend_config: crate::backend::config::Configuration,
     pub ipc_config: crate::ipc::config::Configuration,
     pub log_level: LogLevel,
-    pub simulator_mode: crate::backend::role::SimulatorMode,
+    // simulator_mode is removed, as it's now determined by the structure of ipc_config
 }
 
 impl Default for Configuration {
     fn default() -> Self {
         Self {
             backend_config: Default::default(),
-            ipc_config: Default::default(),
+            ipc_config: Default::default(), // Defaults to BobIpcConfig
             log_level: Default::default(),
-            simulator_mode: Default::default(), // Uses SimulatorMode::default()
         }
     }
 }

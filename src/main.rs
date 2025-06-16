@@ -4,10 +4,14 @@ pub mod config;
 pub mod errors;
 pub mod ipc;
 
-use crate::config::Configuration;
+use crate::{
+    backend::role::SimulatorMode,
+    config::Configuration,
+    ipc::config::{AliceIpcConfig, BobIpcConfig},
+};
 use backend::simulation::builder::SimulatorBuilder;
 use clap::Parser;
-use ipc::{config::Configuration as IPCConfiguration, writer::actor::IPCWriterActorHandle};
+use ipc::writer::actor::IPCWriterActorHandle;
 use snafu::ResultExt;
 use std::time::Duration;
 use tokio::time::sleep;
@@ -57,11 +61,8 @@ async fn app_main() -> Result<(), crate::errors::Error> {
         .unwrap_or(tracing::Level::INFO);
     let stdout_writer = std::io::stdout.with_max_level(stdout_level);
 
-    // Attempt to initialize logger. This can fail if called multiple times.
-    // For robust applications, consider using `set_global_default` and handling its Result,
-    // or ensuring `init` is only called once. For this refactor, we assume it's called once.
     tracing_subscriber::fmt()
-        .with_max_level(log_level_filter) // Apply the global log level filter
+        .with_max_level(log_level_filter)
         .with_writer(stdout_writer.and(logfile_appender))
         .init();
 
@@ -80,115 +81,172 @@ async fn app_main() -> Result<(), crate::errors::Error> {
     );
     tracing::info!("IPC with configuration : {:?}", &configuration.ipc_config);
 
-    let sim = SimulatorBuilder::from_config(
-        &configuration.backend_config,
-        configuration.simulator_mode,
-    );
-    // tracing::info!("Simulator modulator: {:?}", sim.role); // sim.role removed
+    let simulator_mode = match configuration.ipc_config {
+        ipc::config::Configuration::Alice(_) => SimulatorMode::Source,
+        ipc::config::Configuration::Bob(_) => SimulatorMode::Detector,
+    };
+
+    let sim =
+        SimulatorBuilder::from_config(&configuration.backend_config, simulator_mode.clone());
     let simu_handle = backend::actor::ActorHandle::new(sim);
 
-    // Files for IPCWriterActor
-    let angles_file_writer = tokio::fs::OpenOptions::new()
-        .write(true)
-        .open(&configuration.ipc_config.angle_file_path)
-        .await
-        .context(errors::IOSnafu)?;
-    tracing::info!(
-        "Opened angles_file for writer: {}",
-        &configuration.ipc_config.angle_file_path
-    );
-    let gcr_file_writer = tokio::fs::OpenOptions::new() // Renamed variable
-        .write(true)
-        .open(&configuration.ipc_config.gcr_file_path) // Use renamed config field
-        .await
-        .context(errors::IOSnafu)?;
-    tracing::info!(
-        "Opened gcr_file for writer: {}",        // Renamed variable in log
-        &configuration.ipc_config.gcr_file_path  // Use renamed config field
-    );
-
-    tracing::info!("Writer-side IPC files opened successfully. Initializing IPCWriterActorHandle.");
-    let writer_handle = IPCWriterActorHandle::new(
-        gcr_file_writer,    // Pass renamed variable (For GCR data)
-        angles_file_writer, // For angles data
-    );
-    // The IPC connection loop will now also open files needed by the reader per connection attempt.
-    run_ipc_connection_loop(
-        &configuration.ipc_config,
-        simu_handle,
-        writer_handle,
-        configuration.simulator_mode,
-    )
-    .await;
+    // The logic now diverges based on the IPC configuration type
+    match configuration.ipc_config {
+        ipc::config::Configuration::Alice(alice_config) => {
+            run_alice_workflow(&alice_config, simu_handle, simulator_mode).await;
+            tracing::error!("Alice's workflow function returned unexpectedly.");
+        }
+        ipc::config::Configuration::Bob(bob_config) => {
+            run_bob_workflow(&bob_config, simu_handle, simulator_mode).await;
+            tracing::error!("Bob's workflow function returned unexpectedly.");
+        }
+    }
 
     Ok(())
 }
 
-// Extracted IPC connection loop
-async fn run_ipc_connection_loop(
-    config: &IPCConfiguration,
+// Alice's (Source) workflow: waits for a controller connection in a loop.
+async fn run_alice_workflow(
+    config: &AliceIpcConfig,
     simu_handle: backend::actor::ActorHandle,
-    writer_handle: IPCWriterActorHandle, // Writer handle is created once and passed in
-    simulator_mode: crate::backend::role::SimulatorMode, // Add simulator_mode parameter
+    simulator_mode: SimulatorMode,
 ) {
     loop {
-        tracing::info!("Attempting to establish IPC connections. Waiting for a controller...");
+        tracing::info!("Alice (Source) workflow: Waiting for a controller...");
 
-        // Open gc_read_file (hw_sim: Read, controller: Write)
-        let gc_read_file_handle = match tokio::fs::OpenOptions::new() // Renamed variable for clarity
-            .read(true)
-            .open(&config.gc_read_file_path) // Use new config field
+        // For Alice, the GCR file is not used for writing data, but the IPCWriterActor
+        // requires a file handle. We open /dev/null as a black hole for any potential writes.
+        let gcr_file_writer = match tokio::fs::OpenOptions::new()
+            .write(true)
+            .open("/dev/null")
             .await
         {
-            Ok(file) => {
-                tracing::info!("Opened gc_read_file: {}", &config.gc_read_file_path); // Use new config field
-                file
-            }
+            Ok(file) => file,
             Err(e) => {
-                tracing::error!(
-                    "Failed to open gc_read_file '{}': {}. Retrying in 5s.",
-                    &config.gc_read_file_path, // Use new config field
-                    e
-                );
-                sleep(Duration::from_secs(5)).await;
-                continue; // Retry the loop
+                tracing::error!("Failed to open /dev/null for GCR writer: {}. This is required for Alice's workflow. Exiting.", e);
+                return;
             }
         };
 
-        // Note: gcr_file (old name for gc_write_file) is now handled by the writer actor,
-        // and its File handle is created in app_main and passed to the writer_handle.
-        // The reader no longer directly interacts with a "gcr_file" for writing.
+        let angles_file_writer = match tokio::fs::OpenOptions::new()
+            .write(true)
+            .open(&config.angle_file_path)
+            .await
+        {
+            Ok(file) => file,
+            Err(e) => {
+                tracing::error!(
+                    "Failed to open angles_file_path '{}': {}. Retrying in 5s.",
+                    &config.angle_file_path,
+                    e
+                );
+                sleep(Duration::from_secs(5)).await;
+                continue;
+            }
+        };
 
-        tracing::info!("Reader-side IPC files opened successfully. Initializing IPCReader.");
-        // Pass the command_path from the config to the IPCReader
+        let writer_handle = IPCWriterActorHandle::new(gcr_file_writer, angles_file_writer);
+
+        let gc_read_file_handle = match tokio::fs::OpenOptions::new()
+            .read(true)
+            .open(&config.gc_read_file_path)
+            .await
+        {
+            Ok(file) => file,
+            Err(e) => {
+                tracing::error!(
+                    "Failed to open gc_read_file '{}': {}. Retrying in 5s.",
+                    &config.gc_read_file_path,
+                    e
+                );
+                sleep(Duration::from_secs(5)).await;
+                continue;
+            }
+        };
+
+        tracing::info!("IPC files opened. Initializing IPCReader for Alice.");
         let ipc_reader = ipc::reader::IPCReader::new(
-            config.command_path.clone(),
-            gc_read_file_handle, // Pass the opened file handle
+            Some(config.command_path.clone()),
+            gc_read_file_handle,
             simu_handle.clone(),
             writer_handle.clone(),
-            simulator_mode, // Use the passed simulator_mode parameter
+            simulator_mode.clone(),
         );
 
-        tracing::info!("IPC handlers initialized. Starting IPC command processing loop.");
+        tracing::info!("Starting IPC command processing loop for Alice.");
         if let Err(e) = ipc_reader.start().await {
-            match e {
-                _ => {
-                    tracing::warn!(
-                        "IPC processing ended with an error: {:?}. Preparing for new connection.",
-                        e
-                    );
-                }
-            }
+            tracing::warn!(
+                "IPC processing for Alice ended with an error: {:?}. Preparing for new connection.",
+                e
+            );
         } else {
-            tracing::info!("IPCReader exited cleanly (this is unexpected if it's meant to run indefinitely). Preparing for new connection.");
+            tracing::info!("IPCReader for Alice exited cleanly. Preparing for new connection.");
         }
-
-        tracing::info!(
-            "Current IPC session ended. Will attempt to listen for a new controller connection."
-        );
-        // Files and handlers are dropped here as they go out of scope.
-        // A small delay before restarting the loop to prevent tight looping on persistent errors.
         sleep(Duration::from_secs(5)).await;
-        continue; // Retry the loop
+    }
+}
+
+// Bob's (Detector) workflow: starts immediately, does not wait for controller.
+async fn run_bob_workflow(
+    config: &BobIpcConfig,
+    simu_handle: backend::actor::ActorHandle,
+    simulator_mode: SimulatorMode,
+) {
+    tracing::info!("Bob (Detector) workflow: Initializing IPC and starting generation.");
+
+    let angles_file_writer = match tokio::fs::OpenOptions::new()
+        .write(true)
+        .open(&config.angle_file_path)
+        .await
+    {
+        Ok(f) => f,
+        Err(e) => {
+            tracing::error!("Bob workflow failed to open angles_file_path: {}. Exiting.", e);
+            return;
+        }
+    };
+    let gcr_file_writer = match tokio::fs::OpenOptions::new()
+        .write(true)
+        .open(&config.gcr_file_path)
+        .await
+    {
+        Ok(f) => f,
+        Err(e) => {
+            tracing::error!("Bob workflow failed to open gcr_file_path: {}. Exiting.", e);
+            return;
+        }
+    };
+
+    let writer_handle = IPCWriterActorHandle::new(gcr_file_writer, angles_file_writer);
+
+    let gc_read_file_handle = match tokio::fs::OpenOptions::new()
+        .read(true)
+        .open(&config.gc_read_file_path)
+        .await
+    {
+        Ok(f) => f,
+        Err(e) => {
+            tracing::error!("Bob workflow failed to open gc_read_file_path: {}. Exiting.", e);
+            return;
+        }
+    };
+
+    tracing::info!("IPC files opened. Initializing IPCReader for Bob.");
+    let ipc_reader = ipc::reader::IPCReader::new(
+        None, // Bob has no command path
+        gc_read_file_handle,
+        simu_handle,
+        writer_handle,
+        simulator_mode,
+    );
+
+    tracing::info!("Starting continuous generation loop for Bob.");
+    if let Err(e) = ipc_reader.start().await {
+        tracing::error!(
+            "Bob's continuous generation loop exited with an error: {:?}",
+            e
+        );
+    } else {
+        tracing::warn!("Bob's IPC reader exited cleanly, which is unexpected.");
     }
 }
