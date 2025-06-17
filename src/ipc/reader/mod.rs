@@ -9,7 +9,6 @@ use crate::backend::simulation::BATCH_SIZE;
 use crate::{backend::actor::ActorHandle as SimulatorHandle, ipc::Command};
 
 use super::writer::actor::IPCWriterActorHandle;
-use gc;
 
 // --- MMIO Constants ---
 const MMIO_MAP_OFFSET: u64 = 0x12000;

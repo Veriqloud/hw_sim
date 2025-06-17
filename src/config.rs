@@ -36,7 +36,7 @@ impl Configuration {
     }
 }
 
-#[derive(Debug, Deserialize, Serialize, PartialEq)]
+#[derive(Debug, Deserialize, Serialize, PartialEq, Clone)]
 pub struct LogLevel(String);
 
 impl Default for LogLevel {

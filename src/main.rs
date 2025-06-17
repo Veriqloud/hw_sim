@@ -48,13 +48,13 @@ async fn app_main() -> Result<(), crate::errors::Error> {
 
     tracing::info!(
         "Running with configuration: {}",
-        serde_json::to_string_pretty(&configuration)
+        serde_json::to_string_pretty(&CONFIG.get().unwrap())
             .unwrap_or_else(|e| format!("Failed to serialize config for logging: {}", e))
     );
 
     // Initialize logger
     let log_level_filter = TryInto::<tracing_subscriber::filter::LevelFilter>::try_into(
-        CONFIG.get().unwrap().log_level,
+        CONFIG.get().unwrap().log_level.to_owned(),
     )
     .context(errors::LoggerInitializationSnafu)?;
 
@@ -105,7 +105,7 @@ async fn app_main() -> Result<(), crate::errors::Error> {
     let simu_handle = backend::actor::ActorHandle::new(sim);
 
     // The logic now diverges based on the IPC configuration type
-    match CONFIG.get().unwrap().ipc_config {
+    match &CONFIG.get().unwrap().ipc_config {
         ipc::config::Configuration::Alice(alice_config) => {
             run_alice_workflow(&alice_config, simu_handle, simulator_mode).await;
             tracing::error!("Alice's workflow function returned unexpectedly.");
