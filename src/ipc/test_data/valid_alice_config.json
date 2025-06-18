@@ -1,0 +1,5 @@
+{
+    "command_path": "/dev/command_test_alice",
+    "angle_file_path": "/dev/c2h_angles_test_alice",
+    "gc_read_file_path": "/dev/h2c_gc_read_test_alice"
+}
