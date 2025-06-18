@@ -29,8 +29,8 @@ pub struct BobIpcConfig {
 #[derive(Debug, Deserialize, Serialize, PartialEq)]
 #[serde(untagged)]
 pub enum Configuration {
-    Alice(AliceIpcConfig),
     Bob(BobIpcConfig),
+    Alice(AliceIpcConfig),
 }
 
 impl Default for Configuration {
