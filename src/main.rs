@@ -253,7 +253,7 @@ async fn run_bob_workflow(
 
     tracing::info!("IPC files opened. Initializing IPCReader for Bob.");
     let ipc_reader = ipc::reader::IPCReader::new(
-        None, // Bob has no command path
+        Some(config.command_path.clone()), // Bob now uses a command path
         gc_read_file_handle,
         simu_handle,
         writer_handle,

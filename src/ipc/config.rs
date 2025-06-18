@@ -20,6 +20,7 @@ pub struct AliceIpcConfig {
 
 #[derive(Debug, Deserialize, Serialize, PartialEq)]
 pub struct BobIpcConfig {
+    pub command_path: String,
     pub angle_file_path: String,
     pub gcr_file_path: String,
     pub gc_read_file_path: String,
@@ -36,6 +37,7 @@ impl Default for Configuration {
     fn default() -> Self {
         // Default to a Bob (Detector) configuration
         Configuration::Bob(BobIpcConfig {
+            command_path: "./files/bob_command".to_string(), // Default command path for Bob
             angle_file_path: "/dev/c2h_angles".to_string(),
             gcr_file_path: "./files/gcr".to_string(),
             gc_read_file_path: "./files/gc_read".to_string(),
@@ -75,6 +77,17 @@ impl Configuration {
                     ensure_fifo_exists(path_str).context(FifoCreationSnafu {
                         path: path_str.to_string(),
                     })?;
+                }
+
+                // Also setup command path if it's a mock MMIO file for Bob
+                if config.command_path.starts_with("./files/")
+                    || config.command_path.starts_with("/tmp/")
+                {
+                    let required_file_size = 0x12000 + 0x1000; // Consistent with Alice
+                    ensure_mock_mmio_file_exists(&config.command_path, required_file_size)
+                        .context(MockMmioFileSetupSnafu {
+                            path: config.command_path.clone(),
+                        })?;
                 }
             }
         }
@@ -223,6 +236,7 @@ mod tests {
 
         // Test data file now represents a Bob (Detector) config.
         let expected_bob_config = BobIpcConfig {
+            command_path: "/dev/command_test_bob".to_owned(), // Added command_path for Bob
             angle_file_path: "/dev/c2h_angles_test".to_owned(),
             gcr_file_path: "/dev/h2c_gcr_test".to_owned(),
             gc_read_file_path: "/dev/h2c_gc_read_test".to_owned(),
