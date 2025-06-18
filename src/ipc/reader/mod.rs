@@ -88,7 +88,7 @@ impl IPCReader {
     }
 
     pub fn new(
-        command_path: String, // Updated parameter type
+        command_path: String,
         gc_read_file: File,
         simulator_handle: SimulatorHandle,
         writer_handle: IPCWriterActorHandle,
@@ -105,7 +105,6 @@ impl IPCReader {
     }
 
     async fn await_next_command(&mut self) -> Result<Command, errors::Error> {
-        // device_path is now directly available as self.command_path (String)
         loop {
             let device_path_clone = self.command_path.clone();
             let read_result = task::spawn_blocking(move || {
@@ -164,7 +163,6 @@ impl IPCReader {
     pub async fn start(mut self) -> Result<(), errors::Error> {
         match self.simulator_mode {
             crate::backend::role::SimulatorMode::Detector => {
-                // Bob's workflow: command-driven.
                 tracing::info!("IPCReader starting in Detector (Bob) mode. Awaiting commands.");
                 self.last_known_command_trigger_value = 0; // Initialize for command polling
 
@@ -186,20 +184,13 @@ impl IPCReader {
                             })?;
                             tracing::info!("IPCReader (Bob): Simulator session started.");
 
-                            loop { // Removed 'generation_loop label
+                            loop {
                                 tracing::debug!(
                                     "IPCReader (Bob): Requesting GCR and angles batch from simulator..."
                                 );
-                                // Assuming generate_gcr_and_angles_batch returns Vec<([u8; 8], Vec<u8>)>
-                                // For simplicity, let's assume the existing gcr_batch was Vec<[u8;8]> and angles were separate
-                                // If gcr_batch from generate_gcr_and_angles_batch was already just GCRs, this part is simpler.
-                                // The original code for Bob had:
-                                // let gcr_batch = self.simulator_handle.generate_gcr_and_angles_batch().await?;
-                                // This implies gcr_batch itself was what was written.
-                                // Let's stick to the original interpretation that generate_gcr_and_angles_batch() returns the GCR data directly.
                                 let gcr_data_to_write = self
                                     .simulator_handle
-                                    .generate_gcr_and_angles_batch() // This now needs to be Vec<[u8;8]> or similar
+                                    .generate_gcr_and_angles_batch()
                                     .await
                                     .map_err(|e| errors::Error::Unexpected {
                                         reason: format!(
@@ -228,7 +219,7 @@ impl IPCReader {
                                     Ok(vals) => vals,
                                     Err(e) => {
                                         tracing::warn!("IPCReader (Bob): Failed to read GC batch, ending generation loop. Error: {}", e);
-                                        break; // Removed 'generation_loop label
+                                        break;
                                     }
                                 };
                                 tracing::info!(
@@ -264,15 +255,20 @@ impl IPCReader {
                                     angles_batch.len()
                                 );
 
-                                tracing::debug!("IPCReader (Bob): Sending angles batch to writer...");
+                                tracing::debug!(
+                                    "IPCReader (Bob): Sending angles batch to writer..."
+                                );
                                 self.writer_handle
                                     .write_angles_batch(angles_batch)
                                     .await
                                     .map_err(|e| errors::Error::Unexpected {
-                                        reason: format!("IPCWriter write_angles_batch failed: {}", e),
+                                        reason: format!(
+                                            "IPCWriter write_angles_batch failed: {}",
+                                            e
+                                        ),
                                     })?;
                                 tracing::info!("IPCReader (Bob): Angles batch sent to writer.");
-                            } // End of loop
+                            }
 
                             tracing::info!(
                                 "IPCReader (Bob): Generation loop finished. Stopping session."
@@ -301,7 +297,9 @@ impl IPCReader {
                                 }
                             })?;
                             tracing::info!("IPCReader (Bob): IPCWriter stop signal sent.");
-                            tracing::info!("IPCReader (Bob): Successfully processed Stop command. Exiting.");
+                            tracing::info!(
+                                "IPCReader (Bob): Successfully processed Stop command. Exiting."
+                            );
                             return Ok(());
                         }
                     }
@@ -330,7 +328,7 @@ impl IPCReader {
                             })?;
                             tracing::info!("IPCReader (Alice): Simulator session started.");
 
-                            loop { // Removed 'generation_loop label
+                            loop {
                                 tracing::debug!(
                                     "IPCReader (Alice): Reading GC batch from gc_client..."
                                 );
@@ -339,7 +337,7 @@ impl IPCReader {
                                     Ok(vals) => vals,
                                     Err(e) => {
                                         tracing::warn!("IPCReader (Alice): Failed to read GC batch, ending generation loop. Error: {}", e);
-                                        break; // Removed 'generation_loop label
+                                        break;
                                     }
                                 };
                                 tracing::info!("IPCReader (Alice): Received GC batch ({} items) from gc_client.", received_gc_values.len());
