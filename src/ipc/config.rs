@@ -225,23 +225,40 @@ fn ensure_fifo_exists(path_str: &str) -> Result<(), std::io::Error> {
 
 #[cfg(test)]
 mod tests {
-    use super::{BobIpcConfig, Configuration};
+    use super::{AliceIpcConfig, BobIpcConfig, Configuration};
 
     #[test]
-    fn valid_config() {
+    fn valid_bob_config() {
         let config_input_string =
             std::fs::read_to_string("src/ipc/test_data/valid_config.json").unwrap();
 
         let config_input: Configuration = serde_json::from_str(&config_input_string).unwrap();
 
-        // Test data file now represents a Bob (Detector) config.
+        // Test data file represents a Bob (Detector) config.
         let expected_bob_config = BobIpcConfig {
-            command_path: "/dev/command_test_bob".to_owned(), // Added command_path for Bob
+            command_path: "/dev/command_test_bob".to_owned(),
             angle_file_path: "/dev/c2h_angles_test".to_owned(),
             gcr_file_path: "/dev/h2c_gcr_test".to_owned(),
             gc_read_file_path: "/dev/h2c_gc_read_test".to_owned(),
         };
 
         assert_eq!(Configuration::Bob(expected_bob_config), config_input);
+    }
+
+    #[test]
+    fn valid_alice_config() {
+        let config_input_string =
+            std::fs::read_to_string("src/ipc/test_data/valid_alice_config.json").unwrap();
+
+        let config_input: Configuration = serde_json::from_str(&config_input_string).unwrap();
+
+        // Test data file represents an Alice (Source) config.
+        let expected_alice_config = AliceIpcConfig {
+            command_path: "/dev/command_test_alice".to_owned(),
+            angle_file_path: "/dev/c2h_angles_test_alice".to_owned(),
+            gc_read_file_path: "/dev/h2c_gc_read_test_alice".to_owned(),
+        };
+
+        assert_eq!(Configuration::Alice(expected_alice_config), config_input);
     }
 }
