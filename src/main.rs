@@ -180,7 +180,7 @@ async fn run_alice_workflow(
 
         tracing::info!("IPC files opened. Initializing IPCReader for Alice.");
         let ipc_reader = ipc::reader::IPCReader::new(
-            Some(config.command_path.clone()),
+            config.command_path.clone(),
             gc_read_file_handle,
             simu_handle.clone(),
             writer_handle.clone(),
@@ -253,7 +253,7 @@ async fn run_bob_workflow(
 
     tracing::info!("IPC files opened. Initializing IPCReader for Bob.");
     let ipc_reader = ipc::reader::IPCReader::new(
-        Some(config.command_path.clone()), // Bob now uses a command path
+        config.command_path.clone(), // Bob now uses a command path
         gc_read_file_handle,
         simu_handle,
         writer_handle,

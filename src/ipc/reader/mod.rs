@@ -17,7 +17,7 @@ const COMMAND_TRIGGER_ADDR_BYTES: usize = 16;
 const POLLING_INTERVAL_MS: u64 = 50;
 
 pub struct IPCReader {
-    command_path: Option<String>, // Path is optional, None for Bob/Detector
+    command_path: String, // Path is now mandatory
     gc_read_file: File,
     writer_handle: IPCWriterActorHandle,
     simulator_handle: SimulatorHandle,
@@ -88,7 +88,7 @@ impl IPCReader {
     }
 
     pub fn new(
-        command_path: Option<String>, // Updated parameter type
+        command_path: String, // Updated parameter type
         gc_read_file: File,
         simulator_handle: SimulatorHandle,
         writer_handle: IPCWriterActorHandle,
@@ -105,14 +105,9 @@ impl IPCReader {
     }
 
     async fn await_next_command(&mut self) -> Result<Command, errors::Error> {
-        let device_path = self.command_path.as_ref().ok_or_else(|| {
-            errors::Error::Unexpected {
-                reason: "await_next_command called but no command_path is configured (not in Alice/Source mode?).".to_string()
-            }
-        })?;
-
+        // device_path is now directly available as self.command_path (String)
         loop {
-            let device_path_clone = device_path.clone();
+            let device_path_clone = self.command_path.clone();
             let read_result = task::spawn_blocking(move || {
                 read_u32_from_mmio(
                     &device_path_clone,
@@ -191,7 +186,7 @@ impl IPCReader {
                             })?;
                             tracing::info!("IPCReader (Bob): Simulator session started.");
 
-                            'generation_loop: loop {
+                            loop { // Removed 'generation_loop label
                                 tracing::debug!(
                                     "IPCReader (Bob): Requesting GCR and angles batch from simulator..."
                                 );
@@ -233,7 +228,7 @@ impl IPCReader {
                                     Ok(vals) => vals,
                                     Err(e) => {
                                         tracing::warn!("IPCReader (Bob): Failed to read GC batch, ending generation loop. Error: {}", e);
-                                        break 'generation_loop;
+                                        break; // Removed 'generation_loop label
                                     }
                                 };
                                 tracing::info!(
@@ -277,7 +272,7 @@ impl IPCReader {
                                         reason: format!("IPCWriter write_angles_batch failed: {}", e),
                                     })?;
                                 tracing::info!("IPCReader (Bob): Angles batch sent to writer.");
-                            } // 'generation_loop
+                            } // End of loop
 
                             tracing::info!(
                                 "IPCReader (Bob): Generation loop finished. Stopping session."
@@ -335,7 +330,7 @@ impl IPCReader {
                             })?;
                             tracing::info!("IPCReader (Alice): Simulator session started.");
 
-                            'generation_loop: loop {
+                            loop { // Removed 'generation_loop label
                                 tracing::debug!(
                                     "IPCReader (Alice): Reading GC batch from gc_client..."
                                 );
@@ -344,7 +339,7 @@ impl IPCReader {
                                     Ok(vals) => vals,
                                     Err(e) => {
                                         tracing::warn!("IPCReader (Alice): Failed to read GC batch, ending generation loop. Error: {}", e);
-                                        break 'generation_loop;
+                                        break; // Removed 'generation_loop label
                                     }
                                 };
                                 tracing::info!("IPCReader (Alice): Received GC batch ({} items) from gc_client.", received_gc_values.len());
