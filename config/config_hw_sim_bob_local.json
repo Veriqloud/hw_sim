@@ -7,10 +7,11 @@
     "pulse_distance": 1e-8
   },
   "ipc_config": {
-    "angle_file_path": "/tmp/gc_bob_angle.fifo",
-    "gcr_file_path": "/tmp/gc_bob_gcr.fifo",
-    "gc_read_file_path": "/tmp/gc_bob_gc.fifo"
+    "Bob": {
+      "angle_file_path": "/tmp/gc_bob_angle.fifo",
+      "gcr_file_path": "/tmp/gc_bob_gcr.fifo",
+      "gc_read_file_path": "/tmp/gc_bob_gc.fifo"
+    }
   },
-  "log_level": "Info",
-  "simulator_mode": "Detector"
+  "log_level": "Info"
 }
