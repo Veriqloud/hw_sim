@@ -7,11 +7,9 @@
     "pulse_distance": 1e-8
   },
   "ipc_config": {
-    "Alice": {
-      "command_path": "/tmp/fpga_alice",
-      "angle_file_path": "/tmp/gc_alice_angle.fifo",
-      "gc_read_file_path": "/tmp/gc_alice_gc.fifo"
-    }
+    "command_path": "/tmp/fpga_alice",
+    "angle_file_path": "/tmp/gc_alice_angle.fifo",
+    "gc_read_file_path": "/tmp/gc_alice_gc.fifo"
   },
   "log_level": "Debug"
 }
