@@ -13,8 +13,11 @@ use backend::simulation::builder::SimulatorBuilder;
 use clap::Parser;
 use ipc::writer::actor::IPCWriterActorHandle;
 use snafu::ResultExt;
-use std::{sync::OnceLock, time::Duration};
-use tokio::time::sleep;
+use std::{io::SeekFrom, sync::OnceLock, time::Duration};
+use tokio::{
+    io::{AsyncSeekExt, AsyncWriteExt},
+    time::sleep,
+};
 use tracing::trace_span;
 use tracing_subscriber::fmt::writer::MakeWriterExt;
 use uuid::Uuid;
@@ -107,15 +110,57 @@ async fn app_main() -> Result<(), crate::errors::Error> {
     // The logic now diverges based on the IPC configuration type
     match &CONFIG.get().unwrap().ipc_config {
         ipc::config::Configuration::Alice(alice_config) => {
+            tracing::info!("Attempting to trigger initial PPS for Alice...");
+            if let Err(e) = trigger_pps(&alice_config.command_path).await {
+                tracing::error!(
+                    "Failed to trigger initial PPS for Alice: {}. Continuing...",
+                    e
+                );
+            } else {
+                tracing::info!("Initial PPS for Alice triggered successfully.");
+            }
             run_alice_workflow(&alice_config, simu_handle, simulator_mode).await;
             tracing::error!("Alice's workflow function returned unexpectedly.");
         }
         ipc::config::Configuration::Bob(bob_config) => {
+            tracing::info!("Attempting to trigger initial PPS for Bob...");
+            if let Err(e) = trigger_pps(&bob_config.command_path).await {
+                tracing::error!(
+                    "Failed to trigger initial PPS for Bob: {}. Continuing...",
+                    e
+                );
+            } else {
+                tracing::info!("Initial PPS for Bob triggered successfully.");
+            }
             run_bob_workflow(&bob_config, simu_handle, simulator_mode).await;
             tracing::error!("Bob's workflow function returned unexpectedly.");
         }
     }
 
+    Ok(())
+}
+
+/// Writes a '1' to a specific offset in the command file to trigger a PPS signal.
+async fn trigger_pps(command_path: &str) -> Result<(), std::io::Error> {
+    let mut file = tokio::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(command_path)
+        .await?;
+
+    // As per the sample function, write to offset 0x1000 + 48.
+    let absolute_offset = 0x1000u64 + 48u64;
+
+    // Seek to the position and write the value.
+    file.seek(SeekFrom::Start(absolute_offset)).await?;
+    file.write_all(&1u32.to_le_bytes()).await?;
+    file.flush().await?;
+
+    tracing::info!(
+        "Successfully wrote 1u32 to offset 0x{:X} in file {} for PPS trigger.",
+        absolute_offset,
+        command_path
+    );
     Ok(())
 }
 

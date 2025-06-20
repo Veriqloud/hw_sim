@@ -166,46 +166,6 @@ impl IPCReader {
         }
     }
 
-    /// Writes a '1' to a specific offset in the command file to trigger a PPS signal.
-    /// This is based on the user-provided `trigger_pps_direct` function.
-    async fn trigger_pps(&self) -> Result<(), errors::Error> {
-        let mut file = tokio::fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open(&self.command_path)
-            .await
-            .map_err(|e| errors::Error::Unexpected {
-                reason: format!("Failed to open command path for PPS trigger: {}", e),
-            })?;
-
-        // As per the sample function, write to offset 0x1000 + 48.
-        let absolute_offset = 0x1000u64 + 48u64;
-
-        // Seek to the position and write the value.
-        file.seek(SeekFrom::Start(absolute_offset))
-            .await
-            .map_err(|e| errors::Error::Unexpected {
-                reason: format!("Failed to seek in command path for PPS trigger: {}", e),
-            })?;
-        file.write_all(&1u32.to_le_bytes())
-            .await
-            .map_err(|e| errors::Error::Unexpected {
-                reason: format!("Failed to write to command path for PPS trigger: {}", e),
-            })?;
-        file.flush().await.map_err(|e| {
-            errors::Error::Unexpected {
-                reason: format!("Failed to flush command path for PPS trigger: {}", e),
-            }
-        })?;
-
-        tracing::info!(
-            "Successfully wrote 1u32 to offset 0x{:X} in file {} for PPS trigger.",
-            absolute_offset,
-            self.command_path
-        );
-        Ok(())
-    }
-
     /// Runs the Detector (Bob) workflow.
     async fn run_detector_workflow(&mut self) -> Result<(), errors::Error> {
         self.last_known_command_trigger_value = 0; // Initialize for command polling
@@ -453,10 +413,6 @@ impl IPCReader {
     }
 
     pub async fn start(mut self) -> Result<(), errors::Error> {
-        tracing::info!("IPCReader starting up. Triggering initial PPS signal...");
-        self.trigger_pps().await?;
-        tracing::info!("Initial PPS signal triggered successfully.");
-
         match self.simulator_mode {
             crate::backend::role::SimulatorMode::Detector => {
                 tracing::info!("IPCReader starting in Detector (Bob) mode. Awaiting commands.");
