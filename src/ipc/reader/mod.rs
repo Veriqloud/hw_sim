@@ -220,8 +220,6 @@ impl IPCReader {
 
             match cmd {
                 Command::Start => {
-                    self.trigger_pps().await?;
-
                     tracing::info!(
                         "IPCReader (Bob): Start command received. Initiating generation loop."
                     );
@@ -363,8 +361,6 @@ impl IPCReader {
 
             match cmd {
                 Command::Start => {
-                    self.trigger_pps().await?;
-
                     tracing::info!(
                         "IPCReader (Alice): Start command received. Initiating generation loop."
                     );
@@ -457,6 +453,10 @@ impl IPCReader {
     }
 
     pub async fn start(mut self) -> Result<(), errors::Error> {
+        tracing::info!("IPCReader starting up. Triggering initial PPS signal...");
+        self.trigger_pps().await?;
+        tracing::info!("Initial PPS signal triggered successfully.");
+
         match self.simulator_mode {
             crate::backend::role::SimulatorMode::Detector => {
                 tracing::info!("IPCReader starting in Detector (Bob) mode. Awaiting commands.");
