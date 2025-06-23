@@ -302,13 +302,15 @@ async fn qkd_statistics_asymmetric_workflow_ok() {
     // and the other the "Detector" (Bob) workflow, produce correctly correlated results
     // according to BB84 statistics.
 
-    // 1. Setup
+    // 1. SETUP: Configure two simulators, Alice (Source) and Bob (Detector).
+    // They are given the same physical parameters and, crucially, the same random seed.
+    // This ensures their "random" choices are perfectly correlated, mimicking quantum entanglement.
     let qb_err = 0.05;
     let hw = HardwareBuilder::new().with_pulse_distance(1e-9).build();
     let test_config_angles = vec![0u8, 32u8, 64u8, 96u8];
     let seed = 102; // Use a specific seed for reproducibility
 
-    // Alice (Source)
+    // Alice (Source simulator)
     let mut sim_a = SimulatorBuilder::new()
         .with_hardware(hw.clone())
         .with_rng(Pcg64Mcg::seed_from_u64(seed))
@@ -318,7 +320,7 @@ async fn qkd_statistics_asymmetric_workflow_ok() {
         .with_angles(test_config_angles.clone())
         .build();
 
-    // Bob (Detector)
+    // Bob (Detector simulator)
     let mut sim_b = SimulatorBuilder::new()
         .with_hardware(hw.clone())
         .with_rng(Pcg64Mcg::seed_from_u64(seed)) // Same seed is crucial
@@ -331,8 +333,8 @@ async fn qkd_statistics_asymmetric_workflow_ok() {
     sim_a.start_session().unwrap();
     sim_b.start_session().unwrap();
 
-    // Helper to decode a GCR value into its constituent (u64, u8) -> (GC, result_bit)
-    // This is the inverse of the `encode_gcr` method in the Simulator.
+    // Helper to decode a GCR value into its constituent parts: the original Global Counter (GC)
+    // and the measurement result bit. This is the inverse of the `encode_gcr` method.
     let split_gcr = |buf_gcr: &[u8; 8]| -> (u64, u8) {
         let mut temp_buf = *buf_gcr;
         temp_buf[6] &= 0b1111_1100; // Clear the two LSBs (result bit and GC LSB)
@@ -347,12 +349,16 @@ async fn qkd_statistics_asymmetric_workflow_ok() {
     let mut angles_b_all = Vec::new();
     let mut results_b_all = Vec::new();
 
-    // Generate a few batches of data to get good statistics
+    // Generate a few batches of data to get good statistics.
     for _ in 0..4 {
-        // 2. Bob's (Detector) workflow
+        // 2. BOB'S WORKFLOW (Detector):
+        // Bob simulates receiving signals. He gets a batch of GCRs (GC + result) and his
+        // corresponding angle (basis) choices. This is what a detector does in the field.
         let gcr_b_batch = sim_b.generate_gcr_and_angles_batch().await.unwrap();
         let angles_b_batch = sim_b.retrieve_pending_angles_batch(vec![]).unwrap();
 
+        // In a real protocol, Bob would now publicly announce the GCs for which he had a detection.
+        // We simulate this by extracting the GCs and results from his data.
         let mut gcs_for_alice = Vec::with_capacity(gcr_b_batch.len());
         let mut current_results_b = Vec::with_capacity(gcr_b_batch.len());
 
@@ -362,12 +368,16 @@ async fn qkd_statistics_asymmetric_workflow_ok() {
             current_results_b.push(result);
         }
 
-        // 3. Alice's (Source) workflow
+        // 3. ALICE'S WORKFLOW (Source):
+        // Alice, hearing Bob's announcement of GCs, now uses her simulator to determine
+        // which angle (basis) she *would have* chosen for each of those specific GCs.
+        // Because her RNG is seeded identically to Bob's, her results will be consistent.
         let angles_a_batch = sim_a
             .generate_angles_for_gcs(gcs_for_alice)
             .await
             .unwrap();
 
+        // Collect all the data from the batch.
         angles_a_all.extend(angles_a_batch);
         angles_b_all.extend(angles_b_batch);
         results_b_all.extend(current_results_b);
@@ -376,7 +386,7 @@ async fn qkd_statistics_asymmetric_workflow_ok() {
     sim_a.stop_session().unwrap();
     sim_b.stop_session().unwrap();
 
-    // 4. Verification
+    // 4. VERIFICATION: Analyze the collected data to check for BB84 correlations.
     assert_eq!(angles_a_all.len(), angles_b_all.len());
     assert_eq!(results_b_all.len(), angles_a_all.len());
 
@@ -395,32 +405,43 @@ async fn qkd_statistics_asymmetric_workflow_ok() {
         let actual_angle_a = angle_map[angle_idx_a as usize];
         let actual_angle_b = angle_map[angle_idx_b as usize];
 
-        let r = res_b; // The result is determined by Bob's measurement
+        let r = res_b; // The final measurement result is determined by Bob.
         let combined_angle_info = (actual_angle_a as u32 + actual_angle_b as u32) % 128;
 
+        // Check for a "basis match". In this encoding, a match occurs if the sum of angles
+        // is 0 (parallel bases) or 64 (orthogonal bases).
         if combined_angle_info == 0 {
+            // Parallel bases (e.g., 0+0, 32+96). Expected result is 0.
             num_basismatch += 1;
             if r == 0 {
-                num_correct += 1;
+                num_correct += 1; // Outcome matches expectation.
             }
         } else if combined_angle_info == 64 {
+            // Orthogonal bases (e.g., 0+64, 32+32). Expected result is 1.
             num_basismatch += 1;
             if r == 1 {
-                num_correct += 1
+                num_correct += 1; // Outcome matches expectation.
             }
         }
     }
+    // An error is when the bases match but the outcome is not what was expected.
     let num_errors = num_basismatch - num_correct;
     println!(
         "asymmetric workflow error: {} correct: {}",
         num_errors, num_correct
     );
+
+    // ASSERT 1: Basis Match Rate.
+    // The probability of Alice and Bob choosing a matching basis is 50%.
     println!(
         "asymmetric workflow num basis match {}",
         num_basismatch as f64 / l as f64
     );
+    assert!((num_basismatch as f64 / l as f64 - 0.5).abs() < 0.02);
+
+    // ASSERT 2: Quantum Bit Error Rate (QBER).
+    // The error rate for the sifted key (where bases matched) should equal the configured `qb_err`.
     let measured_qber = num_errors as f64 / (num_correct + num_errors) as f64;
     println!("asymmetric workflow measured qber: {}", measured_qber);
-    assert!((num_basismatch as f64 / l as f64 - 0.5).abs() < 0.02);
     assert!((measured_qber - qb_err).abs() < 0.009);
 }
