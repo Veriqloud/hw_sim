@@ -3,8 +3,8 @@
 use core::time;
 use std::{thread, time::Instant};
 
-use itertools::izip;
-use crate::backend::role::SimulatorMode; // Add direct import for SimulatorMode
+use crate::backend::role::SimulatorMode;
+use itertools::izip; // Add direct import for SimulatorMode
 
 use rand::SeedableRng;
 use rand_pcg::Pcg64Mcg;
@@ -112,28 +112,18 @@ async fn qkd_statistics_ok() {
     let mut sim_a = SimulatorBuilder::new()
         .with_hardware(hw.clone())
         .with_rng(Pcg64Mcg::seed_from_u64(102)) // Added explicit RNG seeding
-        .with_mode(SimulatorMode::Source) // Example: Alice is Source
+        .with_mode(SimulatorMode::Source)
         .with_eta(1e-2)
         .with_qb_err(qb_err)
         .with_angles(test_config_angles.clone()) // Use defined test angles
-        // .with_role(Role::OneOfMany(Multiparty { // Removed
-        //     number_of_parties: 3, // Removed
-        //     position: 0, // Removed
-        // })) // Removed
         .build();
     let mut sim_b = SimulatorBuilder::new()
         .with_hardware(hw.clone())
-        .with_rng(Pcg64Mcg::seed_from_u64(102)) // Using the same seed for sim_b to ensure its internal state evolves predictably relative to sim_a for basis choice.
-                                               // The `correlations_random` protocol uses `position` (derived from SimulatorMode)
-                                               // to differentiate random streams for basis choice.
+        .with_rng(Pcg64Mcg::seed_from_u64(102))
         .with_mode(SimulatorMode::Detector) // Example: Bob is Detector
         .with_eta(1e-2)
         .with_qb_err(qb_err)
         .with_angles(test_config_angles.clone()) // Use defined test angles
-        // .with_role(Role::OneOfMany(Multiparty { // Removed
-        //     number_of_parties: 3, // Removed
-        //     position: 1, // Removed
-        // })) // Removed
         .build();
 
     println!(
@@ -278,7 +268,7 @@ async fn source_angle_generation_consistency() {
     let mut sim_direct_angles_source = SimulatorBuilder::new()
         .with_hardware(hw_config.clone())
         .with_rng(Pcg64Mcg::seed_from_u64(seed)) // Same seed
-        .with_mode(SimulatorMode::Source)       // Same mode
+        .with_mode(SimulatorMode::Source) // Same mode
         .with_eta(1.0)
         .with_qb_err(0.0)
         .with_angles(common_angles.clone())
