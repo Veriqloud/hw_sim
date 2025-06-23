@@ -84,8 +84,8 @@ impl IPCWriterActor {
                 let packed_angles: Vec<u8> = angles_batch
                     .chunks_exact(2)
                     .map(|chunk| {
-                        let index1 = (chunk[0] & 0b0000_0110) >> 1;
-                        let index2 = (chunk[1] & 0b0000_0110) >> 1;
+                        let index1 = chunk[0] & 0b0000_0011;
+                        let index2 = chunk[1] & 0b0000_0011;
                         // Combine into a single byte: 0b00xx00yy
                         // index1 goes into the lower bits (yy)
                         // index2 goes into bits 4 and 5 (xx)
