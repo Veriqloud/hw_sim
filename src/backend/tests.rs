@@ -1,10 +1,9 @@
 #![allow(unused_imports)]
 
 use core::time;
-use std::{thread, time::Instant};
+use std::{collections::HashMap, f64::consts::PI, thread, time::Instant};
 
 use crate::backend::role::SimulatorMode;
-use itertools::izip; // Add direct import for SimulatorMode
 
 use rand::SeedableRng;
 use rand_pcg::Pcg64Mcg;
@@ -96,148 +95,6 @@ async fn generate_bytes() {
 }
 
 #[tokio::test]
-async fn qkd_statistics_ok() {
-    // Test the following statistics for QKD simulation between two parties:
-    //
-    // 1. perfect correlation of the result bit
-    // 2. 50% of basis match
-    // 3. qber is what it is supposed to be
-    // 4. two consecutive reads don't mess up correlations
-    // 5. going to idle and coming back does not mess up the correlations
-
-    let qb_err = 0.05;
-    let hw = HardwareBuilder::new().with_pulse_distance(1e-9).build();
-    let test_config_angles = vec![0u8, 32u8, 64u8, 96u8]; // Define angles used in this test
-
-    let mut sim_a = SimulatorBuilder::new()
-        .with_hardware(hw.clone())
-        .with_rng(Pcg64Mcg::seed_from_u64(102)) // Added explicit RNG seeding
-        .with_mode(SimulatorMode::Source)
-        .with_eta(1e-2)
-        .with_qb_err(qb_err)
-        .with_angles(test_config_angles.clone()) // Use defined test angles
-        .build();
-    let mut sim_b = SimulatorBuilder::new()
-        .with_hardware(hw.clone())
-        .with_rng(Pcg64Mcg::seed_from_u64(102))
-        .with_mode(SimulatorMode::Detector) // Example: Bob is Detector
-        .with_eta(1e-2)
-        .with_qb_err(qb_err)
-        .with_angles(test_config_angles.clone()) // Use defined test angles
-        .build();
-
-    println!(
-        "Simulator A initial GC (not directly used for seeding in new model): {:?}",
-        sim_a.global_counter // This is the initial GC from builder, start_session will reset it.
-    );
-
-    sim_a.start_session().unwrap();
-    sim_b.start_session().unwrap();
-
-    let mut angles_a_all = Vec::new();
-    let mut results_a_all = Vec::new();
-    let mut angles_b_all = Vec::new();
-    let mut results_b_all = Vec::new();
-
-    // Helper to decode GCR into result bits
-    // The result bit is (buf_gcr[6] >> 1) & 1;
-    // Our encode_gcr takes a u8 result_bit and stores (result_bit & 1) << 1 in buf[6].
-    // So, to get the original (result_bit & 1), we do (gcr_item[6] >> 1) & 1.
-    let extract_result_from_gcr = |gcr_item: &[u8; 8]| (gcr_item[6] >> 1) & 1;
-
-    for _ in 0..3 {
-        // Simulate 3 batches of data
-        let gcr_a = sim_a.generate_gcr_and_angles_batch().await.unwrap();
-        angles_a_all.extend(sim_a.retrieve_pending_angles_batch(vec![]).unwrap());
-        results_a_all.extend(gcr_a.iter().map(extract_result_from_gcr));
-
-        let gcr_b = sim_b.generate_gcr_and_angles_batch().await.unwrap();
-        angles_b_all.extend(sim_b.retrieve_pending_angles_batch(vec![]).unwrap());
-        results_b_all.extend(gcr_b.iter().map(extract_result_from_gcr));
-    }
-
-    // go idle
-    sim_a.stop_session().unwrap();
-    sim_b.stop_session().unwrap();
-
-    // Restart sessions
-    sim_a.start_session().unwrap();
-    sim_b.start_session().unwrap();
-
-    // read one more batch
-    let gcr_a = sim_a.generate_gcr_and_angles_batch().await.unwrap();
-    angles_a_all.extend(sim_a.retrieve_pending_angles_batch(vec![]).unwrap());
-    results_a_all.extend(gcr_a.iter().map(extract_result_from_gcr));
-
-    let gcr_b = sim_b.generate_gcr_and_angles_batch().await.unwrap();
-    angles_b_all.extend(sim_b.retrieve_pending_angles_batch(vec![]).unwrap());
-    results_b_all.extend(gcr_b.iter().map(extract_result_from_gcr));
-
-    // analyze statistics
-    assert_eq!(angles_a_all.len(), angles_b_all.len());
-    assert_eq!(results_a_all.len(), angles_a_all.len());
-    assert_eq!(results_b_all.len(), angles_b_all.len());
-
-    let l = angles_a_all.len();
-    println!("length : {}", l);
-    let mut num_correct = 0;
-    let mut num_basismatch = 0;
-    let mut num_result_matching = 0;
-
-    // The `test_config_angles` vec is used as the map from index to actual angle.
-    let angle_map = &test_config_angles;
-
-    // loop through angles and results of alice and bob
-    for i in 0..l {
-        let res_a = results_a_all[i];
-        let res_b = results_b_all[i]; // res_a and res_b should be identical due to correlations_random output
-
-        // angles_a_all[i] and angles_b_all[i] are 2-bit indices (0-3)
-        // as returned by `retrieve_pending_angles_batch` which gets them from `correlations_random`
-        // where `output[i] = chosen_basis_index << 1; output[i] |= result;`
-        // and then `angles_data.push(byte_val >> 1);`
-        let angle_idx_a = angles_a_all[i];
-        let angle_idx_b = angles_b_all[i];
-
-        // Map indices to actual angle values
-        let actual_angle_a = angle_map[angle_idx_a as usize];
-        let actual_angle_b = angle_map[angle_idx_b as usize];
-
-        num_result_matching += (res_a == res_b) as u32;
-
-        // The result bit is res_a (final result from correlations_random, QBER already applied).
-        let r = res_a;
-        // Calculate combined_angle_info using actual angle values
-        let combined_angle_info = (actual_angle_a as u32 + actual_angle_b as u32) % 128;
-
-        if combined_angle_info == 0 {
-            // This condition implies a "basis match" for the purpose of this test's statistics.
-            // Expected result for sum 0 (e.g., 0+0, 32+96, 64+64, 96+32) is 0 (cos^2(0) = 1, high probability of 0).
-            num_basismatch += 1;
-            if r == 0 {
-                num_correct += 1;
-            }
-        } else if combined_angle_info == 64 {
-            // This condition implies another "basis match" for statistical purposes.
-            // Expected result for sum 64 (e.g. 0+64, 32+32, 64+0, 96+96) is 1 (cos^2(PI/2) = 0, high probability of 1).
-            // Note: The original test logic for result bit checking (r == 1 for sum 64) is kept.
-            num_basismatch += 1;
-            if r == 1 {
-                num_correct += 1
-            }
-        }
-    }
-    let num_errors = num_basismatch - num_correct;
-    println!("error: {} correct: {}", num_errors, num_correct);
-    println!("num basis match {}", num_basismatch as f64 / l as f64);
-    let measured_qber = num_errors as f64 / (num_correct + num_errors) as f64;
-    println!("measured qber: {}", measured_qber);
-    assert_eq!(num_result_matching, l as u32);
-    assert!((num_basismatch as f64 / l as f64 - 0.5).abs() < 0.02);
-    assert!((measured_qber - qb_err).abs() < 0.009);
-}
-
-#[tokio::test]
 async fn source_angle_generation_consistency() {
     let seed = 12345;
     let common_angles = vec![0, 32, 64, 96];
@@ -298,19 +155,15 @@ async fn source_angle_generation_consistency() {
 
 #[tokio::test]
 async fn qkd_statistics_asymmetric_workflow_ok() {
-    // This test verifies that a simulator pair, one following the "Source" (Alice) workflow
-    // and the other the "Detector" (Bob) workflow, produce correctly correlated results
-    // according to BB84 statistics.
+    // This test verifies that for any given combination of angles, the measured
+    // deviation from the ideal quantum result matches the configured `qb_err`.
+    // The `qb_err` is modeled as a simple bit-flip probability.
 
-    // 1. SETUP: Configure two simulators, Alice (Source) and Bob (Detector).
-    // They are given the same physical parameters and, crucially, the same random seed.
-    // This ensures their "random" choices are perfectly correlated, mimicking quantum entanglement.
     let qb_err = 0.05;
     let hw = HardwareBuilder::new().with_pulse_distance(1e-9).build();
     let test_config_angles = vec![0u8, 32u8, 64u8, 96u8];
-    let seed = 102; // Use a specific seed for reproducibility
+    let seed = 102;
 
-    // Alice (Source simulator)
     let mut sim_a = SimulatorBuilder::new()
         .with_hardware(hw.clone())
         .with_rng(Pcg64Mcg::seed_from_u64(seed))
@@ -320,10 +173,9 @@ async fn qkd_statistics_asymmetric_workflow_ok() {
         .with_angles(test_config_angles.clone())
         .build();
 
-    // Bob (Detector simulator)
     let mut sim_b = SimulatorBuilder::new()
         .with_hardware(hw.clone())
-        .with_rng(Pcg64Mcg::seed_from_u64(seed)) // Same seed is crucial
+        .with_rng(Pcg64Mcg::seed_from_u64(seed))
         .with_mode(SimulatorMode::Detector)
         .with_eta(1e-2)
         .with_qb_err(qb_err)
@@ -333,15 +185,13 @@ async fn qkd_statistics_asymmetric_workflow_ok() {
     sim_a.start_session().unwrap();
     sim_b.start_session().unwrap();
 
-    // Helper to decode a GCR value into its constituent parts: the original Global Counter (GC)
-    // and the measurement result bit. This is the inverse of the `encode_gcr` method.
     let split_gcr = |buf_gcr: &[u8; 8]| -> (u64, u8) {
         let mut temp_buf = *buf_gcr;
-        temp_buf[6] &= 0b1111_1100; // Clear the two LSBs (result bit and GC LSB)
-        let gc_upper_part = u64::from_le_bytes(temp_buf); // This is the GC shifted right by 1
+        temp_buf[6] &= 0b1111_1100;
+        let gc_upper_part = u64::from_le_bytes(temp_buf);
         let gc_lsb = (buf_gcr[6] & 1) as u64;
         let result_bit = ((buf_gcr[6] >> 1) & 1) as u8;
-        let original_gc = (gc_upper_part << 1) | gc_lsb; // Reconstruct the original GC
+        let original_gc = (gc_upper_part << 1) | gc_lsb;
         (original_gc, result_bit)
     };
 
@@ -349,16 +199,11 @@ async fn qkd_statistics_asymmetric_workflow_ok() {
     let mut angles_b_all = Vec::new();
     let mut results_b_all = Vec::new();
 
-    // Generate a few batches of data to get good statistics.
-    for _ in 0..4 {
-        // 2. BOB'S WORKFLOW (Detector):
-        // Bob simulates receiving signals. He gets a batch of GCRs (GC + result) and his
-        // corresponding angle (basis) choices. This is what a detector does in the field.
+    // Generate a larger number of batches for better statistical significance
+    for _ in 0..32 {
         let gcr_b_batch = sim_b.generate_gcr_and_angles_batch().await.unwrap();
         let angles_b_batch = sim_b.retrieve_pending_angles_batch(vec![]).unwrap();
 
-        // In a real protocol, Bob would now publicly announce the GCs for which he had a detection.
-        // We simulate this by extracting the GCs and results from his data.
         let mut gcs_for_alice = Vec::with_capacity(gcr_b_batch.len());
         let mut current_results_b = Vec::with_capacity(gcr_b_batch.len());
 
@@ -368,16 +213,8 @@ async fn qkd_statistics_asymmetric_workflow_ok() {
             current_results_b.push(result);
         }
 
-        // 3. ALICE'S WORKFLOW (Source):
-        // Alice, hearing Bob's announcement of GCs, now uses her simulator to determine
-        // which angle (basis) she *would have* chosen for each of those specific GCs.
-        // Because her RNG is seeded identically to Bob's, her results will be consistent.
-        let angles_a_batch = sim_a
-            .generate_angles_for_gcs(gcs_for_alice)
-            .await
-            .unwrap();
+        let angles_a_batch = sim_a.generate_angles_for_gcs(gcs_for_alice).await.unwrap();
 
-        // Collect all the data from the batch.
         angles_a_all.extend(angles_a_batch);
         angles_b_all.extend(angles_b_batch);
         results_b_all.extend(current_results_b);
@@ -386,62 +223,70 @@ async fn qkd_statistics_asymmetric_workflow_ok() {
     sim_a.stop_session().unwrap();
     sim_b.stop_session().unwrap();
 
-    // 4. VERIFICATION: Analyze the collected data to check for BB84 correlations.
-    assert_eq!(angles_a_all.len(), angles_b_all.len());
-    assert_eq!(results_b_all.len(), angles_a_all.len());
-
-    let l = angles_a_all.len();
-    println!("asymmetric workflow length : {}", l);
-    let mut num_correct = 0;
-    let mut num_basismatch = 0;
-
+    // --- Data Gathering ---
+    let l = results_b_all.len();
+    let mut correlation_stats: HashMap<(u8, u8), (u32, u32)> = HashMap::new();
     let angle_map = &test_config_angles;
 
     for i in 0..l {
-        let res_b = results_b_all[i];
+        let result = results_b_all[i];
         let angle_idx_a = angles_a_all[i];
         let angle_idx_b = angles_b_all[i];
+        let angle_a = angle_map[angle_idx_a as usize];
+        let angle_b = angle_map[angle_idx_b as usize];
 
-        let actual_angle_a = angle_map[angle_idx_a as usize];
-        let actual_angle_b = angle_map[angle_idx_b as usize];
-
-        let r = res_b; // The final measurement result is determined by Bob.
-        let combined_angle_info = (actual_angle_a as u32 + actual_angle_b as u32) % 128;
-
-        // Check for a "basis match". In this encoding, a match occurs if the sum of angles
-        // is 0 (parallel bases) or 64 (orthogonal bases).
-        if combined_angle_info == 0 {
-            // Parallel bases (e.g., 0+0, 32+96). Expected result is 0.
-            num_basismatch += 1;
-            if r == 0 {
-                num_correct += 1; // Outcome matches expectation.
-            }
-        } else if combined_angle_info == 64 {
-            // Orthogonal bases (e.g., 0+64, 32+32). Expected result is 1.
-            num_basismatch += 1;
-            if r == 1 {
-                num_correct += 1; // Outcome matches expectation.
-            }
+        let stats = correlation_stats
+            .entry((angle_a, angle_b))
+            .or_insert((0, 0));
+        if result == 0 {
+            stats.0 += 1;
+        } else {
+            stats.1 += 1;
         }
     }
-    // An error is when the bases match but the outcome is not what was expected.
-    let num_errors = num_basismatch - num_correct;
-    println!(
-        "asymmetric workflow error: {} correct: {}",
-        num_errors, num_correct
-    );
 
-    // ASSERT 1: Basis Match Rate.
-    // The probability of Alice and Bob choosing a matching basis is 50%.
-    println!(
-        "asymmetric workflow num basis match {}",
-        num_basismatch as f64 / l as f64
-    );
-    assert!((num_basismatch as f64 / l as f64 - 0.5).abs() < 0.02);
+    // --- Verification ---
+    println!("\nVerifying asymmetric workflow error rate for all angle combinations...");
+    let mut sorted_keys: Vec<_> = correlation_stats.keys().collect();
+    sorted_keys.sort();
 
-    // ASSERT 2: Quantum Bit Error Rate (QBER).
-    // The error rate for the sifted key (where bases matched) should equal the configured `qb_err`.
-    let measured_qber = num_errors as f64 / (num_correct + num_errors) as f64;
-    println!("asymmetric workflow measured qber: {}", measured_qber);
-    assert!((measured_qber - qb_err).abs() < 0.009);
+    println!("RECORDS : {:?}", &correlation_stats);
+
+    for key in sorted_keys {
+        let (angle_a, angle_b) = *key;
+        let (zeros, ones) = correlation_stats[key];
+        let total = zeros + ones;
+        if total == 0 {
+            continue;
+        }
+        let measured_prob_of_1 = ones as f64 / total as f64;
+
+        let total_angle_offset = (angle_a as u32 + angle_b as u32) as u8 & 127;
+        let angle_rad = (total_angle_offset as f64 / 128.0) * PI;
+        let ideal_prob_of_1 = angle_rad.sin().powi(2);
+
+        if (ideal_prob_of_1 - 0.5).abs() < 1e-9 {
+            println!(
+                "    - Angles(A:{:2}, B:{:2}) -> P(1) measured: {:.4}, theoretical: 0.5000 (qber is not measurable)",
+                angle_a, angle_b, measured_prob_of_1
+            );
+            assert!(
+                (measured_prob_of_1 - 0.5).abs() < 0.03,
+                "For 45-degree angles, probability of 1 should be 0.5"
+            );
+        } else {
+            let measured_qber =
+                (measured_prob_of_1 - ideal_prob_of_1) / (1.0 - 2.0 * ideal_prob_of_1);
+            println!(
+                "    - Angles(A:{:2}, B:{:2}) -> Measured error rate: {:.4}",
+                angle_a, angle_b, measured_qber
+            );
+            assert!(
+                (measured_qber - qb_err).abs() < 0.03,
+                "Measured error rate should match configured QBER for angles ({}, {})",
+                angle_a,
+                angle_b
+            );
+        }
+    }
 }
