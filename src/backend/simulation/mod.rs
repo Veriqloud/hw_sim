@@ -86,7 +86,7 @@ impl VqSim for Simulator {
         self.reset_time(); // Reset self.now for internal time calculations if any
                            // RNG will use the seed it was initialized with.
                            // To change the seed, a different mechanism would be needed (e.g. a dedicated actor message or config reload).
-        // self.reset_seed(self.time_of_start.unwrap().elapsed().as_nanos() as u64); // Keep seed constant for now
+                           // self.reset_seed(self.time_of_start.unwrap().elapsed().as_nanos() as u64); // Keep seed constant for now
         Ok(())
     }
 
@@ -115,8 +115,8 @@ impl VqSim for Simulator {
 
         let pulse_periods = elapsed_since_start / self.hw.pulse_distance;
         // gc_offset is u64, ensure it's correctly used in f64 context
-        let effective_periods = pulse_periods - self.hw.gc_offset as f64; 
-        
+        let effective_periods = pulse_periods - self.hw.gc_offset as f64;
+
         let calculated_l_float = if effective_periods > 0.0 {
             effective_periods * self.eta // self.eta is the Simulator's eta
         } else {
@@ -167,7 +167,7 @@ impl VqSim for Simulator {
 
         self.pending_angles_batch = Some(angles_data);
 
-        let mut gcr_batch = Vec::with_capacity(BATCH_SIZE);
+        let mut gcr_batch = Vec::with_capacity(2 * BATCH_SIZE);
         for i in 0..BATCH_SIZE {
             let gc_value = self.global_counter + i as u64;
             // click_results_data[i] is now a single bit (0 or 1).
@@ -179,7 +179,10 @@ impl VqSim for Simulator {
                 i
             );
             let gcr_item = self.encode_gcr(gc_value, result_bit_for_gcr);
+
+            // Add extra 8 bytes to be 0 (hardware reads 16 bytes)
             gcr_batch.push(gcr_item);
+            gcr_batch.push([0u8; 8]);
         }
         self.global_counter += BATCH_SIZE as u64; // Advance base GC for next batch
 
@@ -228,7 +231,9 @@ impl VqSim for Simulator {
         let current_batch_size = received_gcs.len();
         if current_batch_size == 0 {
             // Or handle as appropriate, e.g., return empty Vec or specific error
-            return Err(HardwareError::Other { reason: "Received empty GC batch for angle generation.".to_string() });
+            return Err(HardwareError::Other {
+                reason: "Received empty GC batch for angle generation.".to_string(),
+            });
         }
 
         tracing::info!(
@@ -259,7 +264,7 @@ impl VqSim for Simulator {
 
         // Extract angles directly. Result bits are not used in this flow by the caller.
         let angles_data: Vec<u8> = data.iter().map(|byte_val| byte_val >> 1).collect();
-        
+
         tracing::info!(
             "Simulator (Source Mode Flow): Generated {} angle bytes.",
             angles_data.len()

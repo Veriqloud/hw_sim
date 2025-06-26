@@ -271,9 +271,7 @@ impl IPCReader {
                         tracing::info!("IPCReader (Bob): Angles batch sent to writer.");
                     }
 
-                    tracing::info!(
-                        "IPCReader (Bob): Generation loop finished. Stopping session."
-                    );
+                    tracing::info!("IPCReader (Bob): Generation loop finished. Stopping session.");
                     self.simulator_handle.stop_session().await.map_err(|e| {
                         errors::Error::Unexpected {
                             reason: format!(
@@ -292,11 +290,12 @@ impl IPCReader {
                     })?;
                     tracing::info!("IPCReader (Bob): Simulator session stopped.");
 
-                    self.writer_handle.stop().await.map_err(|e| {
-                        errors::Error::Unexpected {
+                    self.writer_handle
+                        .stop()
+                        .await
+                        .map_err(|e| errors::Error::Unexpected {
                             reason: format!("IPCWriter stop failed: {}", e),
-                        }
-                    })?;
+                        })?;
                     tracing::info!("IPCReader (Bob): IPCWriter stop signal sent.");
                     tracing::info!(
                         "IPCReader (Bob): Successfully processed Stop command. Exiting."
@@ -399,11 +398,12 @@ impl IPCReader {
                     })?;
                     tracing::info!("IPCReader (Alice): Simulator session stopped.");
 
-                    self.writer_handle.stop().await.map_err(|e| {
-                        errors::Error::Unexpected {
+                    self.writer_handle
+                        .stop()
+                        .await
+                        .map_err(|e| errors::Error::Unexpected {
                             reason: format!("IPCWriter stop failed: {}", e),
-                        }
-                    })?;
+                        })?;
                     tracing::info!("IPCReader (Alice): IPCWriter stop signal sent.");
                     tracing::info!("IPCReader (Alice): Successfully processed Stop command. Exiting current command processing loop.");
                     return Ok(());

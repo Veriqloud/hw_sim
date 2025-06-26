@@ -84,6 +84,8 @@ impl CorrelationsRandom for Simulator {
                     as u8
                     & 127;
 
+                let total_angle_offset = (total_angle_offset + 32) % 128; //Alice send |+> state instead of |0>
+
                 // 3. Determine the measurement result based on the total angle.
                 // `overlap_probabilities` holds pre-calculated cos^2 values scaled to u16::MAX.
                 // This value represents the probability of a '0' outcome.
