@@ -13,14 +13,11 @@ use super::Simulator;
 pub struct SimulatorBuilder {
     /// Total qubit detection efficiency
     pub eta: f64,
-    /// Size of the physical FIFO, for realistic HardwareError, "Size" means number of bytes.
-    pub fifo_max_size: u64,
     /// Offset is taken care of automatically.
     /// Equivalent to Bob broadcasting his global counter in the real world.
     /// Probably not required ...
     pub global_counter: u64,
     pub hw: Hardware,
-    pub current_fifo_size: usize,
     pub modulator_state: ModulatorState,
     pub angles: Vec<u8>,
     pub now: Instant,
@@ -28,7 +25,7 @@ pub struct SimulatorBuilder {
     pub qb_err: f64,
     pub rng: Pcg64Mcg,
     pub mode: SimulatorMode, // Mode is still needed
-    pub time_of_last_read: f64,
+    pub use_gcr_padding: bool,
 }
 
 impl SimulatorBuilder {
@@ -58,14 +55,12 @@ impl SimulatorBuilder {
             eta: self.eta,
             qb_err: self.qb_err,
             now: self.now,
-            time_of_last_read: self.time_of_last_read,
             global_counter: self.global_counter,
             modulator_state: self.modulator_state.to_owned(),
-            fifo_max_size: self.fifo_max_size,
-            current_fifo_size: self.current_fifo_size,
             angles: self.angles.to_owned(),
             pending_angles_batch: None, // Initialize to None
             time_of_start: None,        // Initialize to None
+            use_gcr_padding: self.use_gcr_padding,
         }
     }
 
@@ -104,11 +99,6 @@ impl SimulatorBuilder {
         self
     }
 
-    pub fn with_time_of_last_read(&mut self, time_of_last_read: f64) -> &mut Self {
-        self.time_of_last_read = time_of_last_read;
-        self
-    }
-
     pub fn with_global_counter(&mut self, global_counter: u64) -> &mut Self {
         self.global_counter = global_counter;
         self
@@ -119,8 +109,8 @@ impl SimulatorBuilder {
         self
     }
 
-    pub fn with_fifo_max_size(&mut self, fifo_max_size: u64) -> &mut Self {
-        self.fifo_max_size = fifo_max_size;
+    pub fn with_gcr_padding(&mut self, use_padding: bool) -> &mut Self {
+        self.use_gcr_padding = use_padding;
         self
     }
 }
@@ -129,17 +119,15 @@ impl Default for SimulatorBuilder {
     fn default() -> Self {
         SimulatorBuilder {
             eta: Default::default(),
-            fifo_max_size: 50_000_000,
             global_counter: Default::default(),
             hw: Default::default(),
-            current_fifo_size: 0,
             modulator_state: Default::default(),
             angles: Default::default(),
             now: Instant::now(),
             qb_err: Default::default(),
             rng: Pcg64Mcg::seed_from_u64(10),
             mode: SimulatorMode::default(), // Add mode default
-            time_of_last_read: Default::default(),
+            use_gcr_padding: true,
         }
     }
 }
@@ -169,11 +157,10 @@ pub mod tests {
             .with_eta(13.)
             .with_qb_err(42.)
             .with_now(now)
-            .with_time_of_last_read(55.)
             .with_global_counter(99)
             .with_modulator_state(ModulatorState::Random)
-            .with_fifo_max_size(10_000)
             .with_angles(vec![0, 32, 34, 96])
+            .with_gcr_padding(false)
             .build();
 
         assert_eq!(
@@ -184,14 +171,12 @@ pub mod tests {
                 eta: 13.,
                 qb_err: 42.,
                 now,
-                time_of_last_read: 55.,
                 global_counter: 99,
                 modulator_state: ModulatorState::Random,
-                fifo_max_size: 10_000,
-                current_fifo_size: 0,
                 angles: vec![0, 32, 34, 96],
                 pending_angles_batch: None,
                 time_of_start: None,
+                use_gcr_padding: false,
             },
             sim
         )

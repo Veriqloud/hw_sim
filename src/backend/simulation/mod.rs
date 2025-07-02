@@ -20,11 +20,8 @@ pub const BATCH_SIZE: usize = 1024;
 #[derive(Debug, PartialEq)]
 pub struct Simulator {
     pub(crate) angles: Vec<u8>,
-    pub(crate) current_fifo_size: usize,
     /// Total qubit detection efficiency
     pub eta: f64,
-    /// Size of the physical FIFO, for realistic HardwareError, "Size" means number of bytes.
-    pub(crate) fifo_max_size: u64,
     /// Offset is taken care of automatically.
     /// Equivalent to Bob broadcasting his global counter in the real world.
     /// Probably not required ...
@@ -38,8 +35,8 @@ pub struct Simulator {
     pub qb_err: f64,
     pub(crate) rng: Pcg64Mcg,
     pub simulator_mode: SimulatorMode, // Added simulator_mode field
-    pub(crate) time_of_last_read: f64, // Stores 1024 generated angle values
     pub(crate) time_of_start: Option<Instant>, // To track time for potential future use or logging
+    pub(crate) use_gcr_padding: bool,
 }
 
 #[async_trait]
@@ -186,7 +183,12 @@ impl VqSim for Simulator {
 
         self.pending_angles_batch = Some(angles_data);
 
-        let mut gcr_batch = Vec::with_capacity(2 * BATCH_SIZE);
+        let capacity = if self.use_gcr_padding {
+            2 * BATCH_SIZE
+        } else {
+            BATCH_SIZE
+        };
+        let mut gcr_batch = Vec::with_capacity(capacity);
         for i in 0..BATCH_SIZE {
             let gc_value = self.global_counter + i as u64;
             // click_results_data[i] is now a single bit (0 or 1).
@@ -199,10 +201,12 @@ impl VqSim for Simulator {
             );
             let gcr_item = self.encode_gcr(gc_value, result_bit_for_gcr);
 
-            // The external `gc` program expects a 16-byte record per GCR.
-            // The first 8 bytes are the GCR, the next 8 are padding.
             gcr_batch.push(gcr_item);
-            gcr_batch.push([0u8; 8]);
+            if self.use_gcr_padding {
+                // The external `gc` program expects a 16-byte record per GCR.
+                // The first 8 bytes are the GCR, the next 8 are padding.
+                gcr_batch.push([0u8; 8]);
+            }
         }
         self.global_counter += BATCH_SIZE as u64; // Advance base GC for next batch
 
@@ -311,31 +315,8 @@ impl Simulator {
 
         buffer
     }
-
-    // /// return time elapsed since start in seconds at nanoseconds.
-    // fn get_current_time_with_nanos(&self) -> f64 {
-    //     let duration = self.now.elapsed();
-    //     duration.as_secs() as f64 + duration.subsec_nanos() as f64 * 1e-9
-    // }
-    // /// Restart RNG with a new seed.
-    // fn reset_seed(&mut self, seed: u64) {
-    //     self.rng = Pcg64Mcg::seed_from_u64(seed);
-    // }
     /// Reset time to now
     pub fn reset_time(&mut self) {
         self.now = Instant::now();
-    }
-    /// Update the value of eta
-    pub fn set_eta(&mut self, eta: f64) {
-        self.eta = eta;
-    }
-    // /// Set the global counter of the simulator - replaced by internal management
-    // pub fn set_gc(&mut self, gc: u64) {
-    //     self.global_counter = gc;
-    //     self.reset_seed(gc);
-    // }
-    /// Update the value of qber
-    pub fn set_qber(&mut self, qber: f64) {
-        self.qb_err = qber;
     }
 }

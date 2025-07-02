@@ -33,6 +33,7 @@ async fn generate_bytes() {
         .with_angles(vec![0, 32, 64, 96])
         .with_modulator_state(ModulatorState::Random)
         .with_now(now)
+        .with_gcr_padding(false)
         .build();
     let mut sim_b = SimulatorBuilder::new()
         .with_hardware(hw.clone())
@@ -43,6 +44,7 @@ async fn generate_bytes() {
         .with_angles(vec![0, 32, 64, 96])
         .with_modulator_state(ModulatorState::Random)
         .with_now(now)
+        .with_gcr_padding(false)
         .build();
 
     sim_a.start_session().unwrap();
@@ -109,6 +111,7 @@ async fn source_angle_generation_consistency() {
         .with_qb_err(0.0) // QBER doesn't affect angle choice
         .with_angles(common_angles.clone())
         .with_modulator_state(ModulatorState::Random)
+        .with_gcr_padding(false)
         .build();
 
     sim_gcr_source.start_session().unwrap();
@@ -171,6 +174,7 @@ async fn qkd_statistics_asymmetric_workflow_ok() {
         .with_eta(1e-2)
         .with_qb_err(qb_err)
         .with_angles(test_config_angles.clone())
+        .with_gcr_padding(false)
         .build();
 
     let mut sim_b = SimulatorBuilder::new()
@@ -180,6 +184,7 @@ async fn qkd_statistics_asymmetric_workflow_ok() {
         .with_eta(1e-2)
         .with_qb_err(qb_err)
         .with_angles(test_config_angles.clone())
+        .with_gcr_padding(false)
         .build();
 
     sim_a.start_session().unwrap();
@@ -228,6 +233,12 @@ async fn qkd_statistics_asymmetric_workflow_ok() {
     let mut correlation_stats: HashMap<(u8, u8), (u32, u32)> = HashMap::new();
     let angle_map = &test_config_angles;
 
+    println!("SIZE:ANGLES_A_ALL ALICE {}", &angles_a_all.len());
+
+    println!("SIZE:ANGLES_B_ALL BOB {}", &angles_b_all.len());
+
+    println!("SIZE:RESULTS BOB {}", &results_b_all.len());
+
     for i in 0..l {
         let result = results_b_all[i];
         let angle_idx_a = angles_a_all[i];
@@ -261,7 +272,8 @@ async fn qkd_statistics_asymmetric_workflow_ok() {
         }
         let measured_prob_of_1 = ones as f64 / total as f64;
 
-        let total_angle_offset = (angle_a as u32 + angle_b as u32) as u8 & 127;
+        // The protocol adds a +32 offset to simulate starting from |+> state.
+        let total_angle_offset = (angle_a as u32 + angle_b as u32 + 32) as u8 & 127;
         let angle_rad = (total_angle_offset as f64 / 128.0) * PI;
         let ideal_prob_of_1 = angle_rad.sin().powi(2);
 
