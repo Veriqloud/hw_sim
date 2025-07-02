@@ -2,11 +2,10 @@ pub mod errors;
 
 use memmap2::MmapOptions;
 use std::fs::OpenOptions as StdOpenOptions;
-use std::io::SeekFrom;
 use std::time::Duration;
 use tokio::{
     fs::File,
-    io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt},
+    io::{AsyncReadExt},
     task,
     time,
 };

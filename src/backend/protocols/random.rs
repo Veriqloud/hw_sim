@@ -1,7 +1,7 @@
 use crate::backend::protocols::errors::ProtocolError;
 use crate::backend::simulation::hardware::modulator_state::ModulatorState;
 use crate::backend::simulation::Simulator;
-use rand::{Rng, RngCore};
+use rand::Rng;
 use std::f64::consts::PI;
 
 mod cr_constants {
@@ -79,12 +79,11 @@ impl CorrelationsRandom for Simulator {
                 let bob_basis_index = (bob_basis_rand[i] % num_angles) as usize;
 
                 // 2. Calculate the total angle. Angles are u8 offsets in a 128-step circle.
+                // The +32 simulates Alice sending a |+> state instead of |0>.
                 let total_angle_offset = (angles_vec[alice_basis_index] as u32
-                    + angles_vec[bob_basis_index] as u32)
-                    as u8
+                    + angles_vec[bob_basis_index] as u32
+                    + 32) as u8
                     & 127;
-
-                let total_angle_offset = (total_angle_offset + 32) % 128; //Alice send |+> state instead of |0>
 
                 // 3. Determine the measurement result based on the total angle.
                 // `overlap_probabilities` holds pre-calculated cos^2 values scaled to u16::MAX.
@@ -214,7 +213,8 @@ mod tests {
                 let measured_prob_of_1 = ones as f64 / total as f64;
 
                 // Calculate the ideal probability of a '1' based on the scalar product.
-                let total_angle_offset = (angle_a as u32 + angle_b as u32) as u8 & 127;
+                // The protocol adds a +32 offset to simulate starting from |+> state.
+                let total_angle_offset = (angle_a as u32 + angle_b as u32 + 32) as u8 & 127;
                 let angle_rad = (total_angle_offset as f64 / 128.0) * PI;
                 let ideal_prob_of_1 = angle_rad.sin().powi(2);
 

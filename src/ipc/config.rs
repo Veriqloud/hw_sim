@@ -7,7 +7,6 @@ use std::{
     path::Path,
 };
 
-// Use the new local error type
 pub mod errors;
 use self::errors::{Error, FifoCreationSnafu, MockMmioFileSetupSnafu};
 
@@ -98,7 +97,10 @@ impl Configuration {
 
 /// Ensures a regular file exists at the given path with at least the required size,
 /// typically for mock MMIO.
-fn ensure_mock_mmio_file_exists(path_str: &str, required_size: usize) -> Result<(), std::io::Error> {
+fn ensure_mock_mmio_file_exists(
+    path_str: &str,
+    required_size: usize,
+) -> Result<(), std::io::Error> {
     let path = Path::new(path_str);
 
     if let Some(parent_dir) = path.parent() {
