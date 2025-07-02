@@ -124,6 +124,25 @@ impl VqSim for Simulator {
         };
         let expected_base_gc = calculated_l_float as u64;
 
+        tracing::debug!(
+            "GC calc: elapsed={:.6}s, pulse_dist={}, gc_offset={}, eta={}",
+            elapsed_since_start,
+            self.hw.pulse_distance,
+            self.hw.gc_offset,
+            self.eta
+        );
+        tracing::debug!(
+            "GC calc: pulse_periods={}, effective_periods={}, l_float={}",
+            pulse_periods,
+            effective_periods,
+            calculated_l_float
+        );
+        tracing::debug!(
+            "GC calc: new_base_gc={}, old_base_gc={}",
+            expected_base_gc,
+            self.global_counter
+        );
+
         // Update self.global_counter to the calculated base for this batch.
         // This ensures that GCs start from a time-aware value.
         self.global_counter = expected_base_gc;
@@ -180,7 +199,8 @@ impl VqSim for Simulator {
             );
             let gcr_item = self.encode_gcr(gc_value, result_bit_for_gcr);
 
-            // Add extra 8 bytes to be 0 (hardware reads 16 bytes)
+            // The external `gc` program expects a 16-byte record per GCR.
+            // The first 8 bytes are the GCR, the next 8 are padding.
             gcr_batch.push(gcr_item);
             gcr_batch.push([0u8; 8]);
         }

@@ -64,19 +64,23 @@ fn read_u32_from_mmio(
 
 impl IPCReader {
     /// Reads a batch of GC values from the gc_read_file.
-    /// Expects BATCH_SIZE (1024) u64 values.
+    /// Expects BATCH_SIZE (1024) 16-byte records, and extracts a u64 GC from the first 8 bytes of each.
     async fn read_gc_batch_from_file(&mut self) -> Result<Vec<u64>, errors::Error> {
         let mut gc_values = Vec::with_capacity(BATCH_SIZE);
+        let mut record_buffer = [0u8; 16];
         tracing::debug!(
-            "IPCReader: Attempting to read {} GC values from gc_read_file.",
+            "IPCReader: Attempting to read {} 16-byte GC records from gc_read_file.",
             BATCH_SIZE
         );
         for i in 0..BATCH_SIZE {
-            match self.gc_read_file.read_u64_le().await {
-                Ok(gc) => gc_values.push(gc),
+            match self.gc_read_file.read_exact(&mut record_buffer).await {
+                Ok(_) => {
+                    let gc_bytes: [u8; 8] = record_buffer[0..8].try_into().unwrap();
+                    gc_values.push(u64::from_le_bytes(gc_bytes));
+                }
                 Err(e) => {
                     let reason = format!(
-                        "Failed to read GC value #{} from gc_read_file (read {} so far): {}",
+                        "Failed to read 16-byte record #{} from gc_read_file (read {} so far): {}",
                         i,
                         gc_values.len(),
                         e
@@ -232,6 +236,15 @@ impl IPCReader {
                             "IPCReader (Bob): Received echoed GC batch ({} items) from controller.",
                             echoed_gc_values.len()
                         );
+                        if let (Some(first), Some(last)) =
+                            (echoed_gc_values.first(), echoed_gc_values.last())
+                        {
+                            tracing::debug!(
+                                "IPCReader (Bob): Echoed GCs - First: {}, Last: {}",
+                                first,
+                                last
+                            );
+                        }
                         if echoed_gc_values.len() != BATCH_SIZE {
                             let reason = format!(
                                 "Expected {} echoed GC values from controller, got {}. Stopping.",
@@ -343,6 +356,15 @@ impl IPCReader {
                             "IPCReader (Alice): Received GC batch ({} items) from gc_client.",
                             received_gc_values.len()
                         );
+                        if let (Some(first), Some(last)) =
+                            (received_gc_values.first(), received_gc_values.last())
+                        {
+                            tracing::debug!(
+                                "IPCReader (Alice): Received GCs - First: {}, Last: {}",
+                                first,
+                                last
+                            );
+                        }
                         if received_gc_values.len() != BATCH_SIZE {
                             let reason = format!(
                                 "Expected {} GC values from gc_client, got {}. Stopping.",
