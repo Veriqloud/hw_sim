@@ -1,15 +1,17 @@
 {
     "backend_config": {
-        "angles": [0, 32, 64, 96],
-        "number_of_parties": 3,
-        "position": 2,
+        "angles": [0, 32, 96, 64],
         "seed": 42,
         "eta": 0.1,
         "qberr": 0.02,
         "pulse_distance": 1e-8
     },
     "ipc_config": {
-        "unix_socket_path": "./node2hw_bob.sock"
+        "command_path": "./files/xdma0_user",
+        "angle_file_path": "./files/angle_bob",
+        "gc_read_file_path": "./files/gc_bob",
+        "gcr_file_path": "./files/gcr_bob"
     },
-    "log_level": "Info"
+    "log_level": "Debug",
+    "simulator_mode": "Detector"
 }

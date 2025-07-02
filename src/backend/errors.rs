@@ -19,4 +19,6 @@ pub enum Error {
     },
     #[snafu(display("IO Error : {}", source))]
     Io { source: std::io::Error },
+    #[snafu(display("Actor channel send error : {}", e))]
+    ActorSend { e: String },
 }

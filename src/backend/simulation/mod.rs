@@ -5,197 +5,322 @@ pub mod hardware;
 use async_trait::async_trait;
 
 use crate::backend::protocols::random::CorrelationsRandom;
-use crate::backend::role::{Multiparty, Role};
-use rand::SeedableRng;
+use crate::backend::role::SimulatorMode; // SimulatorMode is still needed
 use rand_pcg::Pcg64Mcg;
 use std::time::Instant;
 
 use self::hardware::errors::HardwareError;
 use self::hardware::modulator_state::ModulatorState;
 use self::hardware::Hardware;
+// Removed: use crate::backend::protocols::errors::ProtocolError;
+// Removed: use rand::Rng;
+
+pub const BATCH_SIZE: usize = 1024;
 
 #[derive(Debug, PartialEq)]
 pub struct Simulator {
-    pub(crate) hw: Hardware,
-    pub role: Role,
-    pub(crate) rng: Pcg64Mcg,
+    pub(crate) angles: Vec<u8>,
+    pub(crate) current_fifo_size: usize,
     /// Total qubit detection efficiency
     pub eta: f64,
-    /// Qubit error rate
-    pub qb_err: f64,
-    pub now: Instant,
-    pub(crate) time_of_last_read: f64,
+    /// Size of the physical FIFO, for realistic HardwareError, "Size" means number of bytes.
+    pub(crate) fifo_max_size: u64,
     /// Offset is taken care of automatically.
     /// Equivalent to Bob broadcasting his global counter in the real world.
     /// Probably not required ...
     pub(crate) global_counter: u64,
+    pub(crate) hw: Hardware,
     pub(crate) modulator_state: ModulatorState,
-    pub(crate) angles: Vec<u8>,
-    /// Size of the physical FIFO, for realistic HardwareError, "Size" means number of bytes.
-    pub(crate) fifo_max_size: u64,
-    pub(crate) current_fifo_size: usize,
+    pub now: Instant,
+    // Replaced by batch-oriented processing
+    pub(crate) pending_angles_batch: Option<Vec<u8>>,
+    /// Qubit error rate
+    pub qb_err: f64,
+    pub(crate) rng: Pcg64Mcg,
+    pub simulator_mode: SimulatorMode, // Added simulator_mode field
+    pub(crate) time_of_last_read: f64, // Stores 1024 generated angle values
+    pub(crate) time_of_start: Option<Instant>, // To track time for potential future use or logging
 }
 
 #[async_trait]
 pub trait VqSim {
-    fn get_global_counter(&mut self) -> Option<u64>;
-    async fn read_angles(&mut self) -> Result<[u8; 1024], HardwareError>;
-    async fn generate_bytes(&mut self) -> Result<Vec<u8>, HardwareError>;
+    /// Initializes the simulator state for starting a generation sequence.
+    /// Resets counters and sets the modulator state.
+    fn start_session(&mut self) -> Result<(), HardwareError>;
+
+    /// Stops the current generation sequence and resets state.
+    fn stop_session(&mut self) -> Result<(), HardwareError>;
+
+    /// Generates a batch of GCR (Global Counter + Result) data and corresponding angles.
+    /// The GCR data is returned, and angles are stored internally.
+    /// GCs are deterministic (incrementing sequence). Clicks and angles are random.
+    async fn generate_gcr_and_angles_batch(&mut self) -> Result<Vec<[u8; 8]>, HardwareError>;
+
+    /// Called after the reader has received GC values from the controller.
+    /// This method retrieves the internally stored batch of angles corresponding
+    /// to the previously generated GCR data.
+    fn retrieve_pending_angles_batch(
+        &mut self,
+        received_gc_values: Vec<u64>,
+    ) -> Result<Vec<u8>, HardwareError>;
+
+    /// Generates a batch of angles based on received GCs (primarily for Source mode).
+    /// This method does not generate GCRs or affect the internal global_counter.
+    async fn generate_angles_for_gcs(
+        &mut self,
+        received_gcs: Vec<u64>, // Used to determine BATCH_SIZE, actual values not used in random generation
+    ) -> Result<Vec<u8>, HardwareError>;
+
+    // set_angles remains for configuration purposes
     fn set_angles(&mut self, angles: [u8; 4]) -> Result<(), HardwareError>;
-    fn start_at_gc(&mut self, gc: u64) -> Result<(), HardwareError>;
-    fn set_role(&mut self, nb_parties: u32, position: u32) -> Result<(), HardwareError>;
-    fn start(&mut self) -> Result<(), HardwareError>;
-    fn stop(&mut self) -> Result<(), HardwareError>;
 }
 
 #[async_trait]
 impl VqSim for Simulator {
-    fn start(&mut self) -> Result<(), HardwareError> {
-        tracing::info!("Starting the simulator !");
-        self.reset_time();
-        self.modulator_state = ModulatorState::Random;
-        tracing::info!("MODULATOR STATE CHANGED TO RANDOM !");
+    fn start_session(&mut self) -> Result<(), HardwareError> {
+        tracing::info!("Simulator: Start session command received. Initializing for generation.");
+        self.global_counter = 0; // Reset GC for the new session
+        self.time_of_start = Some(Instant::now());
+        self.modulator_state = ModulatorState::Random; // Ready to generate
+        self.pending_angles_batch = None;
+        self.reset_time(); // Reset self.now for internal time calculations if any
+                           // RNG will use the seed it was initialized with.
+                           // To change the seed, a different mechanism would be needed (e.g. a dedicated actor message or config reload).
+                           // self.reset_seed(self.time_of_start.unwrap().elapsed().as_nanos() as u64); // Keep seed constant for now
         Ok(())
     }
 
-    fn stop(&mut self) -> Result<(), HardwareError> {
-        tracing::info!("Stopping the simulator");
+    fn stop_session(&mut self) -> Result<(), HardwareError> {
+        tracing::info!("Simulator: Stop session command received. Halting generation.");
         self.modulator_state = ModulatorState::Idle;
-        tracing::info!("MODULATOR STATE CHANGED TO IDLE !");
+        self.time_of_start = None;
+        self.pending_angles_batch = None;
+        tracing::info!("Simulator modulator state changed to IDLE.");
         Ok(())
     }
 
-    /// Read all angles and measurement results since last read.
-    ///
-    /// This function will generate the right amount of states based on the real time that passed since
-    /// the last call of `read_angles()` or `set_modulator_state()`.
-    ///
-    /// The return vector contains bytes with the encoding:
-    ///
-    /// - bit 0 is the measurement result
-    /// - bit 1 is the basis
-    /// - bit 2 is the state
-    async fn read_angles(&mut self) -> Result<[u8; 1024], HardwareError> {
-        tracing::info!("HW Reading Angles");
-        match &self.modulator_state {
-            ModulatorState::Idle => {
-                tracing::warn!("Modulator State is IDLE !");
-                if self.current_fifo_size < 1024 {
-                    Err(HardwareError::Other {
-                        reason: "Not enough bytes left in the fifo !".to_string(),
-                    })
-                } else {
-                    let v = self.correlations_random(1024).map_err(|e| {
-                        tracing::error!("ERROR : {:?}", e.to_string());
-                        HardwareError::Other {
-                            reason: e.to_string(),
-                        }
-                    })?;
-                    self.current_fifo_size -= 1024;
-                    return TryInto::<[u8; 1024]>::try_into(v).map_err(|e| HardwareError::Other {
-                        reason: format!("Could not convert Vec into array : {:?}", e),
-                    });
-                }
-            }
-            ModulatorState::Random => {
-                tracing::info!("Modulator state: Random");
-                let current_time = self.get_current_time_with_nanos();
-                tracing::info!("Current time : {:#?}", &current_time);
-                let t = current_time - self.time_of_last_read;
-                tracing::info!("Last read time : {:#?}", self.time_of_last_read);
-                let l =
-                    ((t / self.hw.pulse_distance - self.hw.gc_offset as f64) * self.eta) as usize;
+    async fn generate_gcr_and_angles_batch(&mut self) -> Result<Vec<[u8; 8]>, HardwareError> {
+        if self.modulator_state != ModulatorState::Random {
+            return Err(HardwareError::ModulatorStateNotSupported);
+        }
 
-                let size = l + self.current_fifo_size;
-                tracing::info!("Fifo size before generation: {}", self.current_fifo_size);
-                tracing::info!("Fifo size after generation: {size}");
-                if size as u64 > self.fifo_max_size {
-                    return Err(HardwareError::FifoOverflow);
-                }
-                if size < 1024 {
-                    let n = 1024 - size;
-                    let t =
-                        (n as f64 / self.eta + self.hw.gc_offset as f64) * self.hw.pulse_distance;
-                    println!("Need to wait t = {} microsec to generate {} bytes", t, n);
-                    let task = tokio::time::sleep(tokio::time::Duration::from_micros(t as u64));
+        // Calculate the base GC for this batch based on elapsed time.
+        let elapsed_since_start = self
+            .time_of_start
+            .ok_or_else(|| HardwareError::Other {
+                reason: "Simulator session not started (time_of_start is None).".to_string(),
+            })?
+            .elapsed()
+            .as_secs_f64();
 
-                    let (_, res) = tokio::join!(task, self.generate_bytes()); // self.generate_bytes()).await;
-                    match res {
-                        Ok(v) => {
-                            self.current_fifo_size = 0;
-                            return TryInto::<[u8; 1024]>::try_into(v).map_err(|e| {
-                                HardwareError::Other {
-                                    reason: format!("Could not convert Vec into array : {:?}", e),
-                                }
-                            });
-                        }
-                        Err(e) => {
-                            return Err(e);
-                        }
-                    }
-                }
-                self.time_of_last_read = current_time;
-                //self.qb_err = (current_time % 7 as f64) * 0.01 + 0.02;
-                let v = self.correlations_random(1024).map_err(|e| {
-                    println!("ERROR: {:?}", e.to_string());
-                    HardwareError::Other {
-                        reason: e.to_string(),
-                    }
-                })?;
-                self.current_fifo_size = size - 1024;
-                return TryInto::<[u8; 1024]>::try_into(v).map_err(|e| HardwareError::Other {
-                    reason: format!("Could not convert Vec into array : {:?}", e),
-                });
+        let pulse_periods = elapsed_since_start / self.hw.pulse_distance;
+        // gc_offset is u64, ensure it's correctly used in f64 context
+        let effective_periods = pulse_periods - self.hw.gc_offset as f64;
+
+        let calculated_l_float = if effective_periods > 0.0 {
+            effective_periods * self.eta // self.eta is the Simulator's eta
+        } else {
+            0.0
+        };
+        let expected_base_gc = calculated_l_float as u64;
+
+        tracing::debug!(
+            "GC calc: elapsed={:.6}s, pulse_dist={}, gc_offset={}, eta={}",
+            elapsed_since_start,
+            self.hw.pulse_distance,
+            self.hw.gc_offset,
+            self.eta
+        );
+        tracing::debug!(
+            "GC calc: pulse_periods={}, effective_periods={}, l_float={}",
+            pulse_periods,
+            effective_periods,
+            calculated_l_float
+        );
+        tracing::debug!(
+            "GC calc: new_base_gc={}, old_base_gc={}",
+            expected_base_gc,
+            self.global_counter
+        );
+
+        // Update self.global_counter to the calculated base for this batch.
+        // This ensures that GCs start from a time-aware value.
+        self.global_counter = expected_base_gc;
+
+        tracing::info!(
+            "Simulator: Generating GCR and angles batch ({} items). Calculated base GC for this batch: {} (elapsed: {:.3}s)",
+            BATCH_SIZE,
+            self.global_counter,
+            elapsed_since_start
+        );
+
+        // Obtain raw random bytes for events. Each byte from correlations_random is one event (angle + result).
+        let data = self.correlations_random(BATCH_SIZE).map_err(|e| {
+            tracing::error!(
+                "Failed to get raw random bytes from correlations_random: {:?}",
+                e
+            );
+            HardwareError::Other {
+                reason: format!("correlations_random failed: {}", e),
             }
+        })?;
+
+        if data.len() < BATCH_SIZE {
+            return Err(HardwareError::Other {
+                reason: format!(
+                    "correlations_random returned insufficient data: got {}, expected {}",
+                    data.len(),
+                    BATCH_SIZE
+                ),
+            });
+        }
+
+        let mut angles_data = Vec::with_capacity(BATCH_SIZE);
+        let mut click_results_data = Vec::with_capacity(BATCH_SIZE);
+
+        for byte_val in data {
+            // Angle is in bits 7-1, result is in bit 0, as per correlations_random encoding: res | (angle << 1)
+            angles_data.push(byte_val >> 1);
+            click_results_data.push(byte_val & 1);
+        }
+
+        self.pending_angles_batch = Some(angles_data);
+
+        let mut gcr_batch = Vec::with_capacity(2 * BATCH_SIZE);
+        for i in 0..BATCH_SIZE {
+            let gc_value = self.global_counter + i as u64;
+            // click_results_data[i] is now a single bit (0 or 1).
+            let result_bit_for_gcr = click_results_data[i];
+            tracing::debug!(
+                "Simulator: Encoding GC={}, ResultBit={} for GCR item #{}",
+                gc_value,
+                result_bit_for_gcr,
+                i
+            );
+            let gcr_item = self.encode_gcr(gc_value, result_bit_for_gcr);
+
+            // The external `gc` program expects a 16-byte record per GCR.
+            // The first 8 bytes are the GCR, the next 8 are padding.
+            gcr_batch.push(gcr_item);
+            gcr_batch.push([0u8; 8]);
+        }
+        self.global_counter += BATCH_SIZE as u64; // Advance base GC for next batch
+
+        tracing::info!(
+            "Simulator: Generated batch. Next base GC: {}. Pending angles: {} bytes.",
+            self.global_counter,
+            self.pending_angles_batch.as_ref().map_or(0, |v| v.len())
+        );
+        Ok(gcr_batch)
+    }
+
+    fn retrieve_pending_angles_batch(
+        &mut self,
+        received_gc_values: Vec<u64>,
+    ) -> Result<Vec<u8>, HardwareError> {
+        tracing::info!(
+            "Simulator: Received {} GC values from reader. Retrieving pending angles.",
+            received_gc_values.len()
+        );
+        // Validation of received_gc_values can be added here if necessary.
+        if let Some(angles) = self.pending_angles_batch.take() {
+            tracing::info!("Simulator: Returning {} pending angle bytes.", angles.len());
+            Ok(angles)
+        } else {
+            tracing::warn!(
+                "Simulator: retrieve_pending_angles_batch called but no pending angles found."
+            );
+            Err(HardwareError::Other {
+                reason: "No pending angles batch to retrieve.".to_string(),
+            })
         }
     }
-    /// Return the current global counter
-    fn get_global_counter(&mut self) -> Option<u64> {
-        ((self.get_current_time_with_nanos() / self.hw.pulse_distance) as u64)
-            .checked_add(self.hw.gc_offset)
-    }
 
-    fn start_at_gc(&mut self, gc: u64) -> Result<(), HardwareError> {
-        self.reset_seed(gc);
-        self.set_gc(gc);
-        self.reset_time();
-        self.modulator_state = ModulatorState::Random;
+    fn set_angles(&mut self, angles_config: [u8; 4]) -> Result<(), HardwareError> {
+        self.angles = angles_config.to_vec(); // These are configuration angles (bases)
         Ok(())
     }
 
-    fn set_angles(&mut self, angles: [u8; 4]) -> Result<(), HardwareError> {
-        self.angles = angles.to_vec();
-        Ok(())
-    }
+    async fn generate_angles_for_gcs(
+        &mut self,
+        received_gcs: Vec<u64>,
+    ) -> Result<Vec<u8>, HardwareError> {
+        if self.modulator_state != ModulatorState::Random {
+            return Err(HardwareError::ModulatorStateNotSupported);
+        }
+        let current_batch_size = received_gcs.len();
+        if current_batch_size == 0 {
+            // Or handle as appropriate, e.g., return empty Vec or specific error
+            return Err(HardwareError::Other {
+                reason: "Received empty GC batch for angle generation.".to_string(),
+            });
+        }
 
-    async fn generate_bytes(&mut self) -> Result<Vec<u8>, HardwareError> {
-        self.correlations_random(1024).map_err(|e| {
-            println!("ERROR: {:?}", e.to_string());
+        tracing::info!(
+            "Simulator (Source Mode Flow): Generating angles batch ({} items) based on received GCs.",
+            current_batch_size
+        );
+
+        // Obtain raw random bytes for events. Each byte from correlations_random is one event (angle + result).
+        let data = self.correlations_random(current_batch_size).map_err(|e| {
+            tracing::error!(
+                "Failed to get raw random bytes from correlations_random: {:?}",
+                e
+            );
             HardwareError::Other {
-                reason: e.to_string(),
+                reason: format!("correlations_random failed: {}", e),
             }
-        })
-    }
+        })?;
 
-    fn set_role(&mut self, nb_parties: u32, position: u32) -> Result<(), HardwareError> {
-        self.role = Role::OneOfMany(Multiparty {
-            number_of_parties: nb_parties,
-            position,
-        });
-        Ok(())
+        if data.len() < current_batch_size {
+            return Err(HardwareError::Other {
+                reason: format!(
+                    "correlations_random returned insufficient data: got {}, expected {}",
+                    data.len(),
+                    current_batch_size
+                ),
+            });
+        }
+
+        // Extract angles directly. Result bits are not used in this flow by the caller.
+        let angles_data: Vec<u8> = data.iter().map(|byte_val| byte_val >> 1).collect();
+
+        tracing::info!(
+            "Simulator (Source Mode Flow): Generated {} angle bytes.",
+            angles_data.len()
+        );
+        Ok(angles_data)
     }
 }
 
 impl Simulator {
-    /// return time elapsed since start in seconds at nanoseconds.
-    fn get_current_time_with_nanos(&self) -> f64 {
-        let duration = self.now.elapsed();
-        duration.as_secs() as f64 + duration.subsec_nanos() as f64 * 1e-9
+    /// Encodes a Global Counter (GC) and a single result bit into an 8-byte GCR format.
+    /// Inverse of the user-provided `split_gcr` function.
+    /// `split_gcr` implies:
+    ///   `gc_val = (original_gc / 2)` stored in most of the 8 bytes.
+    ///   `buf[6]` bit 0 stores `original_gc % 2`.
+    ///   `buf[6]` bit 1 stores `result_bit`.
+    fn encode_gcr(&self, gc: u64, result_bit: u8) -> [u8; 8] {
+        let shifted_gc = gc >> 1; // gc / 2
+        let gc_lsb = (gc & 1) as u8; // gc % 2
+
+        let mut buffer = shifted_gc.to_le_bytes();
+
+        // Clear bits 0 and 1 of buffer[6] then set them
+        buffer[6] = (buffer[6] & 0b1111_1100) | gc_lsb | ((result_bit & 1) << 1);
+
+        buffer
     }
-    /// Restart RNG with a new seed.
-    fn reset_seed(&mut self, seed: u64) {
-        self.rng = Pcg64Mcg::seed_from_u64(seed);
-    }
+
+    // /// return time elapsed since start in seconds at nanoseconds.
+    // fn get_current_time_with_nanos(&self) -> f64 {
+    //     let duration = self.now.elapsed();
+    //     duration.as_secs() as f64 + duration.subsec_nanos() as f64 * 1e-9
+    // }
+    // /// Restart RNG with a new seed.
+    // fn reset_seed(&mut self, seed: u64) {
+    //     self.rng = Pcg64Mcg::seed_from_u64(seed);
+    // }
     /// Reset time to now
     pub fn reset_time(&mut self) {
         self.now = Instant::now();
@@ -204,11 +329,11 @@ impl Simulator {
     pub fn set_eta(&mut self, eta: f64) {
         self.eta = eta;
     }
-    /// Set the global counter of the simulator
-    pub fn set_gc(&mut self, gc: u64) {
-        self.global_counter = gc;
-        self.reset_seed(gc);
-    }
+    // /// Set the global counter of the simulator - replaced by internal management
+    // pub fn set_gc(&mut self, gc: u64) {
+    //     self.global_counter = gc;
+    //     self.reset_seed(gc);
+    // }
     /// Update the value of qber
     pub fn set_qber(&mut self, qber: f64) {
         self.qb_err = qber;

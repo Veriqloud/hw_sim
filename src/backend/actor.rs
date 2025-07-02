@@ -21,92 +21,93 @@ impl<T: BytesGenerator> Actor<T> {
 
     async fn handle_message(&mut self, msg: ActorMessage) -> Result<(), Error> {
         match msg {
-            ActorMessage::ReadAngles { reply_to } => {
-                tracing::debug!("Processing a ReadAngle");
-                let keys_results = self.simulator.read_angles().await.context(HardwareSnafu);
-
-                tracing::debug!("Processing a ReadAngle : {}", &keys_results.is_ok());
-                let _ = reply_to.send({
-                    match keys_results {
-                        Ok(v) => Ok(v),
-                        Err(e) => Err(e),
-                    }
-                });
-                Ok(())
-            }
-            ActorMessage::GetGlobalCounter { reply_to } => {
-                let gc = self.simulator.get_global_counter();
-                let _ = reply_to.send(gc);
-                Ok(())
-            }
-            ActorMessage::SetRole {
-                nb_parties,
-                position,
-                reply_to,
-            } => {
-                self.simulator
-                    .set_role(nb_parties, position)
-                    .context(HardwareSnafu)?;
-                let _ = reply_to.send(Ok(()));
-                Ok(())
-            }
-            ActorMessage::StartAtGc {
-                global_counter,
-                reply_to,
-            } => {
-                let _ = reply_to.send(
-                    self.simulator
-                        .start_at_gc(global_counter)
-                        .context(HardwareSnafu),
-                );
-                Ok(())
-            }
-            ActorMessage::SetAngles { angles, reply_to } => {
-                let _ = reply_to.send(self.simulator.set_angles(angles).context(HardwareSnafu));
-                Ok(())
-            }
-            ActorMessage::Start { reply_to } => {
-                let _ = reply_to.send(self.simulator.start().context(HardwareSnafu));
-                Ok(())
-            }
-            ActorMessage::Stop { reply_to } => {
-                tracing::debug!("Processing a STOP");
-                let result = self.simulator.stop().context(HardwareSnafu);
-
-                tracing::debug!("Processing a stop : {}", &result.is_ok());
+            ActorMessage::StartSession { reply_to } => {
+                tracing::debug!("SimulatorActor: Processing StartSession");
+                let result = self.simulator.start_session().context(HardwareSnafu);
                 let _ = reply_to.send(result);
                 Ok(())
             }
+            ActorMessage::StopSession { reply_to } => {
+                tracing::debug!("SimulatorActor: Processing StopSession");
+                let result = self.simulator.stop_session().context(HardwareSnafu);
+                let _ = reply_to.send(result);
+                Ok(())
+            }
+            ActorMessage::GenerateGcrAndAnglesBatch { reply_to } => {
+                tracing::debug!("SimulatorActor: Processing GenerateGcrAndAnglesBatch");
+                let result = self
+                    .simulator
+                    .generate_gcr_and_angles_batch()
+                    .await // This is async
+                    .context(HardwareSnafu); // Assuming HardwareSnafu is appropriate
+                let _ = reply_to.send(result);
+                Ok(())
+            }
+            ActorMessage::RetrievePendingAnglesBatch {
+                received_gcs,
+                reply_to,
+            } => {
+                tracing::debug!("SimulatorActor: Processing RetrievePendingAnglesBatch");
+                let result = self
+                    .simulator
+                    .retrieve_pending_angles_batch(received_gcs)
+                    .context(HardwareSnafu); // Assuming HardwareSnafu is appropriate
+                let _ = reply_to.send(result);
+                Ok(())
+            }
+            ActorMessage::SetAngles { angles, reply_to } => {
+                tracing::debug!("SimulatorActor: Processing SetAngles");
+                let result = self.simulator.set_angles(angles).context(HardwareSnafu);
+                let _ = reply_to.send(result);
+                Ok(())
+            }
+            ActorMessage::GenerateAnglesForGcs {
+                received_gcs,
+                reply_to,
+            } => {
+                tracing::debug!("SimulatorActor: Processing GenerateAnglesForGcs");
+                let result = self
+                    .simulator
+                    .generate_angles_for_gcs(received_gcs) // This is async
+                    .await
+                    .context(HardwareSnafu);
+                let _ = reply_to.send(result);
+                Ok(())
+            }
+            // ActorMessage::SetRole was removed
         }
     }
 }
 
+// #[derive(Debug)] // oneshot::Sender is not Debug, consider removing if not strictly needed or use a wrapper
 pub enum ActorMessage {
-    Start {
+    StartSession {
         reply_to: oneshot::Sender<Result<(), Error>>,
     },
-    Stop {
+    StopSession {
         reply_to: oneshot::Sender<Result<(), Error>>,
     },
-    StartAtGc {
-        global_counter: u64,
-        reply_to: oneshot::Sender<Result<(), Error>>,
+    GenerateGcrAndAnglesBatch {
+        reply_to: oneshot::Sender<Result<Vec<[u8; 8]>, Error>>, // Returns GCR data
     },
-    SetAngles {
+    RetrievePendingAnglesBatch {
+        received_gcs: Vec<u64>,
+        reply_to: oneshot::Sender<Result<Vec<u8>, Error>>, // Returns Angles data
+    },
+    SetAngles { // For configuring bases
         angles: [u8; 4],
         reply_to: oneshot::Sender<Result<(), Error>>,
     },
-    ReadAngles {
-        reply_to: oneshot::Sender<Result<[u8; 1024], Error>>,
+    GenerateAnglesForGcs {
+        received_gcs: Vec<u64>,
+        reply_to: oneshot::Sender<Result<Vec<u8>, Error>>, // Returns Angles data
     },
-    GetGlobalCounter {
-        reply_to: oneshot::Sender<Option<u64>>,
-    },
-    SetRole {
-        nb_parties: u32,
-        position: u32,
-        reply_to: oneshot::Sender<Result<(), Error>>,
-    },
+    // SetRole was removed
+    // Old messages like ReadAngles, GetGlobalCounter, SeedAndStartGeneration, Start, Stop might be obsolete
+    // depending on whether the VqSim trait still needs them directly or if all interaction is through new messages.
+    // For now, keeping them if they are still part of VqSim trait used by other parts,
+    // but the primary flow uses the new messages.
+    // Based on the VqSim changes, the old messages are indeed obsolete for the new flow.
 }
 
 pub async fn run_simulator_actor<T: BytesGenerator>(mut actor: Actor<T>) {
@@ -129,42 +130,50 @@ impl ActorHandle {
         Self { sender }
     }
 
-    pub async fn start(&self) -> Result<(), Error> {
+    pub async fn start_session(&self) -> Result<(), Error> {
         let (send, recv) = oneshot::channel();
-        let message = ActorMessage::Start { reply_to: send };
-        let _ = self.sender.send(message).await;
+        let message = ActorMessage::StartSession { reply_to: send };
+        self.sender
+            .send(message)
+            .await
+            .map_err(|e| errors::Error::ActorSend { e: e.to_string() })?;
         recv.await.context(errors::ActorDiedSnafu)?
     }
 
-    pub async fn stop(&self) -> Result<(), Error> {
+    pub async fn stop_session(&self) -> Result<(), Error> {
         let (send, recv) = oneshot::channel();
-        let message = ActorMessage::Stop { reply_to: send };
-        let _ = self.sender.send(message).await;
+        let message = ActorMessage::StopSession { reply_to: send };
+        self.sender
+            .send(message)
+            .await
+            .map_err(|e| errors::Error::ActorSend { e: e.to_string() })?;
         recv.await.context(errors::ActorDiedSnafu)?
     }
 
-    pub async fn start_at_gc(&self, gc: u64) -> Result<(), Error> {
+    pub async fn generate_gcr_and_angles_batch(&self) -> Result<Vec<[u8; 8]>, Error> {
         let (send, recv) = oneshot::channel();
-        let message = ActorMessage::StartAtGc {
-            global_counter: gc,
+        let message = ActorMessage::GenerateGcrAndAnglesBatch { reply_to: send };
+        self.sender
+            .send(message)
+            .await
+            .map_err(|e| errors::Error::ActorSend { e: e.to_string() })?;
+        recv.await.context(errors::ActorDiedSnafu)?
+    }
+
+    pub async fn retrieve_pending_angles_batch(
+        &self,
+        received_gcs: Vec<u64>,
+    ) -> Result<Vec<u8>, Error> {
+        let (send, recv) = oneshot::channel();
+        let message = ActorMessage::RetrievePendingAnglesBatch {
+            received_gcs,
             reply_to: send,
         };
-        let _ = self.sender.send(message).await;
+        self.sender
+            .send(message)
+            .await
+            .map_err(|e| errors::Error::ActorSend { e: e.to_string() })?;
         recv.await.context(errors::ActorDiedSnafu)?
-    }
-
-    pub async fn read_angles(&self) -> Result<[u8; 1024], Error> {
-        let (send, recv) = oneshot::channel();
-        let message = ActorMessage::ReadAngles { reply_to: send };
-        let _ = self.sender.send(message).await;
-        recv.await.context(errors::ActorDiedSnafu)?
-    }
-
-    pub async fn get_global_counter(&self) -> Result<Option<u64>, Error> {
-        let (send, recv) = oneshot::channel();
-        let message = ActorMessage::GetGlobalCounter { reply_to: send };
-        let _ = self.sender.send(message).await;
-        recv.await.context(errors::ActorDiedSnafu)
     }
 
     pub async fn set_angles(&self, angles: [u8; 4]) -> Result<(), Error> {
@@ -177,14 +186,30 @@ impl ActorHandle {
         recv.await.context(errors::ActorDiedSnafu)?
     }
 
-    pub async fn set_role(&self, nb_parties: u32, position: u32) -> Result<(), Error> {
+    pub async fn generate_angles_for_gcs(
+        &self,
+        received_gcs: Vec<u64>,
+    ) -> Result<Vec<u8>, Error> {
         let (send, recv) = oneshot::channel();
-        let message = ActorMessage::SetRole {
-            nb_parties,
-            position,
+        let message = ActorMessage::GenerateAnglesForGcs {
+            received_gcs,
             reply_to: send,
         };
-        let _ = self.sender.send(message).await;
+        self.sender
+            .send(message)
+            .await
+            .map_err(|e| errors::Error::ActorSend { e: e.to_string() })?;
         recv.await.context(errors::ActorDiedSnafu)?
     }
+
+    // pub async fn set_role(&self, nb_parties: u32, position: u32) -> Result<(), Error> { // Removed
+    //     let (send, recv) = oneshot::channel(); // Removed
+    //     let message = ActorMessage::SetRole { // Removed
+    //         nb_parties, // Removed
+    //         position, // Removed
+    //         reply_to: send, // Removed
+    //     }; // Removed
+    //     let _ = self.sender.send(message).await; // Removed
+    //     recv.await.context(errors::ActorDiedSnafu)? // Removed
+    // } // Removed
 }

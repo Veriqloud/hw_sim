@@ -1,23 +1,17 @@
-/// Role defines the role that the simulator incarnates during the key exchange.
-/// It defaults to [Sender]
-#[derive(Debug, PartialEq, Clone)]
-pub enum Role {
-    /// Multiparty: tuple arguments are (number of parties, my position)
-    OneOfMany(Multiparty),
+// Role and Multiparty are removed as SimulatorMode now dictates behavior.
+// The system is fixed to a 2-party setup:
+// - SimulatorMode::Source implies position 0.
+// - SimulatorMode::Detector implies position 1.
+
+/// SimulatorMode defines the operational mode of the simulator (Source or Detector).
+#[derive(Debug, PartialEq, Clone, Copy, serde::Serialize, serde::Deserialize)]
+pub enum SimulatorMode {
+    Source,
+    Detector,
 }
 
-#[derive(Debug, PartialEq, Clone)]
-pub struct Multiparty {
-    pub number_of_parties: u32,
-    /// My position amongst parties
-    pub position: u32,
-}
-
-impl Default for Role {
+impl Default for SimulatorMode {
     fn default() -> Self {
-        Role::OneOfMany(Multiparty {
-            number_of_parties: 1,
-            position: 0,
-        })
+        SimulatorMode::Detector // Default to Detector
     }
 }

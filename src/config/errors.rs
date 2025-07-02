@@ -11,4 +11,6 @@ pub enum Error {
     ParseConfig { source: serde_json::Error },
     #[snafu(display("IO error"))]
     PathNotExist { source: io::Error, path: String },
+    #[snafu(display("Could not create FIFO at {path}: {source}"))]
+    FifoCreation { source: io::Error, path: String },
 }

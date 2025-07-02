@@ -3,8 +3,7 @@ use rand_pcg::Pcg64Mcg;
 use std::time::Instant;
 
 use crate::backend::config::Configuration;
-use crate::backend::role::Multiparty;
-use crate::backend::role::Role;
+use crate::backend::role::SimulatorMode; // Keep SimulatorMode
 
 use super::hardware::builder::HardwareBuilder;
 use super::hardware::modulator_state::ModulatorState;
@@ -28,7 +27,7 @@ pub struct SimulatorBuilder {
     /// Qubit error rate
     pub qb_err: f64,
     pub rng: Pcg64Mcg,
-    pub role: Role,
+    pub mode: SimulatorMode, // Mode is still needed
     pub time_of_last_read: f64,
 }
 
@@ -37,27 +36,24 @@ impl SimulatorBuilder {
         SimulatorBuilder::default()
     }
 
-    pub fn from_config(conf: Configuration) -> Simulator {
+    pub fn from_config(conf: &Configuration, mode: SimulatorMode) -> Simulator {
         let hw = HardwareBuilder::new()
             .with_pulse_distance(conf.pulse_distance)
             .build();
         SimulatorBuilder::default()
             .with_hardware(hw)
             .with_angles(conf.angles.to_owned())
-            .with_role(Role::OneOfMany(Multiparty {
-                number_of_parties: conf.number_of_parties,
-                position: conf.position,
-            }))
             .with_qb_err(conf.qberr)
             .with_eta(conf.eta)
             .with_rng(Pcg64Mcg::seed_from_u64(conf.seed))
+            .with_mode(mode) // Set the mode from the passed argument
             .build()
     }
 
     pub fn build(&self) -> Simulator {
         Simulator {
             hw: self.hw.to_owned(),
-            role: self.role.to_owned(),
+            simulator_mode: self.mode, // Ensure mode is assigned from builder's mode field
             rng: self.rng.to_owned(),
             eta: self.eta,
             qb_err: self.qb_err,
@@ -68,6 +64,8 @@ impl SimulatorBuilder {
             fifo_max_size: self.fifo_max_size,
             current_fifo_size: self.current_fifo_size,
             angles: self.angles.to_owned(),
+            pending_angles_batch: None, // Initialize to None
+            time_of_start: None,        // Initialize to None
         }
     }
 
@@ -81,8 +79,8 @@ impl SimulatorBuilder {
         self
     }
 
-    pub fn with_role(&mut self, role: Role) -> &mut Self {
-        self.role = role;
+    pub fn with_mode(&mut self, mode: SimulatorMode) -> &mut Self {
+        self.mode = mode;
         self
     }
 
@@ -140,7 +138,7 @@ impl Default for SimulatorBuilder {
             now: Instant::now(),
             qb_err: Default::default(),
             rng: Pcg64Mcg::seed_from_u64(10),
-            role: Default::default(),
+            mode: SimulatorMode::default(), // Add mode default
             time_of_last_read: Default::default(),
         }
     }
@@ -148,7 +146,7 @@ impl Default for SimulatorBuilder {
 
 #[cfg(test)]
 pub mod tests {
-    use crate::backend::role::Role;
+    use crate::backend::role::SimulatorMode; // Ensure SimulatorMode is imported
     use crate::backend::simulation::builder::SimulatorBuilder;
     use crate::backend::simulation::hardware::builder::HardwareBuilder;
     use crate::backend::simulation::hardware::modulator_state::ModulatorState;
@@ -166,7 +164,7 @@ pub mod tests {
             .build();
         let sim = SimulatorBuilder::new()
             .with_hardware(hw.clone())
-            .with_role(Role::default())
+            .with_mode(SimulatorMode::Detector) // Add with_mode for testing
             .with_rng(Pcg64Mcg::seed_from_u64(5))
             .with_eta(13.)
             .with_qb_err(42.)
@@ -181,10 +179,7 @@ pub mod tests {
         assert_eq!(
             Simulator {
                 hw,
-                role: Role::OneOfMany(crate::backend::role::Multiparty {
-                    number_of_parties: 1,
-                    position: 0
-                }),
+                simulator_mode: SimulatorMode::Detector, // Add mode to assertion
                 rng: Pcg64Mcg::seed_from_u64(5),
                 eta: 13.,
                 qb_err: 42.,
@@ -195,6 +190,8 @@ pub mod tests {
                 fifo_max_size: 10_000,
                 current_fifo_size: 0,
                 angles: vec![0, 32, 34, 96],
+                pending_angles_batch: None,
+                time_of_start: None,
             },
             sim
         )
