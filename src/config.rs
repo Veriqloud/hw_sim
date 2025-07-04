@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use snafu::ResultExt;
 use std::str::FromStr;
+use std::path::PathBuf;
 
 pub mod errors;
 
@@ -34,10 +35,14 @@ impl Configuration {
 
         serde_json::from_str(config_string.as_str()).context(errors::ParseConfigSnafu)
     }
+    pub fn save_to_file(self, path: &PathBuf){
+        let s = serde_json::to_string_pretty(&self).unwrap();
+        std::fs::write(path, s).expect("writing config to file");
+    }
 }
 
 #[derive(Debug, Deserialize, Serialize, PartialEq, Clone)]
-pub struct LogLevel(String);
+pub struct LogLevel(pub String);
 
 impl Default for LogLevel {
     fn default() -> Self {

@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
 
-#[derive(Debug, Deserialize, Serialize, PartialEq)]
+#[derive(Debug, Deserialize, Serialize, PartialEq, Clone)]
 pub struct Configuration {
     pub angles: Vec<u8>,
     pub seed: u64,
@@ -18,6 +19,16 @@ impl Default for Configuration {
             qberr: 0.,
             pulse_distance: 1e-8,
         }
+    }
+}
+
+impl Configuration{
+    pub fn from_pathbuf(path: &PathBuf) -> Configuration {
+    let contents = std::fs::read_to_string(path)
+        .expect(&format!("failed reading config file: {path:?}"));
+    let config: Configuration =
+        serde_json::from_str(&contents).expect(&format!("failed to parse config: {contents}"));
+    config
     }
 }
 
