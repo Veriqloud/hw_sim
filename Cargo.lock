@@ -285,6 +285,14 @@ dependencies = [
 [[package]]
 name = "configs"
 version = "0.1.0"
+dependencies = [
+ "nix 0.30.1",
+ "serde",
+ "serde_json",
+ "snafu",
+ "tracing",
+ "tracing-subscriber 0.3.19",
+]
 
 [[package]]
 name = "core-foundation-sys"
@@ -904,6 +912,7 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "clap",
+ "configs",
  "futures-util",
  "gc",
  "itertools",

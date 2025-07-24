@@ -28,3 +28,4 @@ uuid = { workspace = true }
 nix = { workspace = true }
 memmap2 = { workspace = true }
 gc = { workspace = true }
+configs = { path = "../configs" }
