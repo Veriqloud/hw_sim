@@ -1,24 +1,25 @@
+pub mod backend;
+pub mod errors;
+pub mod ipc;
+
 use serde::{Deserialize, Serialize};
 use snafu::ResultExt;
 use std::str::FromStr;
-
-pub mod errors;
 
 use self::errors::Error;
 
 #[derive(Debug, Deserialize, Serialize, PartialEq)]
 pub struct Configuration {
-    pub backend_config: crate::backend::config::Configuration,
-    pub ipc_config: crate::ipc::config::Configuration,
+    pub backend_config: backend::Configuration,
+    pub ipc_config: ipc::Configuration,
     pub log_level: LogLevel,
-    // simulator_mode is removed, as it's now determined by the structure of ipc_config
 }
 
 impl Default for Configuration {
     fn default() -> Self {
         Self {
             backend_config: Default::default(),
-            ipc_config: Default::default(), // Defaults to BobIpcConfig
+            ipc_config: Default::default(),
             log_level: Default::default(),
         }
     }
@@ -37,7 +38,7 @@ impl Configuration {
 }
 
 #[derive(Debug, Deserialize, Serialize, PartialEq, Clone)]
-pub struct LogLevel(String);
+pub struct LogLevel(pub String);
 
 impl Default for LogLevel {
     fn default() -> Self {
@@ -77,15 +78,9 @@ mod tests {
     fn test_default_config() {
         let config = Configuration::default();
 
-        assert_eq!(
-            config.ipc_config,
-            crate::ipc::config::Configuration::default()
-        );
+        assert_eq!(config.ipc_config, ipc::Configuration::default());
 
-        assert_eq!(
-            config.backend_config,
-            crate::backend::config::Configuration::default()
-        );
+        assert_eq!(config.backend_config, backend::Configuration::default());
 
         assert_eq!(config.log_level, LogLevel::default());
     }

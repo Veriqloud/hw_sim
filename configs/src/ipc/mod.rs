@@ -97,7 +97,7 @@ impl Configuration {
 
 /// Ensures a regular file exists at the given path with at least the required size,
 /// typically for mock MMIO.
-fn ensure_mock_mmio_file_exists(
+pub fn ensure_mock_mmio_file_exists(
     path_str: &str,
     required_size: usize,
 ) -> Result<(), std::io::Error> {
@@ -195,7 +195,7 @@ fn ensure_mock_mmio_file_exists(
 /// Ensures that a FIFO exists at the given path.
 /// If a file (or old FIFO) exists at the path, it is removed first.
 /// Parent directories are created if they don't exist.
-fn ensure_fifo_exists(path_str: &str) -> Result<(), std::io::Error> {
+pub fn ensure_fifo_exists(path_str: &str) -> Result<(), std::io::Error> {
     let path = Path::new(path_str);
 
     if let Some(parent_dir) = path.parent() {
@@ -231,10 +231,14 @@ mod tests {
 
     #[test]
     fn valid_bob_config() {
-        let config_input_string =
-            std::fs::read_to_string("src/ipc/test_data/valid_config.json").unwrap();
+        let config_json = r#"{
+    "command_path": "/dev/command_test_bob",
+    "angle_file_path": "/dev/c2h_angles_test",
+    "gcr_file_path": "/dev/h2c_gcr_test",
+    "gc_read_file_path": "/dev/h2c_gc_read_test"
+}"#;
 
-        let config_input: Configuration = serde_json::from_str(&config_input_string).unwrap();
+        let config_input: Configuration = serde_json::from_str(&config_json).unwrap();
 
         // Test data file represents a Bob (Detector) config.
         let expected_bob_config = BobIpcConfig {
@@ -249,10 +253,13 @@ mod tests {
 
     #[test]
     fn valid_alice_config() {
-        let config_input_string =
-            std::fs::read_to_string("src/ipc/test_data/valid_alice_config.json").unwrap();
+        let config_json = r#"{
+    "command_path": "/dev/command_test_alice",
+    "angle_file_path": "/dev/c2h_angles_test_alice",
+    "gc_read_file_path": "/dev/h2c_gc_read_test_alice"
+}"#;
 
-        let config_input: Configuration = serde_json::from_str(&config_input_string).unwrap();
+        let config_input: Configuration = serde_json::from_str(&config_json).unwrap();
 
         // Test data file represents an Alice (Source) config.
         let expected_alice_config = AliceIpcConfig {

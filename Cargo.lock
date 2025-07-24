@@ -283,6 +283,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "configs"
+version = "0.1.0"
+dependencies = [
+ "nix 0.30.1",
+ "serde",
+ "serde_json",
+ "snafu",
+ "tracing",
+ "tracing-subscriber 0.3.19",
+]
+
+[[package]]
 name = "core-foundation-sys"
 version = "0.8.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -420,32 +432,6 @@ name = "heck"
 version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea"
-
-[[package]]
-name = "hw_sim"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "clap",
- "futures-util",
- "gc",
- "itertools",
- "memmap2",
- "nix 0.30.1",
- "rand",
- "rand_pcg",
- "serde",
- "serde_json",
- "snafu",
- "tokio",
- "tokio-test",
- "tracing",
- "tracing-appender",
- "tracing-futures",
- "tracing-subscriber 0.3.19",
- "tracing-test",
- "uuid",
-]
 
 [[package]]
 name = "iana-time-zone"
@@ -918,6 +904,33 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9203b8055f63a2a00e2f593bb0510367fe707d7ff1e5c872de2f537b339e5410"
 dependencies = [
  "libc",
+]
+
+[[package]]
+name = "simulator"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "clap",
+ "configs",
+ "futures-util",
+ "gc",
+ "itertools",
+ "memmap2",
+ "nix 0.30.1",
+ "rand",
+ "rand_pcg",
+ "serde",
+ "serde_json",
+ "snafu",
+ "tokio",
+ "tokio-test",
+ "tracing",
+ "tracing-appender",
+ "tracing-futures",
+ "tracing-subscriber 0.3.19",
+ "tracing-test",
+ "uuid",
 ]
 
 [[package]]

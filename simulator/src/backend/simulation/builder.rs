@@ -2,7 +2,7 @@ use rand::SeedableRng;
 use rand_pcg::Pcg64Mcg;
 use std::time::Instant;
 
-use crate::backend::config::Configuration;
+use configs::backend::Configuration;
 use crate::backend::role::SimulatorMode; // Keep SimulatorMode
 
 use super::hardware::builder::HardwareBuilder;

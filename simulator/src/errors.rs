@@ -22,9 +22,9 @@ pub enum Error {
     #[snafu(display("SerdeJSON error {}", source))]
     SerdeJson { source: serde_json::Error },
     #[snafu(display("Configuration loading/parsing error: {source}"))]
-    ConfigLoad { source: crate::config::errors::Error },
+    ConfigLoad { source: configs::errors::Error },
     #[snafu(display("IPC Configuration error: {source}"))]
-    IpcConfig { source: crate::ipc::config::errors::Error },
+    IpcConfig { source: configs::ipc::errors::Error },
     #[snafu(display("Logger initialization error: {source}"))]
     LoggerInitialization { source: tracing_subscriber::filter::LevelParseError },
 }

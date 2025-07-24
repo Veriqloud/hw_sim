@@ -1,13 +1,14 @@
 pub mod backend;
 pub mod cli_args;
-pub mod config;
 pub mod errors;
 pub mod ipc;
 
 use crate::{
     backend::role::SimulatorMode,
-    config::Configuration,
-    ipc::config::{AliceIpcConfig, BobIpcConfig},
+};
+use configs::{
+    Configuration,
+    ipc::{AliceIpcConfig, BobIpcConfig},
 };
 use backend::simulation::builder::SimulatorBuilder;
 use clap::Parser;
@@ -97,8 +98,8 @@ async fn app_main() -> Result<(), crate::errors::Error> {
     );
 
     let simulator_mode = match CONFIG.get().unwrap().ipc_config {
-        ipc::config::Configuration::Alice(_) => SimulatorMode::Source,
-        ipc::config::Configuration::Bob(_) => SimulatorMode::Detector,
+        configs::ipc::Configuration::Alice(_) => SimulatorMode::Source,
+        configs::ipc::Configuration::Bob(_) => SimulatorMode::Detector,
     };
 
     let sim = SimulatorBuilder::from_config(
@@ -109,7 +110,7 @@ async fn app_main() -> Result<(), crate::errors::Error> {
 
     // The logic now diverges based on the IPC configuration type
     match &CONFIG.get().unwrap().ipc_config {
-        ipc::config::Configuration::Alice(alice_config) => {
+        configs::ipc::Configuration::Alice(alice_config) => {
             tracing::info!("Attempting to trigger initial PPS for Alice...");
             if let Err(e) = trigger_pps(&alice_config.command_path).await {
                 tracing::error!(
@@ -122,7 +123,7 @@ async fn app_main() -> Result<(), crate::errors::Error> {
             run_alice_workflow(&alice_config, simu_handle, simulator_mode).await;
             tracing::error!("Alice's workflow function returned unexpectedly.");
         }
-        ipc::config::Configuration::Bob(bob_config) => {
+        configs::ipc::Configuration::Bob(bob_config) => {
             tracing::info!("Attempting to trigger initial PPS for Bob...");
             if let Err(e) = trigger_pps(&bob_config.command_path).await {
                 tracing::error!(
