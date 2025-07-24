@@ -187,11 +187,16 @@ async fn run_alice_workflow(
             }
         };
 
-        let angles_file_writer = match tokio::fs::OpenOptions::new()
-            .write(true)
-            .open(&config.angle_file_path)
-            .await
-        {
+        // Open file handles concurrently to prevent deadlocks with other processes.
+        // The `OpenOptions` structs must outlive the futures created by `open()`.
+        let mut angles_options = tokio::fs::OpenOptions::new();
+        let mut gc_read_options = tokio::fs::OpenOptions::new();
+        let (angles_res, gc_read_res) = tokio::join!(
+            angles_options.write(true).open(&config.angle_file_path),
+            gc_read_options.read(true).open(&config.gc_read_file_path)
+        );
+
+        let angles_file_writer = match angles_res {
             Ok(file) => file,
             Err(e) => {
                 tracing::error!(
@@ -204,13 +209,7 @@ async fn run_alice_workflow(
             }
         };
 
-        let writer_handle = IPCWriterActorHandle::new(gcr_file_writer, angles_file_writer);
-
-        let gc_read_file_handle = match tokio::fs::OpenOptions::new()
-            .read(true)
-            .open(&config.gc_read_file_path)
-            .await
-        {
+        let gc_read_file_handle = match gc_read_res {
             Ok(file) => file,
             Err(e) => {
                 tracing::error!(
@@ -222,6 +221,8 @@ async fn run_alice_workflow(
                 continue;
             }
         };
+
+        let writer_handle = IPCWriterActorHandle::new(gcr_file_writer, angles_file_writer);
 
         tracing::info!("IPC files opened. Initializing IPCReader for Alice.");
         let ipc_reader = ipc::reader::IPCReader::new(
@@ -253,11 +254,18 @@ async fn run_bob_workflow(
 ) {
     tracing::info!("Bob (Detector) workflow: Initializing IPC and starting generation.");
 
-    let angles_file_writer = match tokio::fs::OpenOptions::new()
-        .write(true)
-        .open(&config.angle_file_path)
-        .await
-    {
+    // Open file handles concurrently to prevent deadlocks with other processes.
+    // The `OpenOptions` structs must outlive the futures created by `open()`.
+    let mut angles_options = tokio::fs::OpenOptions::new();
+    let mut gcr_options = tokio::fs::OpenOptions::new();
+    let mut gc_read_options = tokio::fs::OpenOptions::new();
+    let (angles_res, gcr_res, gc_read_res) = tokio::join!(
+        angles_options.write(true).open(&config.angle_file_path),
+        gcr_options.write(true).open(&config.gcr_file_path),
+        gc_read_options.read(true).open(&config.gc_read_file_path)
+    );
+
+    let angles_file_writer = match angles_res {
         Ok(f) => f,
         Err(e) => {
             tracing::error!(
@@ -267,11 +275,8 @@ async fn run_bob_workflow(
             return;
         }
     };
-    let gcr_file_writer = match tokio::fs::OpenOptions::new()
-        .write(true)
-        .open(&config.gcr_file_path)
-        .await
-    {
+
+    let gcr_file_writer = match gcr_res {
         Ok(f) => f,
         Err(e) => {
             tracing::error!("Bob workflow failed to open gcr_file_path: {}. Exiting.", e);
@@ -279,13 +284,7 @@ async fn run_bob_workflow(
         }
     };
 
-    let writer_handle = IPCWriterActorHandle::new(gcr_file_writer, angles_file_writer);
-
-    let gc_read_file_handle = match tokio::fs::OpenOptions::new()
-        .read(true)
-        .open(&config.gc_read_file_path)
-        .await
-    {
+    let gc_read_file_handle = match gc_read_res {
         Ok(f) => f,
         Err(e) => {
             tracing::error!(
@@ -295,6 +294,8 @@ async fn run_bob_workflow(
             return;
         }
     };
+
+    let writer_handle = IPCWriterActorHandle::new(gcr_file_writer, angles_file_writer);
 
     tracing::info!("IPC files opened. Initializing IPCReader for Bob.");
     let ipc_reader = ipc::reader::IPCReader::new(
