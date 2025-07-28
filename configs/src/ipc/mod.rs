@@ -10,14 +10,14 @@ use std::{
 pub mod errors;
 use self::errors::{Error, FifoCreationSnafu, MockMmioFileSetupSnafu};
 
-#[derive(Debug, Deserialize, Serialize, PartialEq)]
+#[derive(Debug, Deserialize, Serialize, PartialEq, Clone)]
 pub struct AliceIpcConfig {
     pub command_path: String,
     pub angle_file_path: String,
     pub gc_read_file_path: String,
 }
 
-#[derive(Debug, Deserialize, Serialize, PartialEq)]
+#[derive(Debug, Deserialize, Serialize, PartialEq, Clone)]
 pub struct BobIpcConfig {
     pub command_path: String,
     pub angle_file_path: String,
@@ -25,7 +25,7 @@ pub struct BobIpcConfig {
     pub gc_read_file_path: String,
 }
 
-#[derive(Debug, Deserialize, Serialize, PartialEq)]
+#[derive(Debug, Deserialize, Serialize, PartialEq, Clone)]
 #[serde(untagged)]
 pub enum Configuration {
     Bob(BobIpcConfig),

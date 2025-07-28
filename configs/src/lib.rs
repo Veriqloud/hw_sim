@@ -8,7 +8,7 @@ use std::str::FromStr;
 
 use self::errors::Error;
 
-#[derive(Debug, Deserialize, Serialize, PartialEq)]
+#[derive(Debug, Deserialize, Serialize, PartialEq, Clone)]
 pub struct Configuration {
     pub backend_config: backend::Configuration,
     pub ipc_config: ipc::Configuration,

@@ -1,2 +1,4 @@
 /target
 .aider*
+justfile
+CLAUDE.md
