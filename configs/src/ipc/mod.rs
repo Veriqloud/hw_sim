@@ -25,6 +25,27 @@ pub struct BobIpcConfig {
     pub gc_read_file_path: String,
 }
 
+impl Default for AliceIpcConfig {
+    fn default() -> Self {
+        AliceIpcConfig {
+            command_path: "/tmp/fpga_alice".to_string(),
+            angle_file_path: "/tmp/gc_alice_angle.fifo".to_string(),
+            gc_read_file_path: "/tmp/gc_alice_gc.fifo".to_string(),
+        }
+    }
+}
+
+impl Default for BobIpcConfig {
+    fn default() -> Self {
+        BobIpcConfig {
+            command_path: "/tmp/fpga_bob".to_string(),
+            angle_file_path: "/tmp/gc_bob_angle.fifo".to_string(),
+            gcr_file_path: "/tmp/gc_bob_gcr.fifo".to_string(),
+            gc_read_file_path: "/tmp/gc_bob_gc.fifo".to_string(),
+        }
+    }
+}
+
 #[derive(Debug, Deserialize, Serialize, PartialEq, Clone)]
 #[serde(untagged)]
 pub enum Configuration {
@@ -34,13 +55,7 @@ pub enum Configuration {
 
 impl Default for Configuration {
     fn default() -> Self {
-        // Default to a Bob (Detector) configuration
-        Configuration::Bob(BobIpcConfig {
-            command_path: "./files/bob_command".to_string(), // Default command path for Bob
-            angle_file_path: "/dev/c2h_angles".to_string(),
-            gcr_file_path: "./files/gcr".to_string(),
-            gc_read_file_path: "./files/gc_read".to_string(),
-        })
+        Configuration::Bob(BobIpcConfig::default())
     }
 }
 
