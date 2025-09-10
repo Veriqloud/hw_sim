@@ -1,0 +1,14 @@
+{
+  "backend_config": {
+    "pulse_distance": 1e-9,
+    "eta": 1.0,
+    "gc_offset": 0
+  },
+  "ipc_config": {
+    "command_path": "/tmp/fpga_alice",
+    "angle_file_path": "/tmp/gc_alice_angle.fifo",
+    "gc_read_file_path": "/tmp/gc_alice_gc.fifo",
+    "gcr_file_path": "/dev/null"
+  },
+  "simulator_mode": "Source"
+}

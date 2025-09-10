@@ -253,67 +253,75 @@ async fn run_bob_workflow(
     simu_handle: backend::actor::ActorHandle,
     simulator_mode: SimulatorMode,
 ) {
-    tracing::info!("Bob (Detector) workflow: Initializing IPC and starting generation.");
+    loop {
+        tracing::info!("Bob (Detector) workflow: Waiting for a controller...");
 
-    // Open file handles concurrently to prevent deadlocks with other processes.
-    // The `OpenOptions` structs must outlive the futures created by `open()`.
-    let mut angles_options = tokio::fs::OpenOptions::new();
-    let mut gcr_options = tokio::fs::OpenOptions::new();
-    let mut gc_read_options = tokio::fs::OpenOptions::new();
-    let (angles_res, gcr_res, gc_read_res) = tokio::join!(
-        angles_options.write(true).open(&config.angle_file_path),
-        gcr_options.write(true).open(&config.gcr_file_path),
-        gc_read_options.read(true).open(&config.gc_read_file_path)
-    );
-
-    let angles_file_writer = match angles_res {
-        Ok(f) => f,
-        Err(e) => {
-            tracing::error!(
-                "Bob workflow failed to open angles_file_path: {}. Exiting.",
-                e
-            );
-            return;
-        }
-    };
-
-    let gcr_file_writer = match gcr_res {
-        Ok(f) => f,
-        Err(e) => {
-            tracing::error!("Bob workflow failed to open gcr_file_path: {}. Exiting.", e);
-            return;
-        }
-    };
-
-    let gc_read_file_handle = match gc_read_res {
-        Ok(f) => f,
-        Err(e) => {
-            tracing::error!(
-                "Bob workflow failed to open gc_read_file_path: {}. Exiting.",
-                e
-            );
-            return;
-        }
-    };
-
-    let writer_handle = IPCWriterActorHandle::new(gcr_file_writer, angles_file_writer);
-
-    tracing::info!("IPC files opened. Initializing IPCReader for Bob.");
-    let ipc_reader = ipc::reader::IPCReader::new(
-        config.command_path.clone(), // Bob now uses a command path
-        gc_read_file_handle,
-        simu_handle,
-        writer_handle,
-        simulator_mode,
-    );
-
-    tracing::info!("Starting continuous generation loop for Bob.");
-    if let Err(e) = ipc_reader.start().await {
-        tracing::error!(
-            "Bob's continuous generation loop exited with an error: {:?}",
-            e
+        // Open file handles concurrently to prevent deadlocks with other processes.
+        // The `OpenOptions` structs must outlive the futures created by `open()`.
+        let mut angles_options = tokio::fs::OpenOptions::new();
+        let mut gcr_options = tokio::fs::OpenOptions::new();
+        let mut gc_read_options = tokio::fs::OpenOptions::new();
+        let (angles_res, gcr_res, gc_read_res) = tokio::join!(
+            angles_options.write(true).open(&config.angle_file_path),
+            gcr_options.write(true).open(&config.gcr_file_path),
+            gc_read_options.read(true).open(&config.gc_read_file_path)
         );
-    } else {
-        tracing::warn!("Bob's IPC reader exited cleanly, which is unexpected.");
+
+        let angles_file_writer = match angles_res {
+            Ok(f) => f,
+            Err(e) => {
+                tracing::error!(
+                    "Failed to open angles_file_path '{}': {}. Retrying in 5s.",
+                    &config.angle_file_path,
+                    e
+                );
+                sleep(Duration::from_secs(5)).await;
+                continue;
+            }
+        };
+
+        let gcr_file_writer = match gcr_res {
+            Ok(f) => f,
+            Err(e) => {
+                tracing::error!("Failed to open gcr_file_path '{}': {}. Retrying in 5s.", &config.gcr_file_path, e);
+                sleep(Duration::from_secs(5)).await;
+                continue;
+            }
+        };
+
+        let gc_read_file_handle = match gc_read_res {
+            Ok(f) => f,
+            Err(e) => {
+                tracing::error!(
+                    "Failed to open gc_read_file_path '{}': {}. Retrying in 5s.",
+                    &config.gc_read_file_path,
+                    e
+                );
+                sleep(Duration::from_secs(5)).await;
+                continue;
+            }
+        };
+
+        let writer_handle = IPCWriterActorHandle::new(gcr_file_writer, angles_file_writer);
+
+        tracing::info!("IPC files opened. Initializing IPCReader for Bob.");
+        let ipc_reader = ipc::reader::IPCReader::new(
+            config.command_path.clone(),
+            gc_read_file_handle,
+            simu_handle.clone(),
+            writer_handle.clone(),
+            simulator_mode.clone(),
+        );
+
+        tracing::info!("Starting IPC command processing loop for Bob.");
+        if let Err(e) = ipc_reader.start().await {
+            tracing::error!(
+                "IPC processing for Bob ended with an error: {:?}. Preparing for new connection.",
+                e
+            );
+        } else {
+            tracing::info!("IPCReader for Bob exited cleanly. Preparing for new connection.");
+        }
+        sleep(Duration::from_secs(5)).await;
     }
 }
