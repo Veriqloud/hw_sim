@@ -183,14 +183,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 tracing::info!("SimuController (Detector): Processing batch #{}", batch_num + 1);
 
                 // Read BATCH_SIZE GCRs
-                let mut gcr_batch_buffer = vec![0u8; BATCH_SIZE * 8];
+                let mut gcr_batch_buffer = vec![0u8; BATCH_SIZE * 16]; // Each GCR is 8 bytes + 8 bytes padding
                 tracing::info!("SimuController (Detector): Attempting to read {} GCR bytes.", gcr_batch_buffer.len());
                 match gcr_file.read_exact(&mut gcr_batch_buffer).await {
                     Ok(_) => {
                         tracing::info!("SimuController (Detector): Successfully read GCR batch.");
                         let mut received_gc_values = Vec::with_capacity(BATCH_SIZE);
-                        for (i, gcr_chunk) in gcr_batch_buffer.chunks_exact(8).enumerate() {
-                            let gcr_item: [u8; 8] = gcr_chunk.try_into().unwrap();
+                        for (i, gcr_chunk) in gcr_batch_buffer.chunks_exact(16).enumerate() {
+                            // The GCR data is the first 8 bytes of the 16-byte padded chunk.
+                            let gcr_item: [u8; 8] = gcr_chunk[0..8].try_into().unwrap();
                             let (gc, result) = split_gcr(gcr_item);
                             received_gc_values.push(gc);
                             if i < 5 { // Log first few GCRs for brevity
@@ -201,17 +202,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         // Send back received GC values
                         tracing::info!("SimuController (Detector): Sending {} GC values back to hw_sim.", received_gc_values.len());
                         for gc_val in received_gc_values {
-                            gc_file.write_u64_le(gc_val).await?;
+                            gc_file.write_all(&gc_val.to_le_bytes()).await?; // Write 8-byte GC
+                            gc_file.write_all(&[0u8; 8]).await?; // Write 8-byte padding
                         }
                         gc_file.flush().await?;
                         tracing::info!("SimuController (Detector): GC values sent.");
 
-                        // Read corresponding angles
-                        let mut angle_batch_buffer = vec![0u8; BATCH_SIZE]; // Expect BATCH_SIZE angle bytes
+                        // Read corresponding packed angles. The simulator packs 2 angle indices into 1 byte.
+                        let mut angle_batch_buffer = vec![0u8; BATCH_SIZE / 2];
                         tracing::info!("SimuController (Detector): Attempting to read {} angle bytes.", angle_batch_buffer.len());
                         match angle_file.read_exact(&mut angle_batch_buffer).await {
                             Ok(_) => {
                                 tracing::info!("SimuController (Detector): Successfully read angle batch ({} bytes).", angle_batch_buffer.len());
+                                // Unpack and log the first few angle indices
+                                let mut unpacked_indices = Vec::with_capacity(BATCH_SIZE);
+                                for &packed_byte in &angle_batch_buffer {
+                                    let index1 = packed_byte & 0x0F;
+                                    let index2 = (packed_byte >> 4) & 0x0F;
+                                    unpacked_indices.push(index1);
+                                    unpacked_indices.push(index2);
+                                }
+
                                 for i in 0..std::cmp::min(5, angle_batch_buffer.len()) { // Log first 5 angles
                                     tracing::debug!("SimuController (Detector): Angle item {}: {}", i, angle_batch_buffer[i]);
                                 }
@@ -261,17 +272,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     gc_values_to_send.len()
                 );
                 for gc_val in &gc_values_to_send {
-                    gc_file.write_u64_le(*gc_val).await?;
+                    gc_file.write_all(&gc_val.to_le_bytes()).await?; // Write 8-byte GC
+                    gc_file.write_all(&[0u8; 8]).await?; // Write 8-byte padding
                 }
                 gc_file.flush().await?;
                 tracing::info!("SimuController (Source): Calculated GC values sent.");
 
-                // Read corresponding angles
-                let mut angle_batch_buffer = vec![0u8; BATCH_SIZE]; // Expect BATCH_SIZE angle bytes
+                // Read corresponding packed angles. The simulator packs 2 angle indices into 1 byte.
+                let mut angle_batch_buffer = vec![0u8; BATCH_SIZE / 2];
                 tracing::info!("SimuController (Source): Attempting to read {} angle bytes.", angle_batch_buffer.len());
                 match angle_file.read_exact(&mut angle_batch_buffer).await {
                     Ok(_) => {
                         tracing::info!("SimuController (Source): Successfully read angle batch ({} bytes).", angle_batch_buffer.len());
+                        // Unpack and log the first few angle indices
+                        let mut unpacked_indices = Vec::with_capacity(BATCH_SIZE);
+                        for &packed_byte in &angle_batch_buffer {
+                            let index1 = packed_byte & 0x0F;
+                            let index2 = (packed_byte >> 4) & 0x0F;
+                            unpacked_indices.push(index1);
+                            unpacked_indices.push(index2);
+                        }
+
                         for i in 0..std::cmp::min(5, angle_batch_buffer.len()) { // Log first 5 angles
                             tracing::debug!("SimuController (Source): Angle item {}: {}", i, angle_batch_buffer[i]);
                         }
@@ -301,6 +322,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     )?;
     tracing::info!("SimuController: Stop command sent via MMIO.");
 
+    // Add a small delay to allow the simulator to process the stop command and close its FIFOs.
+    // This prevents a deadlock where the controller closes its read ends before the simulator is done.
+    sleep(Duration::from_secs(1)).await;
+
     // --- Step 5: Drain remaining data from readable FIFOs ---
     tracing::info!("SimuController: Attempting to empty readable FIFOs...");
     let mut angle_buffer = vec![0u8; BATCH_SIZE]; // Re-use buffer for draining
@@ -308,7 +333,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut drained_something_in_iteration;
     let mut drain_attempts = 0;
-    const MAX_DRAIN_ATTEMPTS: u32 = 20; // Safety break for the drain loop
+    const MAX_DRAIN_ATTEMPTS: u32 = 5; // Safety break for the drain loop
 
     loop {
         if drain_attempts >= MAX_DRAIN_ATTEMPTS {
@@ -323,7 +348,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         // Small delay to allow hw_sim to write if it's still active after stop,
         // and to prevent busy-looping if FIFOs are immediately empty.
-        sleep(Duration::from_millis(50)).await;
+        sleep(Duration::from_millis(100)).await;
 
         // Try draining angle_file
         match tokio::time::timeout(

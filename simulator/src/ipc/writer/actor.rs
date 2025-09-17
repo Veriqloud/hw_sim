@@ -1,21 +1,13 @@
 use std::fmt::Debug;
 use tokio::fs::File;
 use tokio::io::AsyncWriteExt;
-
+use tokio::sync::mpsc;
 use super::errors::Error;
-use tokio::sync::{mpsc, Mutex, OnceCell}; // Removed oneshot components for stop_chan
-
-// Removed: use super::super::super::backend::actor::ActorHandle as SimulatorHandle;
-
-// Static OnceCell for file handles, managed by the actor.
-// CLICK_RESULTS is removed as it's part of GCR stream now.
-static GCR_FILE: OnceCell<Mutex<File>> = OnceCell::const_new(); // Renamed
-static ANGLES_FILE: OnceCell<Mutex<File>> = OnceCell::const_new();
 
 pub struct IPCWriterActor {
     receiver: mpsc::Receiver<WriterMessage>,
-    // simulator_handle is no longer needed here as the writer only writes what it's told.
-    // stop_chan is removed; the actor stops when its message channel closes or by a specific message if needed.
+    gcr_file: File,
+    angles_file: File,
 }
 
 impl IPCWriterActor {
@@ -24,16 +16,7 @@ impl IPCWriterActor {
         angles_file: File, // For angles data
         receiver: mpsc::Receiver<WriterMessage>,
     ) -> Self {
-        // Attempt to set the file handles. If already set (e.g. actor restarted without process restart),
-        // this might panic. Consider using get_or_init for robustness if actor can be re-created.
-        GCR_FILE // Corrected: Use the already renamed static variable GCR_FILE
-            .set(Mutex::new(gcr_file))
-            .expect("GCR_FILE static OnceCell already set"); // Corrected: Expect message for GCR_FILE
-        ANGLES_FILE
-            .set(Mutex::new(angles_file))
-            .expect("ANGLES_FILE static OnceCell already set");
-
-        IPCWriterActor { receiver }
+        IPCWriterActor { receiver, gcr_file, angles_file }
     }
 
     async fn handle_message(&mut self, msg: WriterMessage) -> Result<(), Error> {
@@ -43,31 +26,22 @@ impl IPCWriterActor {
                     "WriterActor: Received WriteGcrBatch ({} items).",
                     gcr_data_batch.len()
                 );
-                if let Some(file_mutex) = GCR_FILE.get() {
-                    // Renamed
-                    let mut file_guard = file_mutex.lock().await;
-                    for gcr_item in gcr_data_batch {
-                        file_guard.write_all(&gcr_item).await.map_err(|e| {
-                            tracing::error!("Failed to write GCR item: {:?}", e);
-                            Error::Channel {
-                                e: format!("Failed to write GCR item to FIFO: {}", e),
-                            }
-                        })?;
-                    }
-                    file_guard.flush().await.map_err(|e| {
-                        // Ensure data is sent
-                        tracing::error!("Failed to flush GCR FIFO: {:?}", e);
+                for gcr_item in gcr_data_batch {
+                    self.gcr_file.write_all(&gcr_item).await.map_err(|e| {
+                        tracing::error!("Failed to write GCR item: {:?}", e);
                         Error::Channel {
-                            e: format!("Failed to flush GCR FIFO: {}", e),
+                            e: format!("Failed to write GCR item to FIFO: {}", e),
                         }
                     })?;
-                    tracing::info!("WriterActor: Successfully wrote GCR batch.");
-                } else {
-                    tracing::error!("WriterActor: GCR_FILE not initialized."); // Renamed
-                    return Err(Error::Channel {
-                        e: "GCR_FILE not initialized".to_string(), // Renamed
-                    });
                 }
+                self.gcr_file.flush().await.map_err(|e| {
+                    // Ensure data is sent
+                    tracing::error!("Failed to flush GCR FIFO: {:?}", e);
+                    Error::Channel {
+                        e: format!("Failed to flush GCR FIFO: {}", e),
+                    }
+                })?;
+                tracing::info!("WriterActor: Successfully wrote GCR batch.");
                 Ok(())
             }
             WriterMessage::WriteAnglesBatch(angles_batch) => {
@@ -75,7 +49,7 @@ impl IPCWriterActor {
                     "WriterActor: Received WriteAnglesBatch ({} raw bytes), packing them.",
                     angles_batch.len()
                 );
-
+                
                 // Pack angle indices. The raw data from the simulator has the 2-bit index
                 // in bits 1 and 2 of each byte. We take two such bytes and pack their
                 // indices into a single byte.
@@ -100,32 +74,24 @@ impl IPCWriterActor {
                     );
                 }
 
-                if let Some(file_mutex) = ANGLES_FILE.get() {
-                    let mut file_guard = file_mutex.lock().await;
-                    tracing::info!(
-                        "WriterActor: Writing {} packed angle bytes.",
-                        packed_angles.len()
-                    );
-                    file_guard.write_all(&packed_angles).await.map_err(|e| {
-                        tracing::error!("Failed to write packed angles batch: {:?}", e);
-                        Error::Channel {
-                            e: format!("Failed to write packed angles batch to FIFO: {}", e),
-                        }
-                    })?;
-                    file_guard.flush().await.map_err(|e| {
-                        // Ensure data is sent
-                        tracing::error!("Failed to flush packed angles FIFO: {:?}", e);
-                        Error::Channel {
-                            e: format!("Failed to flush packed angles FIFO: {}", e),
-                        }
-                    })?;
-                    tracing::info!("WriterActor: Successfully wrote packed angles batch.");
-                } else {
-                    tracing::error!("WriterActor: ANGLES_FILE not initialized.");
-                    return Err(Error::Channel {
-                        e: "ANGLES_FILE not initialized".to_string(),
-                    });
-                }
+                tracing::info!(
+                    "WriterActor: Writing {} packed angle bytes.",
+                    packed_angles.len()
+                );
+                self.angles_file.write_all(&packed_angles).await.map_err(|e| {
+                    tracing::error!("Failed to write packed angles batch: {:?}", e);
+                    Error::Channel {
+                        e: format!("Failed to write packed angles batch to FIFO: {}", e),
+                    }
+                })?;
+                self.angles_file.flush().await.map_err(|e| {
+                    // Ensure data is sent
+                    tracing::error!("Failed to flush packed angles FIFO: {:?}", e);
+                    Error::Channel {
+                        e: format!("Failed to flush packed angles FIFO: {}", e),
+                    }
+                })?;
+                tracing::info!("WriterActor: Successfully wrote packed angles batch.");
                 Ok(())
             }
             WriterMessage::Stop => {
@@ -171,9 +137,12 @@ impl IPCWriterActorHandle {
         gcr_file: File, // Renamed parameter to match usage
         angles_file: File,
     ) -> Self {
-        let (sender, receiver) = mpsc::channel(8); // Channel for messages to the actor
-        let actor = IPCWriterActor::new(gcr_file, angles_file, receiver); // Use gcr_file
-        tokio::spawn(run_writer_actor(actor)); // Spawn the actor task
+        let (sender, receiver) = mpsc::channel(8);
+        let actor = IPCWriterActor::new(gcr_file, angles_file, receiver);
+
+        // Spawn the actor task to run in the background.
+        tokio::spawn(run_writer_actor(actor));
+
         Self { sender }
     }
 
