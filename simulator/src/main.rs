@@ -174,6 +174,17 @@ async fn run_alice_workflow(
     loop {
         tracing::info!("Alice (Source) workflow: Waiting for a controller...");
 
+        // Reset FIFOs for the new session.
+        tracing::info!("Resetting FIFOs for new Alice session.");
+        if let Err(e) = CONFIG.get().unwrap().ipc_config.reset_ipc_fifos() {
+            tracing::error!(
+                "Failed to reset FIFOs for Alice: {}. Retrying in 500ms.",
+                e
+            );
+            sleep(Duration::from_millis(500)).await;
+            continue;
+        }
+
         // For Alice, the GCR file is not used for writing data, but the IPCWriterActor
         // requires a file handle. We open /dev/null as a black hole for any potential writes.
         let gcr_file_writer = match tokio::fs::OpenOptions::new()
@@ -201,11 +212,11 @@ async fn run_alice_workflow(
             Ok(file) => file,
             Err(e) => {
                 tracing::error!(
-                    "Failed to open angles_file_path '{}': {}. Retrying in 5s.",
+                    "Failed to open angles_file_path '{}': {}. Retrying in 500ms.",
                     &config.angle_file_path,
                     e
                 );
-                sleep(Duration::from_secs(5)).await;
+                sleep(Duration::from_millis(500)).await;
                 continue;
             }
         };
@@ -214,11 +225,11 @@ async fn run_alice_workflow(
             Ok(file) => file,
             Err(e) => {
                 tracing::error!(
-                    "Failed to open gc_read_file '{}': {}. Retrying in 5s.",
+                    "Failed to open gc_read_file '{}': {}. Retrying in 500ms.",
                     &config.gc_read_file_path,
                     e
                 );
-                sleep(Duration::from_secs(5)).await;
+                sleep(Duration::from_millis(500)).await;
                 continue;
             }
         };
@@ -243,7 +254,7 @@ async fn run_alice_workflow(
         } else {
             tracing::info!("IPCReader for Alice exited cleanly. Preparing for new connection.");
         }
-        sleep(Duration::from_secs(5)).await;
+        sleep(Duration::from_millis(250)).await;
     }
 }
 
@@ -255,6 +266,17 @@ async fn run_bob_workflow(
 ) {
     loop {
         tracing::info!("Bob (Detector) workflow: Waiting for a controller...");
+
+        // Reset FIFOs for the new session.
+        tracing::info!("Resetting FIFOs for new Bob session.");
+        if let Err(e) = CONFIG.get().unwrap().ipc_config.reset_ipc_fifos() {
+            tracing::error!(
+                "Failed to reset FIFOs for Bob: {}. Retrying in 500ms.",
+                e
+            );
+            sleep(Duration::from_millis(500)).await;
+            continue;
+        }
 
         // Open file handles concurrently to prevent deadlocks with other processes.
         // The `OpenOptions` structs must outlive the futures created by `open()`.
@@ -271,11 +293,11 @@ async fn run_bob_workflow(
             Ok(f) => f,
             Err(e) => {
                 tracing::error!(
-                    "Failed to open angles_file_path '{}': {}. Retrying in 5s.",
+                    "Failed to open angles_file_path '{}': {}. Retrying in 500ms.",
                     &config.angle_file_path,
                     e
                 );
-                sleep(Duration::from_secs(5)).await;
+                sleep(Duration::from_millis(500)).await;
                 continue;
             }
         };
@@ -283,8 +305,8 @@ async fn run_bob_workflow(
         let gcr_file_writer = match gcr_res {
             Ok(f) => f,
             Err(e) => {
-                tracing::error!("Failed to open gcr_file_path '{}': {}. Retrying in 5s.", &config.gcr_file_path, e);
-                sleep(Duration::from_secs(5)).await;
+                tracing::error!("Failed to open gcr_file_path '{}': {}. Retrying in 500ms.", &config.gcr_file_path, e);
+                sleep(Duration::from_millis(500)).await;
                 continue;
             }
         };
@@ -293,11 +315,11 @@ async fn run_bob_workflow(
             Ok(f) => f,
             Err(e) => {
                 tracing::error!(
-                    "Failed to open gc_read_file_path '{}': {}. Retrying in 5s.",
+                    "Failed to open gc_read_file_path '{}': {}. Retrying in 500ms.",
                     &config.gc_read_file_path,
                     e
                 );
-                sleep(Duration::from_secs(5)).await;
+                sleep(Duration::from_millis(500)).await;
                 continue;
             }
         };
@@ -322,6 +344,6 @@ async fn run_bob_workflow(
         } else {
             tracing::info!("IPCReader for Bob exited cleanly. Preparing for new connection.");
         }
-        sleep(Duration::from_secs(5)).await;
+        sleep(Duration::from_millis(250)).await;
     }
 }

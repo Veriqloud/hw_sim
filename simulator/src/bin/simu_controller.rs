@@ -103,8 +103,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "SimuController: Opening angle file: {}",
         config.ipc_config.angle_file_path
     );
+    // Open for read+write to prevent blocking, even though we only read.
+    // The write flag is for the OS, not for our application logic.
     let mut angle_file = OpenOptions::new()
         .read(true)
+        .write(true)
         .open(&config.ipc_config.angle_file_path)
         .await?;
     tracing::info!("SimuController: Opened angle file successfully.");
@@ -114,8 +117,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "SimuController: Opening GCR file: {}",
         config.ipc_config.gcr_file_path
     );
+    // Open for read+write to prevent blocking.
     let mut gcr_file = OpenOptions::new()
         .read(true)
+        .write(true)
         .open(&config.ipc_config.gcr_file_path)
         .await?;
     tracing::info!("SimuController: Opened GCR file successfully.");
@@ -125,8 +130,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "SimuController: Opening GC file (from gc_read_file_path): {}",
         config.ipc_config.gc_read_file_path
     );
+    // Open for read+write to prevent blocking, even though we only write.
     let mut gc_file = OpenOptions::new()
         .write(true)
+        .read(true)
         .open(&config.ipc_config.gc_read_file_path)
         .await?;
     tracing::info!("SimuController: Opened GC file successfully.");
@@ -209,24 +216,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         tracing::info!("SimuController (Detector): GC values sent.");
 
                         // Read corresponding packed angles. The simulator packs 2 angle indices into 1 byte.
-                        let mut angle_batch_buffer = vec![0u8; BATCH_SIZE / 2];
+                        let mut angle_batch_buffer = vec![0u8; BATCH_SIZE / 2]; // Read packed bytes without padding
                         tracing::info!("SimuController (Detector): Attempting to read {} angle bytes.", angle_batch_buffer.len());
                         match angle_file.read_exact(&mut angle_batch_buffer).await {
                             Ok(_) => {
                                 tracing::info!("SimuController (Detector): Successfully read angle batch ({} bytes).", angle_batch_buffer.len());
                                 // Unpack and log the first few angle indices
                                 let mut unpacked_indices = Vec::with_capacity(BATCH_SIZE);
-                                for &packed_byte in &angle_batch_buffer {
-                                    let index1 = packed_byte & 0x0F;
-                                    let index2 = (packed_byte >> 4) & 0x0F;
+                                for (i, &packed_byte) in angle_batch_buffer.iter().enumerate() {
+                                    // hw_sim packs two 2-bit indices into a single byte with the format: 0b00xx_00yy
+                                    // index1 is 'yy' (lower 2 bits)
+                                    // index2 is 'xx' (bits 4 and 5)
+                                    let index1 = packed_byte & 0b0000_0011;       // Extracts 'yy' - CORRECTED MASK
+                                    let index2 = (packed_byte >> 4) & 0b0000_0011; // Extracts 'xx'
                                     unpacked_indices.push(index1);
                                     unpacked_indices.push(index2);
                                 }
 
                                 for i in 0..std::cmp::min(5, angle_batch_buffer.len()) { // Log first 5 angles
                                     tracing::debug!("SimuController (Detector): Angle item {}: {}", i, angle_batch_buffer[i]);
+                                    tracing::debug!("SimuController (Detector): Unpacked Angle Indices {}: {} & {}", i*2, unpacked_indices[i*2], unpacked_indices[i*2+1]);
                                 }
-                                // Process/log angles if needed
                             }
                             Err(e) => {
                                 tracing::error!("SimuController (Detector): Failed to read angle batch: {}", e);
@@ -279,24 +289,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 tracing::info!("SimuController (Source): Calculated GC values sent.");
 
                 // Read corresponding packed angles. The simulator packs 2 angle indices into 1 byte.
-                let mut angle_batch_buffer = vec![0u8; BATCH_SIZE / 2];
+                let mut angle_batch_buffer = vec![0u8; BATCH_SIZE / 2]; // Read packed bytes without padding
                 tracing::info!("SimuController (Source): Attempting to read {} angle bytes.", angle_batch_buffer.len());
                 match angle_file.read_exact(&mut angle_batch_buffer).await {
                     Ok(_) => {
                         tracing::info!("SimuController (Source): Successfully read angle batch ({} bytes).", angle_batch_buffer.len());
                         // Unpack and log the first few angle indices
                         let mut unpacked_indices = Vec::with_capacity(BATCH_SIZE);
-                        for &packed_byte in &angle_batch_buffer {
-                            let index1 = packed_byte & 0x0F;
-                            let index2 = (packed_byte >> 4) & 0x0F;
+                        for (i, &packed_byte) in angle_batch_buffer.iter().enumerate() {
+                            // hw_sim packs two 2-bit indices into a single byte with the format: 0b00xx_00yy
+                            // index1 is 'yy' (lower 2 bits)
+                            // index2 is 'xx' (bits 4 and 5)
+                            let index1 = packed_byte & 0b0000_0011;       // Extracts 'yy' - CORRECTED MASK
+                            let index2 = (packed_byte >> 4) & 0b0000_0011; // Extracts 'xx'
                             unpacked_indices.push(index1);
                             unpacked_indices.push(index2);
                         }
 
                         for i in 0..std::cmp::min(5, angle_batch_buffer.len()) { // Log first 5 angles
-                            tracing::debug!("SimuController (Source): Angle item {}: {}", i, angle_batch_buffer[i]);
+                            tracing::debug!("SimuController (Source): Packed Angle Byte {}: {:#04x}, Unpacked Indices: {} & {}", i, angle_batch_buffer[i], unpacked_indices[i*2], unpacked_indices[i*2+1]);
                         }
-                        // Process/log angles if needed
                     }
                     Err(e) => {
                         tracing::error!("SimuController (Source): Failed to read angle batch: {}", e);
@@ -326,87 +338,87 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // This prevents a deadlock where the controller closes its read ends before the simulator is done.
     sleep(Duration::from_secs(1)).await;
 
-    // --- Step 5: Drain remaining data from readable FIFOs ---
-    tracing::info!("SimuController: Attempting to empty readable FIFOs...");
-    let mut angle_buffer = vec![0u8; BATCH_SIZE]; // Re-use buffer for draining
-    let mut gcr_buffer_drain = vec![0u8; BATCH_SIZE * 8]; // Buffer for draining GCR
+    // // --- Step 5: Drain remaining data from readable FIFOs ---
+    // tracing::info!("SimuController: Attempting to empty readable FIFOs...");
+    // let mut angle_buffer = vec![0u8; BATCH_SIZE]; // Re-use buffer for draining
+    // let mut gcr_buffer_drain = vec![0u8; BATCH_SIZE * 8]; // Buffer for draining GCR
 
-    let mut drained_something_in_iteration;
-    let mut drain_attempts = 0;
-    const MAX_DRAIN_ATTEMPTS: u32 = 5; // Safety break for the drain loop
+    // let mut drained_something_in_iteration;
+    // let mut drain_attempts = 0;
+    // const MAX_DRAIN_ATTEMPTS: u32 = 5; // Safety break for the drain loop
 
-    loop {
-        if drain_attempts >= MAX_DRAIN_ATTEMPTS {
-            tracing::warn!(
-                "SimuController: Max drain attempts ({}) reached. Stopping drain.",
-                MAX_DRAIN_ATTEMPTS
-            );
-            break;
-        }
-        drain_attempts += 1;
-        drained_something_in_iteration = false;
+    // loop {
+    //     if drain_attempts >= MAX_DRAIN_ATTEMPTS {
+    //         tracing::warn!(
+    //             "SimuController: Max drain attempts ({}) reached. Stopping drain.",
+    //             MAX_DRAIN_ATTEMPTS
+    //         );
+    //         break;
+    //     }
+    //     drain_attempts += 1;
+    //     drained_something_in_iteration = false;
 
-        // Small delay to allow hw_sim to write if it's still active after stop,
-        // and to prevent busy-looping if FIFOs are immediately empty.
-        sleep(Duration::from_millis(100)).await;
+    //     // Small delay to allow hw_sim to write if it's still active after stop,
+    //     // and to prevent busy-looping if FIFOs are immediately empty.
+    //     sleep(Duration::from_millis(100)).await;
 
-        // Try draining angle_file
-        match tokio::time::timeout(
-            Duration::from_millis(50),
-            angle_file.read(&mut angle_buffer),
-        )
-        .await
-        {
-            Ok(Ok(0)) => {
-                tracing::debug!("SimuController: Angle file (drain) - EOF.");
-            }
-            Ok(Ok(n)) => {
-                tracing::info!("SimuController: Drained {} bytes from angle_file.", n);
-                drained_something_in_iteration = true;
-            }
-            Ok(Err(e)) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                tracing::debug!("SimuController: Angle file (drain) - No data (WouldBlock).");
-            }
-            Ok(Err(e)) => {
-                tracing::warn!("SimuController: Error draining angle_file: {}", e);
-            }
-            Err(_) => {
-                tracing::debug!("SimuController: Angle file (drain) - Read attempt timed out.");
-            }
-        }
+    //     // Try draining angle_file
+    //     match tokio::time::timeout(
+    //         Duration::from_millis(50),
+    //         angle_file.read(&mut angle_buffer),
+    //     )
+    //     .await
+    //     {
+    //         Ok(Ok(0)) => {
+    //             tracing::debug!("SimuController: Angle file (drain) - EOF.");
+    //         }
+    //         Ok(Ok(n)) => {
+    //             tracing::info!("SimuController: Drained {} bytes from angle_file.", n);
+    //             drained_something_in_iteration = true;
+    //         }
+    //         Ok(Err(e)) if e.kind() == std::io::ErrorKind::WouldBlock => {
+    //             tracing::debug!("SimuController: Angle file (drain) - No data (WouldBlock).");
+    //         }
+    //         Ok(Err(e)) => {
+    //             tracing::warn!("SimuController: Error draining angle_file: {}", e);
+    //         }
+    //         Err(_) => {
+    //             tracing::debug!("SimuController: Angle file (drain) - Read attempt timed out.");
+    //         }
+    //     }
 
-        // Try draining gcr_file only if in Detector mode (as it's opened in that mode)
-        if config.simulator_mode == SimulatorMode::Detector {
-            match tokio::time::timeout(
-                Duration::from_millis(50),
-                gcr_file.read(&mut gcr_buffer_drain),
-            )
-            .await
-            {
-                Ok(Ok(0)) => {
-                    tracing::debug!("SimuController: GCR file (drain) - EOF.");
-                }
-                Ok(Ok(n)) => {
-                    tracing::info!("SimuController: Drained {} bytes from gcr_file.", n);
-                    drained_something_in_iteration = true;
-                }
-                Ok(Err(e)) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                    tracing::debug!("SimuController: GCR file (drain) - No data (WouldBlock).");
-                }
-                Ok(Err(e)) => {
-                    tracing::warn!("SimuController: Error draining gcr_file: {}", e);
-                }
-                Err(_) => {
-                    tracing::debug!("SimuController: GCR file (drain) - Read attempt timed out.");
-                }
-            }
-        }
+    //     // Try draining gcr_file only if in Detector mode (as it's opened in that mode)
+    //     if config.simulator_mode == SimulatorMode::Detector {
+    //         match tokio::time::timeout(
+    //             Duration::from_millis(50),
+    //             gcr_file.read(&mut gcr_buffer_drain),
+    //         )
+    //         .await
+    //         {
+    //             Ok(Ok(0)) => {
+    //                 tracing::debug!("SimuController: GCR file (drain) - EOF.");
+    //             }
+    //             Ok(Ok(n)) => {
+    //                 tracing::info!("SimuController: Drained {} bytes from gcr_file.", n);
+    //                 drained_something_in_iteration = true;
+    //             }
+    //             Ok(Err(e)) if e.kind() == std::io::ErrorKind::WouldBlock => {
+    //                 tracing::debug!("SimuController: GCR file (drain) - No data (WouldBlock).");
+    //             }
+    //             Ok(Err(e)) => {
+    //                 tracing::warn!("SimuController: Error draining gcr_file: {}", e);
+    //             }
+    //             Err(_) => {
+    //                 tracing::debug!("SimuController: GCR file (drain) - Read attempt timed out.");
+    //             }
+    //         }
+    //     }
 
-        if !drained_something_in_iteration {
-            tracing::info!("SimuController: Draining complete (no data read from FIFOs in last iteration).");
-            break;
-        }
-    }
+    //     if !drained_something_in_iteration {
+    //         tracing::info!("SimuController: Draining complete (no data read from FIFOs in last iteration).");
+    //         break;
+    //     }
+    // }
 
         tracing::info!("SimuController: Main logic finished. Files will be dropped now.");
         Ok(())
