@@ -108,6 +108,34 @@ impl Configuration {
         tracing::info!("IPC FIFOs setup complete for IPC config.");
         Ok(())
     }
+
+    pub fn reset_ipc_fifos(&self) -> Result<(), Error> {
+        tracing::info!("Resetting IPC FIFOs by recreating them...");
+        match self {
+            Configuration::Alice(config) => {
+                let ipc_fifo_paths = [&config.angle_file_path, &config.gc_read_file_path];
+                for path_str in &ipc_fifo_paths {
+                    ensure_fifo_exists(path_str).context(FifoCreationSnafu {
+                        path: path_str.to_string(),
+                    })?;
+                }
+            }
+            Configuration::Bob(config) => {
+                let ipc_fifo_paths = [
+                    &config.angle_file_path,
+                    &config.gcr_file_path,
+                    &config.gc_read_file_path,
+                ];
+                for path_str in &ipc_fifo_paths {
+                    ensure_fifo_exists(path_str).context(FifoCreationSnafu {
+                        path: path_str.to_string(),
+                    })?;
+                }
+            }
+        }
+        tracing::info!("IPC FIFOs reset complete.");
+        Ok(())
+    }
 }
 
 /// Ensures a regular file exists at the given path with at least the required size,
