@@ -1,0 +1,44 @@
+name: Build hw_sim Binaries
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: 'Branch to build from'
+        required: true
+        default: 'master'
+
+jobs:
+  build:
+    name: Build and Upload Binaries
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.branch || github.ref }}
+
+      - name: Set up SSH for private dependencies
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.SSH_PKEY }}
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update && sudo apt-get install -y build-essential
+
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build binaries
+        run: cargo build --package simulator --release --verbose
+
+      - name: Upload binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: hw_sim-binaries
+          path: |
+            target/release/simulator
+            target/release/simu_controller
