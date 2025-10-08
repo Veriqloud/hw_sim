@@ -19,12 +19,15 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.branch || github.ref }}
-
-      - name: Set up SSH for private dependencies
-        uses: webfactory/ssh-agent@v0.9.0
+      - name: Log the checked out branch
+        run: |
+          echo "The workflow is running on branch: ${{ github.ref }}"
+          echo "The manually selected branch is: ${{ github.event.inputs.branch }}"
+      - name: Set up ssh
+        uses: MrSquaare/ssh-setup-action@v3
         with:
-          ssh-private-key: ${{ secrets.SSH_PKEY }}
-
+          host: github.com
+          private-key: ${{ secrets.SSH_PKEY }}
       - name: Install system dependencies
         run: |
           sudo apt-get update && sudo apt-get install -y build-essential
