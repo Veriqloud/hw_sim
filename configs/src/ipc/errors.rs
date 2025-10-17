@@ -8,4 +8,6 @@ pub enum Error {
     FifoCreation { source: io::Error, path: String },
     #[snafu(display("Could not create or setup mock MMIO file at '{path}': {source}"))]
     MockMmioFileSetup { source: io::Error, path: String },
+    #[snafu(display("Could not create hw params file at '{path}': {source}"))]
+    HwParamsFileCreation { source: io::Error, path: String },
 }

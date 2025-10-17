@@ -10,7 +10,8 @@
     "command_path": "/tmp/fpga_bob",
     "angle_file_path": "/tmp/gc_bob_angle.fifo",
     "gcr_file_path": "/tmp/gc_bob_gcr.fifo",
-    "gc_read_file_path": "/tmp/gc_bob_gc.fifo"
+    "gc_read_file_path": "/tmp/gc_bob_gc.fifo",
+    "hw_params_file_path": "/tmp/hw_params_bob.fifo"
   },
   "log_level": "Info"
 }

@@ -10,7 +10,8 @@
         "command_path": "/dev/xdma0_user",
         "angle_file_path": "/tmp/gc_alice_angle.fifo",
         "gc_read_file_path": "/tmp/gc_alice_gc.fifo",
-        "gcr_file_path": "/tmp/gc_bob_gcr"
+        "gcr_file_path": "/tmp/gc_bob_gcr",
+        "hw_params_file_path": "/tmp/hw_params_alice.fifo"
     },
     "log_level": "Debug",
     "simulator_mode": "Source"

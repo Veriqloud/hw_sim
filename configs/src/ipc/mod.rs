@@ -8,13 +8,14 @@ use std::{
 };
 
 pub mod errors;
-use self::errors::{Error, FifoCreationSnafu, MockMmioFileSetupSnafu};
+use self::errors::{Error, FifoCreationSnafu, MockMmioFileSetupSnafu, HwParamsFileCreationSnafu};
 
 #[derive(Debug, Deserialize, Serialize, PartialEq, Clone)]
 pub struct AliceIpcConfig {
     pub command_path: String,
     pub angle_file_path: String,
     pub gc_read_file_path: String,
+    pub hw_params_file_path: String,
 }
 
 #[derive(Debug, Deserialize, Serialize, PartialEq, Clone)]
@@ -23,6 +24,7 @@ pub struct BobIpcConfig {
     pub angle_file_path: String,
     pub gcr_file_path: String,
     pub gc_read_file_path: String,
+    pub hw_params_file_path: String,
 }
 
 impl Default for AliceIpcConfig {
@@ -31,6 +33,7 @@ impl Default for AliceIpcConfig {
             command_path: "/tmp/fpga_alice".to_string(),
             angle_file_path: "/tmp/gc_alice_angle.fifo".to_string(),
             gc_read_file_path: "/tmp/gc_alice_gc.fifo".to_string(),
+            hw_params_file_path: "/tmp/hw_params_alice.fifo".to_string(),
         }
     }
 }
@@ -42,6 +45,7 @@ impl Default for BobIpcConfig {
             angle_file_path: "/tmp/gc_bob_angle.fifo".to_string(),
             gcr_file_path: "/tmp/gc_bob_gcr.fifo".to_string(),
             gc_read_file_path: "/tmp/gc_bob_gc.fifo".to_string(),
+            hw_params_file_path: "/tmp/hw_params_bob.fifo".to_string(),
         }
     }
 }
@@ -70,6 +74,12 @@ impl Configuration {
                         path: path_str.to_string(),
                     })?;
                 }
+                // hw params file
+                let hw_params_file_path = &config.hw_params_file_path;
+                ensure_hw_params_file_exists(hw_params_file_path)
+                    .context(HwParamsFileCreationSnafu{
+                        path: hw_params_file_path.to_string(),
+                    })?;
 
                 if config.command_path.starts_with("./files/")
                     || config.command_path.starts_with("/tmp/")
@@ -92,6 +102,12 @@ impl Configuration {
                         path: path_str.to_string(),
                     })?;
                 }
+                // hw params file
+                let hw_params_file_path = &config.hw_params_file_path;
+                ensure_hw_params_file_exists(hw_params_file_path)
+                    .context(HwParamsFileCreationSnafu{
+                        path: hw_params_file_path.to_string(),
+                    })?;
 
                 // Also setup command path if it's a mock MMIO file for Bob
                 if config.command_path.starts_with("./files/")
@@ -137,6 +153,40 @@ impl Configuration {
         Ok(())
     }
 }
+
+
+/// Ensure the hardware textfile exists
+pub fn ensure_hw_params_file_exists(path_str: &str) -> Result<(), std::io::Error> {
+    let path = Path::new(path_str);
+    
+    if let Some(parent_dir) = path.parent() {
+        if !parent_dir.exists() {
+            fs::create_dir_all(parent_dir)?;
+            tracing::info!("Created directory for hw parameters file: {:?}", parent_dir);
+        }
+    }
+    match fs::remove_file(path) {
+        Ok(_) => tracing::info!("Removed existing hw params file: {}", path_str),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            tracing::debug!(
+                "No existing hw params file at: {}. Proceeding to create.",
+                path_str
+            );
+        }
+        Err(e) => {
+            tracing::error!("Error removing existing hw params file at {}: {}", path_str, e);
+            return Err(e);
+        }
+    }
+
+    tracing::info!("Creating hw params file at: {} with mode 0666", path_str);
+    let mut file = std::fs::File::create(&path)?;
+    file.write_all(b"\
+        fiber_delay\t100\ndecoy_delay\t100")?;
+
+    Ok(())
+}
+
 
 /// Ensures a regular file exists at the given path with at least the required size,
 /// typically for mock MMIO.
