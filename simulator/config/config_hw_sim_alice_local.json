@@ -10,7 +10,7 @@
     "command_path": "/tmp/fpga_alice",
     "angle_file_path": "/tmp/gc_alice_angle.fifo",
     "gc_read_file_path": "/tmp/gc_alice_gc.fifo",
-    "hw_params_file_path": "/tmp/hw_params_alice.fifo"
+    "hw_params_file_path": "/tmp/hw_params_alice.txt"
   },
   "log_level": "Debug"
 }

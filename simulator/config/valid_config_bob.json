@@ -11,7 +11,7 @@
         "angle_file_path": "./files/angle_bob",
         "gc_read_file_path": "./files/gc_bob",
         "gcr_file_path": "./files/gcr_bob",
-        "hw_params_file_path": "/tmp/hw_params_bob.fifo"
+        "hw_params_file_path": "/tmp/hw_params_bob.txt"
     },
     "log_level": "Debug",
     "simulator_mode": "Detector"
