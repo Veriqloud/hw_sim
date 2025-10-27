@@ -61,6 +61,7 @@ impl SimulatorBuilder {
             pending_angles_batch: None, // Initialize to None
             time_of_start: None,        // Initialize to None
             use_gcr_padding: self.use_gcr_padding,
+            last_event_count: 0, // Initialize to 0
         }
     }
 
@@ -177,6 +178,7 @@ pub mod tests {
                 pending_angles_batch: None,
                 time_of_start: None,
                 use_gcr_padding: false,
+                last_event_count: 0,
             },
             sim
         )

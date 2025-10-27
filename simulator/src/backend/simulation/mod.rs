@@ -7,7 +7,7 @@ use async_trait::async_trait;
 use crate::backend::protocols::random::CorrelationsRandom;
 use crate::backend::role::SimulatorMode; // SimulatorMode is still needed
 use rand_pcg::Pcg64Mcg;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use self::hardware::errors::HardwareError;
 use self::hardware::modulator_state::ModulatorState;
@@ -36,6 +36,7 @@ pub struct Simulator {
     pub(crate) rng: Pcg64Mcg,
     pub simulator_mode: SimulatorMode, // Added simulator_mode field
     pub(crate) time_of_start: Option<Instant>, // To track time for potential future use or logging
+    pub(crate) last_event_count: u64, // Tracks total events generated in a session
     pub(crate) use_gcr_padding: bool,
 }
 
@@ -81,6 +82,7 @@ impl VqSim for Simulator {
         self.modulator_state = ModulatorState::Random; // Ready to generate
         self.pending_angles_batch = None;
         self.reset_time(); // Reset self.now for internal time calculations if any
+        self.last_event_count = 0; // Reset event counter for the new session
                            // RNG will use the seed it was initialized with.
                            // To change the seed, a different mechanism would be needed (e.g. a dedicated actor message or config reload).
                            // self.reset_seed(self.time_of_start.unwrap().elapsed().as_nanos() as u64); // Keep seed constant for now
@@ -101,54 +103,46 @@ impl VqSim for Simulator {
             return Err(HardwareError::ModulatorStateNotSupported);
         }
 
-        // Calculate the base GC for this batch based on elapsed time.
-        let elapsed_since_start = self
-            .time_of_start
+        let time_of_start = self.time_of_start
             .ok_or_else(|| HardwareError::Other {
                 reason: "Simulator session not started (time_of_start is None).".to_string(),
-            })?
-            .elapsed()
-            .as_secs_f64();
+            })?;
 
-        let pulse_periods = elapsed_since_start / self.hw.pulse_distance;
-        // gc_offset is u64, ensure it's correctly used in f64 context
-        let effective_periods = pulse_periods - self.hw.gc_offset as f64;
-
-        let calculated_l_float = if effective_periods > 0.0 {
-            effective_periods * self.eta // self.eta is the Simulator's eta
+        // --- Rate Limiting Logic ---
+        // Calculate the theoretical time at which the *next* batch should be finished.
+        let target_event_count = self.last_event_count + BATCH_SIZE as u64;
+        let target_duration_from_start = if self.eta > 0.0 {
+            // Time = (Number of events / eta) * pulse_distance
+            let time_in_secs = (target_event_count as f64 / self.eta) * self.hw.pulse_distance;
+            Duration::from_secs_f64(time_in_secs)
         } else {
-            0.0
+            // If eta is 0, no events are ever generated. We can just proceed without delay.
+            Duration::ZERO
         };
-        let expected_base_gc = calculated_l_float as u64;
 
-        tracing::debug!(
-            "GC calc: elapsed={:.6}s, pulse_dist={}, gc_offset={}, eta={}",
-            elapsed_since_start,
-            self.hw.pulse_distance,
-            self.hw.gc_offset,
-            self.eta
-        );
-        tracing::debug!(
-            "GC calc: pulse_periods={}, effective_periods={}, l_float={}",
-            pulse_periods,
-            effective_periods,
-            calculated_l_float
-        );
-        tracing::debug!(
-            "GC calc: new_base_gc={}, old_base_gc={}",
-            expected_base_gc,
-            self.global_counter
-        );
+        if target_duration_from_start > Duration::ZERO {
+            let elapsed_since_start = time_of_start.elapsed();
+            if elapsed_since_start < target_duration_from_start {
+                let sleep_duration = target_duration_from_start - elapsed_since_start;
+                tracing::debug!("Rate limiting: sleeping for {:?}", sleep_duration);
+            tokio::time::sleep(sleep_duration).await;
+        }
+        }
 
-        // Update self.global_counter to the calculated base for this batch.
-        // This ensures that GCs start from a time-aware value.
-        self.global_counter = expected_base_gc;
-
+        // The base global counter for this batch is simply the number of events
+        // generated before this batch.
+        let base_gc_for_batch = self.last_event_count;
+        
+        tracing::debug!(
+            "Generating batch. Target event count: {}, Target time: {:?}, Current elapsed: {:?}",
+            target_event_count,
+            target_duration_from_start,
+            time_of_start.elapsed()
+        );
         tracing::info!(
-            "Simulator: Generating GCR and angles batch ({} items). Calculated base GC for this batch: {} (elapsed: {:.3}s)",
+            "Simulator: Generating GCR and angles batch ({} items). Base GC for this batch: {}",
             BATCH_SIZE,
-            self.global_counter,
-            elapsed_since_start
+            base_gc_for_batch
         );
 
         // Obtain raw random bytes for events. Each byte from correlations_random is one event (angle + result).
@@ -190,7 +184,7 @@ impl VqSim for Simulator {
         };
         let mut gcr_batch = Vec::with_capacity(capacity);
         for i in 0..BATCH_SIZE {
-            let gc_value = self.global_counter + i as u64;
+            let gc_value = base_gc_for_batch + i as u64;
             // click_results_data[i] is now a single bit (0 or 1).
             let result_bit_for_gcr = click_results_data[i];
             tracing::debug!(
@@ -208,11 +202,11 @@ impl VqSim for Simulator {
                 gcr_batch.push([0u8; 8]);
             }
         }
-        self.global_counter += BATCH_SIZE as u64; // Advance base GC for next batch
+        self.last_event_count += BATCH_SIZE as u64; // Increment total generated events
 
         tracing::info!(
-            "Simulator: Generated batch. Next base GC: {}. Pending angles: {} bytes.",
-            self.global_counter,
+            "Simulator: Generated batch. Total events generated: {}. Pending angles: {} bytes.",
+            self.last_event_count,
             self.pending_angles_batch.as_ref().map_or(0, |v| v.len())
         );
         Ok(gcr_batch)
@@ -253,6 +247,7 @@ impl VqSim for Simulator {
             return Err(HardwareError::ModulatorStateNotSupported);
         }
         let current_batch_size = received_gcs.len();
+
         if current_batch_size == 0 {
             // Or handle as appropriate, e.g., return empty Vec or specific error
             return Err(HardwareError::Other {
@@ -288,6 +283,8 @@ impl VqSim for Simulator {
 
         // Extract angles directly. Result bits are not used in this flow by the caller.
         let angles_data: Vec<u8> = data.iter().map(|byte_val| byte_val >> 1).collect();
+
+        self.last_event_count += current_batch_size as u64; // Increment total generated events
 
         tracing::info!(
             "Simulator (Source Mode Flow): Generated {} angle bytes.",
