@@ -328,7 +328,8 @@ mod tests {
     "command_path": "/dev/command_test_bob",
     "angle_file_path": "/dev/c2h_angles_test",
     "gcr_file_path": "/dev/h2c_gcr_test",
-    "gc_read_file_path": "/dev/h2c_gc_read_test"
+    "gc_read_file_path": "/dev/h2c_gc_read_test",
+    "hw_params_file_path": "/tmp/hw_params_bob.fifo"
 }"#;
 
         let config_input: Configuration = serde_json::from_str(&config_json).unwrap();
@@ -339,6 +340,7 @@ mod tests {
             angle_file_path: "/dev/c2h_angles_test".to_owned(),
             gcr_file_path: "/dev/h2c_gcr_test".to_owned(),
             gc_read_file_path: "/dev/h2c_gc_read_test".to_owned(),
+            hw_params_file_path: "/tmp/hw_params_bob.fifo".to_owned(),
         };
 
         assert_eq!(Configuration::Bob(expected_bob_config), config_input);
@@ -349,7 +351,8 @@ mod tests {
         let config_json = r#"{
     "command_path": "/dev/command_test_alice",
     "angle_file_path": "/dev/c2h_angles_test_alice",
-    "gc_read_file_path": "/dev/h2c_gc_read_test_alice"
+    "gc_read_file_path": "/dev/h2c_gc_read_test_alice",
+    "hw_params_file_path": "/tmp/hw_params_alice.fifo"
 }"#;
 
         let config_input: Configuration = serde_json::from_str(&config_json).unwrap();
@@ -359,6 +362,7 @@ mod tests {
             command_path: "/dev/command_test_alice".to_owned(),
             angle_file_path: "/dev/c2h_angles_test_alice".to_owned(),
             gc_read_file_path: "/dev/h2c_gc_read_test_alice".to_owned(),
+            hw_params_file_path: "/tmp/hw_params_alice.fifo".to_owned(),
         };
 
         assert_eq!(Configuration::Alice(expected_alice_config), config_input);

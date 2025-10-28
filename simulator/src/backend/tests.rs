@@ -1,6 +1,6 @@
 #![allow(unused_imports)]
 
-use core::time;
+use core::time::Duration;
 use std::{collections::HashMap, f64::consts::PI, thread, time::Instant};
 
 use crate::backend::role::SimulatorMode;
@@ -301,4 +301,75 @@ async fn qkd_statistics_asymmetric_workflow_ok() {
             );
         }
     }
+}
+
+#[tokio::test]
+async fn test_generation_rate_with_slow_pulse_distance() {
+    // This test verifies that the simulator's generation rate correctly
+    // adheres to the configured `pulse_distance` and `eta`.
+
+    let pulse_distance = 1e-3; // A slow pulse distance (1ms per ideal event)
+    let eta = 1.0; // 100% efficiency for simpler calculation
+    let seed = 123;
+    let num_batches = 5; // Number of batches to generate
+    let batch_size = crate::backend::simulation::BATCH_SIZE; // 1024 events per batch
+    let total_events = num_batches * batch_size;
+
+    let hw = HardwareBuilder::new()
+        .with_pulse_distance(pulse_distance)
+        .build();
+
+    let mut sim = SimulatorBuilder::new()
+        .with_hardware(hw)
+        .with_rng(Pcg64Mcg::seed_from_u64(seed))
+        .with_mode(SimulatorMode::Detector) // Mode doesn't affect rate calculation directly
+        .with_eta(eta)
+        .with_qb_err(0.0) // QBER doesn't affect rate
+        .with_angles(vec![0, 32, 64, 96])
+        .with_modulator_state(ModulatorState::Random)
+        .with_gcr_padding(false) // Padding doesn't affect rate
+        .build();
+
+    sim.start_session().unwrap();
+
+    let start_time = Instant::now();
+
+    for i in 0..num_batches {
+        println!("Generating batch {}/{}", i + 1, num_batches);
+        let gcr_batch = sim.generate_gcr_and_angles_batch().await.unwrap();
+        assert_eq!(gcr_batch.len(), batch_size);
+        // In a real scenario, we'd also retrieve angles, but for rate testing,
+        // just generating the GCR is sufficient to trigger the rate limiting.
+        sim.retrieve_pending_angles_batch(vec![]).unwrap();
+    }
+
+    let elapsed_time = start_time.elapsed();
+
+    sim.stop_session().unwrap();
+
+    // Expected time calculation based on the simulator's rate limiting logic:
+    // time_in_secs = (target_event_count / eta) * pulse_distance
+    let expected_time_secs = (total_events as f64 / eta) * pulse_distance;
+    let expected_duration = Duration::from_secs_f64(expected_time_secs);
+
+    println!(
+        "Generated {} events in {:?}. Expected time: {:?}",
+        total_events, elapsed_time, expected_duration
+    );
+
+    // Allow for a small tolerance (e.g., 10% or 200ms, whichever is larger)
+    let tolerance = Duration::from_millis(200).max(expected_duration / 10);
+    assert!(
+        elapsed_time >= expected_duration,
+        "Elapsed time ({:?}) was less than expected ({:?})",
+        elapsed_time,
+        expected_duration
+    );
+    assert!(
+        elapsed_time <= expected_duration + tolerance,
+        "Elapsed time ({:?}) was significantly more than expected ({:?} + {:?})",
+        elapsed_time,
+        expected_duration,
+        tolerance
+    );
 }
