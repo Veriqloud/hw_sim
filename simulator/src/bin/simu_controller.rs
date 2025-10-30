@@ -143,7 +143,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             MMIO_MAP_LEN,
             COMMAND_TRIGGER_ADDR_BYTES,
             1, // Value for Start
-        );
+        )?;
         sleep(std_time::Duration::from_millis(100)).await;
         tracing::info!("SimuController: Start commands sent via MMIO.");
 
@@ -229,7 +229,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let mut gcr_file = OpenOptions::new()
                     .read(true)
                     .write(true)
-                    .open(config.ipc_config.gcr_file_path.as_ref().ok_or("gcr_file_path missing for Bob")?)
+                    .open(
+                        config
+                            .ipc_config
+                            .gcr_file_path
+                            .as_ref()
+                            .ok_or("gcr_file_path missing for Bob")?,
+                    )
                     .await?;
                 let mut gc_file = OpenOptions::new()
                     .write(true)
