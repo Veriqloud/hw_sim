@@ -6,6 +6,7 @@ use async_trait::async_trait;
 
 use crate::backend::protocols::random::CorrelationsRandom;
 use crate::backend::role::SimulatorMode; // SimulatorMode is still needed
+use rand::SeedableRng;
 use rand_pcg::Pcg64Mcg;
 use std::time::{Duration, Instant};
 
@@ -34,9 +35,10 @@ pub struct Simulator {
     /// Qubit error rate
     pub qb_err: f64,
     pub(crate) rng: Pcg64Mcg,
+    pub(crate) seed: u64,
     pub simulator_mode: SimulatorMode, // Added simulator_mode field
     pub(crate) time_of_start: Option<Instant>, // To track time for potential future use or logging
-    pub(crate) last_event_count: u64, // Tracks total events generated in a session
+    pub(crate) last_event_count: u64,  // Tracks total events generated in a session
     pub(crate) use_gcr_padding: bool,
 }
 
@@ -83,9 +85,7 @@ impl VqSim for Simulator {
         self.pending_angles_batch = None;
         self.reset_time(); // Reset self.now for internal time calculations if any
         self.last_event_count = 0; // Reset event counter for the new session
-                           // RNG will use the seed it was initialized with.
-                           // To change the seed, a different mechanism would be needed (e.g. a dedicated actor message or config reload).
-                           // self.reset_seed(self.time_of_start.unwrap().elapsed().as_nanos() as u64); // Keep seed constant for now
+        self.rng = Pcg64Mcg::seed_from_u64(self.seed); // Re-seed the RNG
         Ok(())
     }
 
@@ -103,10 +103,9 @@ impl VqSim for Simulator {
             return Err(HardwareError::ModulatorStateNotSupported);
         }
 
-        let time_of_start = self.time_of_start
-            .ok_or_else(|| HardwareError::Other {
-                reason: "Simulator session not started (time_of_start is None).".to_string(),
-            })?;
+        let time_of_start = self.time_of_start.ok_or_else(|| HardwareError::Other {
+            reason: "Simulator session not started (time_of_start is None).".to_string(),
+        })?;
 
         // --- Rate Limiting Logic ---
         // Calculate the theoretical time at which the *next* batch should be finished.
@@ -125,14 +124,14 @@ impl VqSim for Simulator {
             if elapsed_since_start < target_duration_from_start {
                 let sleep_duration = target_duration_from_start - elapsed_since_start;
                 tracing::debug!("Rate limiting: sleeping for {:?}", sleep_duration);
-            tokio::time::sleep(sleep_duration).await;
-        }
+                tokio::time::sleep(sleep_duration).await;
+            }
         }
 
         // The base global counter for this batch is simply the number of events
         // generated before this batch.
         let base_gc_for_batch = self.last_event_count;
-        
+
         tracing::debug!(
             "Generating batch. Target event count: {}, Target time: {:?}, Current elapsed: {:?}",
             target_event_count,

@@ -24,6 +24,7 @@ pub struct SimulatorBuilder {
     /// Qubit error rate
     pub qb_err: f64,
     pub rng: Pcg64Mcg,
+    pub seed: u64,
     pub mode: SimulatorMode, // Mode is still needed
     pub use_gcr_padding: bool,
 }
@@ -43,6 +44,7 @@ impl SimulatorBuilder {
             .with_qb_err(conf.qberr)
             .with_eta(conf.eta)
             .with_rng(Pcg64Mcg::seed_from_u64(conf.seed))
+            .with_seed(conf.seed)
             .with_mode(mode) // Set the mode from the passed argument
             .build()
     }
@@ -53,6 +55,7 @@ impl SimulatorBuilder {
             simulator_mode: self.mode, // Ensure mode is assigned from builder's mode field
             rng: self.rng.to_owned(),
             eta: self.eta,
+            seed: self.seed,
             qb_err: self.qb_err,
             now: self.now,
             global_counter: self.global_counter,
@@ -82,6 +85,11 @@ impl SimulatorBuilder {
 
     pub fn with_rng(&mut self, rng: Pcg64Mcg) -> &mut Self {
         self.rng = rng;
+        self
+    }
+
+    pub fn with_seed(&mut self, seed: u64) -> &mut Self {
+        self.seed = seed;
         self
     }
 
@@ -126,7 +134,8 @@ impl Default for SimulatorBuilder {
             angles: Default::default(),
             now: Instant::now(),
             qb_err: Default::default(),
-            rng: Pcg64Mcg::seed_from_u64(10),
+            rng: Pcg64Mcg::seed_from_u64(42),
+            seed: 42,
             mode: SimulatorMode::default(), // Add mode default
             use_gcr_padding: true,
         }
@@ -160,6 +169,7 @@ pub mod tests {
             .with_now(now)
             .with_global_counter(99)
             .with_modulator_state(ModulatorState::Random)
+            .with_seed(5)
             .with_angles(vec![0, 32, 34, 96])
             .with_gcr_padding(false)
             .build();
@@ -172,6 +182,7 @@ pub mod tests {
                 eta: 13.,
                 qb_err: 42.,
                 now,
+                seed: 5,
                 global_counter: 99,
                 modulator_state: ModulatorState::Random,
                 angles: vec![0, 32, 34, 96],
