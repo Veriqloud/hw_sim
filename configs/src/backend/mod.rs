@@ -7,6 +7,8 @@ pub struct Configuration {
     pub eta: f64,
     pub qberr: f64,
     pub pulse_distance: f64,
+    #[serde(default = "default_rate_limiting")]
+    pub rate_limiting: bool,
 }
 
 impl Default for Configuration {
@@ -17,8 +19,13 @@ impl Default for Configuration {
             eta: 0.,
             qberr: 0.,
             pulse_distance: 1e-8,
+            rate_limiting: default_rate_limiting(),
         }
     }
+}
+
+fn default_rate_limiting() -> bool {
+    true
 }
 
 #[cfg(test)]
@@ -30,7 +37,8 @@ mod tests {
     "seed": 33,
     "eta": 0.1,
     "qberr": 0.02,
-    "pulse_distance": 1e-8
+    "pulse_distance": 1e-8,
+    "rate_limiting": false
 }"#;
 
         let config_input: crate::backend::Configuration =
@@ -45,6 +53,7 @@ mod tests {
                 eta: 0.1,
                 qberr: 0.02,
                 pulse_distance: 1e-8,
+                rate_limiting: false,
             },
             config_input
         );
