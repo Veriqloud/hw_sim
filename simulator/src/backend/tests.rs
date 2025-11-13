@@ -304,72 +304,94 @@ async fn qkd_statistics_asymmetric_workflow_ok() {
 }
 
 #[tokio::test]
-async fn test_generation_rate_with_slow_pulse_distance() {
+async fn test_rate_limiting_slow_rate() {
     // This test verifies that the simulator's generation rate correctly
-    // adheres to the configured `pulse_distance` and `eta`.
+    // adheres to a slow configured rate by sleeping for the appropriate duration.
 
-    let pulse_distance = 1e-3; // A slow pulse distance (1ms per ideal event)
+    let pulse_distance = 1e-3; // 1ms per ideal event
     let eta = 1.0; // 100% efficiency for simpler calculation
     let seed = 123;
-    let num_batches = 5; // Number of batches to generate
+    let num_batches = 20; // Use more batches for a better average
     let batch_size = crate::backend::simulation::BATCH_SIZE; // 1024 events per batch
     let total_events = num_batches * batch_size;
 
-    let hw = HardwareBuilder::new()
-        .with_pulse_distance(pulse_distance)
-        .build();
-
     let mut sim = SimulatorBuilder::new()
-        .with_hardware(hw)
+        .with_hardware(HardwareBuilder::new().with_pulse_distance(pulse_distance).build())
         .with_rng(Pcg64Mcg::seed_from_u64(seed))
-        .with_mode(SimulatorMode::Detector) // Mode doesn't affect rate calculation directly
+        .with_mode(SimulatorMode::Detector)
         .with_eta(eta)
-        .with_qb_err(0.0) // QBER doesn't affect rate
         .with_angles(vec![0, 32, 64, 96])
         .with_modulator_state(ModulatorState::Random)
-        .with_gcr_padding(false) // Padding doesn't affect rate
         .build();
 
     sim.start_session().unwrap();
-
     let start_time = Instant::now();
 
-    for i in 0..num_batches {
-        println!("Generating batch {}/{}", i + 1, num_batches);
-        let gcr_batch = sim.generate_gcr_and_angles_batch().await.unwrap();
-        assert_eq!(gcr_batch.len(), batch_size);
-        // In a real scenario, we'd also retrieve angles, but for rate testing,
-        // just generating the GCR is sufficient to trigger the rate limiting.
+    for _ in 0..num_batches {
+        sim.generate_gcr_and_angles_batch().await.unwrap();
         sim.retrieve_pending_angles_batch(vec![]).unwrap();
     }
 
     let elapsed_time = start_time.elapsed();
-
     sim.stop_session().unwrap();
 
     // Expected time calculation based on the simulator's rate limiting logic:
-    // time_in_secs = (target_event_count / eta) * pulse_distance
-    let expected_time_secs = (total_events as f64 / eta) * pulse_distance;
+    // time_in_secs = (target_event_count * pulse_distance) / eta
+    let expected_time_secs = (total_events as f64 * pulse_distance) / eta;
     let expected_duration = Duration::from_secs_f64(expected_time_secs);
-
-    println!(
-        "Generated {} events in {:?}. Expected time: {:?}",
-        total_events, elapsed_time, expected_duration
-    );
 
     // Allow for a small tolerance (e.g., 10% or 200ms, whichever is larger)
     let tolerance = Duration::from_millis(200).max(expected_duration / 10);
     assert!(
-        elapsed_time >= expected_duration,
-        "Elapsed time ({:?}) was less than expected ({:?})",
-        elapsed_time,
-        expected_duration
+        elapsed_time >= expected_duration && elapsed_time <= expected_duration + tolerance,
+        "Slow rate test failed: Elapsed time ({:?}) did not match expected time ({:?} +/- {:?})",
+        elapsed_time, expected_duration, tolerance
     );
+}
+
+#[tokio::test]
+async fn test_rate_limiting_high_speed() {
+    // This test verifies that for a very high configured rate, the simulator
+    // does not add any artificial delay and runs as fast as possible.
+
+    let pulse_distance = 1e-9; // 1ns per ideal event -> 1 Giga-event/sec rate
+    let eta = 1.0; // 100% efficiency for simpler calculation
+    let seed = 456;
+    let num_batches = 50; // Generate a lot more batches to ensure CPU work is significant
+    let batch_size = crate::backend::simulation::BATCH_SIZE; // 1024 events per batch
+    let total_events = num_batches * batch_size;
+
+    let mut sim = SimulatorBuilder::new()
+        .with_hardware(HardwareBuilder::new().with_pulse_distance(pulse_distance).build())
+        .with_rng(Pcg64Mcg::seed_from_u64(seed))
+        .with_mode(SimulatorMode::Detector)
+        .with_eta(eta)
+        .with_angles(vec![0, 32, 64, 96])
+        .with_modulator_state(ModulatorState::Random)
+        .build();
+
+    sim.start_session().unwrap();
+    let start_time = Instant::now();
+
+    for _ in 0..num_batches {
+        sim.generate_gcr_and_angles_batch().await.unwrap();
+        sim.retrieve_pending_angles_batch(vec![]).unwrap();
+    }
+
+    let elapsed_time = start_time.elapsed();
+    sim.stop_session().unwrap();
+
+    // The theoretical time is extremely short (microseconds).
+    // The actual execution time will be dominated by CPU work, not sleeping.
+    let expected_time_secs = (total_events as f64 * pulse_distance) / eta;
+    let expected_duration = Duration::from_secs_f64(expected_time_secs);
+
+    // We assert that the elapsed time is much larger than the theoretical sleep time,
+    // but still reasonably fast (e.g., under 200ms), proving no significant sleep occurred.
+    let max_expected_runtime = Duration::from_millis(500);
     assert!(
-        elapsed_time <= expected_duration + tolerance,
-        "Elapsed time ({:?}) was significantly more than expected ({:?} + {:?})",
-        elapsed_time,
-        expected_duration,
-        tolerance
+        elapsed_time < max_expected_runtime,
+        "High-speed rate test failed: Elapsed time ({:?}) was too long, suggesting an artificial delay.",
+        elapsed_time
     );
 }

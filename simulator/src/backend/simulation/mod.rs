@@ -112,7 +112,7 @@ impl VqSim for Simulator {
         let target_event_count = self.last_event_count + BATCH_SIZE as u64;
         let target_duration_from_start = if self.eta > 0.0 {
             // Time = (Number of events / eta) * pulse_distance
-            let time_in_secs = (target_event_count as f64 / self.eta) * self.hw.pulse_distance;
+            let time_in_secs = (target_event_count as f64 * self.hw.pulse_distance) / self.eta;
             Duration::from_secs_f64(time_in_secs)
         } else {
             // If eta is 0, no events are ever generated. We can just proceed without delay.
