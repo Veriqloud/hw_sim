@@ -280,9 +280,6 @@ async fn run_bob_workflow(
 
         // Open file handles concurrently to prevent deadlocks with other processes.
         // The `OpenOptions` structs must outlive the futures created by `open()`.
-        let mut angles_options = std::fs::OpenOptions::new();
-        let mut gcr_options = std::fs::OpenOptions::new();
-        let mut gc_read_options = std::fs::OpenOptions::new();
         let (angles_res, gcr_res, gc_read_res) = thread::scope(|s| {
             let angles_handle = s.spawn(|| {
                 std::fs::OpenOptions::new()
@@ -304,7 +301,7 @@ async fn run_bob_workflow(
 
             (
                 angles_handle.join().unwrap(),
-                gc_read_handle.join().unwrap(),
+                gcr_handle.join().unwrap(),
                 gc_read_handle.join().unwrap(),
             )
         });
