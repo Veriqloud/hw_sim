@@ -150,7 +150,7 @@ impl IPCWriterActorHandle {
         Self { sender }
     }
 
-    pub async fn write_gcr_batch(&self, gcr_data: Vec<[u8; 8]>) -> Result<(), Error> {
+    pub fn write_gcr_batch(&self, gcr_data: Vec<[u8; 8]>) -> Result<(), Error> {
         let message = WriterMessage::WriteGcrBatch(gcr_data);
         self.sender.send(message).map_err(|e| {
             tracing::error!("Failed to send WriteGcrBatch to IPCWriterActor: {}", e);
@@ -160,7 +160,7 @@ impl IPCWriterActorHandle {
         })
     }
 
-    pub async fn write_angles_batch(&self, angles_data: Vec<u8>) -> Result<(), Error> {
+    pub fn write_angles_batch(&self, angles_data: Vec<u8>) -> Result<(), Error> {
         let message = WriterMessage::WriteAnglesBatch(angles_data);
         self.sender.send(message).map_err(|e| {
             tracing::error!("Failed to send WriteAnglesBatch to IPCWriterActor: {}", e);
@@ -172,7 +172,7 @@ impl IPCWriterActorHandle {
 
     // Optional: A stop message if explicit cleanup or signaling is needed in the writer actor.
     // For now, the writer stops when its command channel is closed by the reader.
-    pub async fn stop(&self) -> Result<(), Error> {
+    pub fn stop(&self) -> Result<(), Error> {
         let message = WriterMessage::Stop;
         self.sender.send(message).map_err(|e| {
             tracing::error!("Failed to send Stop to IPCWriterActor: {}", e);

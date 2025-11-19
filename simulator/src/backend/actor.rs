@@ -138,7 +138,7 @@ impl ActorHandle {
         recv.recv().context(errors::ActorDiedSnafu)?
     }
 
-    pub async fn stop_session(&self) -> Result<(), Error> {
+    pub fn stop_session(&self) -> Result<(), Error> {
         let (send, recv) = mpsc::channel();
         let message = ActorMessage::StopSession { reply_to: send };
         self.sender
@@ -147,7 +147,7 @@ impl ActorHandle {
         recv.recv().context(errors::ActorDiedSnafu)?
     }
 
-    pub async fn generate_gcr_and_angles_batch(&self) -> Result<Vec<[u8; 8]>, Error> {
+    pub fn generate_gcr_and_angles_batch(&self) -> Result<Vec<[u8; 8]>, Error> {
         let (send, recv) = mpsc::channel();
         let message = ActorMessage::GenerateGcrAndAnglesBatch { reply_to: send };
         self.sender
@@ -156,10 +156,7 @@ impl ActorHandle {
         recv.recv().context(errors::ActorDiedSnafu)?
     }
 
-    pub async fn retrieve_pending_angles_batch(
-        &self,
-        received_gcs: Vec<u64>,
-    ) -> Result<Vec<u8>, Error> {
+    pub fn retrieve_pending_angles_batch(&self, received_gcs: Vec<u64>) -> Result<Vec<u8>, Error> {
         let (send, recv) = mpsc::channel();
         let message = ActorMessage::RetrievePendingAnglesBatch {
             received_gcs,
@@ -171,7 +168,7 @@ impl ActorHandle {
         recv.recv().context(errors::ActorDiedSnafu)?
     }
 
-    pub async fn set_angles(&self, angles: [u8; 4]) -> Result<(), Error> {
+    pub fn set_angles(&self, angles: [u8; 4]) -> Result<(), Error> {
         let (send, recv) = mpsc::channel();
         let message = ActorMessage::SetAngles {
             angles,
@@ -181,7 +178,7 @@ impl ActorHandle {
         recv.recv().context(errors::ActorDiedSnafu)?
     }
 
-    pub async fn generate_angles_for_gcs(&self, received_gcs: Vec<u64>) -> Result<Vec<u8>, Error> {
+    pub fn generate_angles_for_gcs(&self, received_gcs: Vec<u64>) -> Result<Vec<u8>, Error> {
         let (send, recv) = mpsc::channel();
         let message = ActorMessage::GenerateAnglesForGcs {
             received_gcs,
