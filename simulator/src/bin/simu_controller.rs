@@ -3,11 +3,12 @@ use memmap2::MmapOptions;
 use serde::Deserialize;
 use std::f64::consts::PI;
 use std::fs::OpenOptions as StdOpenOptions; // For synchronous file operations in xdma_write
+use std::fs::OpenOptions;
+use std::io::{Read, Write};
+use std::thread::sleep;
 use std::time as std_time; // For std_time::Instant and std_time::Duration
+use std::time::Duration;
 use std::{collections::HashMap, sync::Arc};
-use tokio::fs::OpenOptions;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::time::{sleep, Duration};
 
 // Command-line arguments structure
 /// This controller is updated to run against BOTH Alice and Bob simulators simultaneously
@@ -70,12 +71,11 @@ struct ControllerConfig {
 
 const BATCH_SIZE: usize = 1024; // Matching hw_sim's BATCH_SIZE
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize tracing for logging
     tracing_subscriber::fmt::init();
 
-    let result = async {
+    let result = {
         let cli_args = CliArgs::parse();
 
         // --- Configuration Loading for Alice and Bob ---
@@ -83,14 +83,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             "SimuController: Reading Alice's config from '{}'",
             &cli_args.alice_config_path
         );
-        let alice_config_content = tokio::fs::read_to_string(&cli_args.alice_config_path).await?;
+        let alice_config_content = std::fs::read_to_string(&cli_args.alice_config_path)?;
         let alice_config: ControllerConfig = serde_json::from_str(&alice_config_content)?;
 
         tracing::info!(
             "SimuController: Reading Bob's config from '{}'",
             &cli_args.bob_config_path
         );
-        let bob_config_content = tokio::fs::read_to_string(&cli_args.bob_config_path).await?;
+        let bob_config_content = std::fs::read_to_string(&cli_args.bob_config_path)?;
         let bob_config: ControllerConfig = serde_json::from_str(&bob_config_content)?;
 
         tracing::info!(
@@ -144,7 +144,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             COMMAND_TRIGGER_ADDR_BYTES,
             1, // Value for Start
         )?;
-        sleep(std_time::Duration::from_millis(100)).await;
+        sleep(std_time::Duration::from_millis(100));
         tracing::info!("SimuController: Start commands sent via MMIO.");
 
         // --- Step 2: Run concurrent controller workflows ---
@@ -152,21 +152,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let alice_config_arc = Arc::new(alice_config);
         let bob_config_arc = Arc::new(bob_config.clone());
 
-        let alice_task = tokio::spawn({
+        let alice_task = std::thread::spawn({
             let config = Arc::clone(&alice_config_arc);
-            async move {
+            move || {
                 // This block contains the logic for the Source (Alice)
                 tracing::info!("Alice Controller: Opening files...");
                 let mut angle_file = OpenOptions::new()
                     .read(true)
                     .write(true)
-                    .open(&config.ipc_config.angle_file_path)
-                    .await?;
+                    .open(&config.ipc_config.angle_file_path)?;
                 let mut gc_file = OpenOptions::new()
                     .write(true)
                     .read(true)
-                    .open(&config.ipc_config.gc_read_file_path)
-                    .await?;
+                    .open(&config.ipc_config.gc_read_file_path)?;
                 tracing::info!("Alice Controller: Files opened.");
 
                 let start_time = std_time::Instant::now();
@@ -196,13 +194,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                     for i in 0..BATCH_SIZE {
                         let gc_val = base_gc_for_batch + i as u64;
-                        gc_file.write_all(&gc_val.to_le_bytes()).await?;
-                        gc_file.write_all(&[0u8; 8]).await?;
+                        gc_file.write_all(&gc_val.to_le_bytes())?;
+                        gc_file.write_all(&[0u8; 8])?;
                     }
-                    gc_file.flush().await?;
+                    gc_file.flush()?;
 
                     let mut angle_batch_buffer = vec![0u8; BATCH_SIZE / 2];
-                    angle_file.read_exact(&mut angle_batch_buffer).await?;
+                    angle_file.read_exact(&mut angle_batch_buffer)?;
 
                     for &packed_byte in &angle_batch_buffer {
                         let index1 = packed_byte & 0b0000_0011;
@@ -210,38 +208,32 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         all_alice_angles.push(index1);
                         all_alice_angles.push(index2);
                     }
-                    sleep(Duration::from_millis(100)).await;
+                    sleep(Duration::from_millis(100));
                 }
                 Ok::<_, Box<dyn std::error::Error + Send + Sync>>(all_alice_angles)
             }
         });
 
-        let bob_task = tokio::spawn({
+        let bob_task = std::thread::spawn({
             let config = Arc::clone(&bob_config_arc);
-            async move {
+            move || {
                 // This block contains the logic for the Detector (Bob)
                 tracing::info!("Bob Controller: Opening files...");
                 let mut angle_file = OpenOptions::new()
                     .read(true)
                     .write(true)
-                    .open(&config.ipc_config.angle_file_path)
-                    .await?;
-                let mut gcr_file = OpenOptions::new()
-                    .read(true)
-                    .write(true)
-                    .open(
-                        config
-                            .ipc_config
-                            .gcr_file_path
-                            .as_ref()
-                            .ok_or("gcr_file_path missing for Bob")?,
-                    )
-                    .await?;
+                    .open(&config.ipc_config.angle_file_path)?;
+                let mut gcr_file = OpenOptions::new().read(true).write(true).open(
+                    config
+                        .ipc_config
+                        .gcr_file_path
+                        .as_ref()
+                        .ok_or("gcr_file_path missing for Bob")?,
+                )?;
                 let mut gc_file = OpenOptions::new()
                     .write(true)
                     .read(true)
-                    .open(&config.ipc_config.gc_read_file_path)
-                    .await?;
+                    .open(&config.ipc_config.gc_read_file_path)?;
                 tracing::info!("Bob Controller: Files opened.");
 
                 let mut all_bob_angles = Vec::new();
@@ -254,7 +246,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     );
 
                     let mut gcr_batch_buffer = vec![0u8; BATCH_SIZE * 16];
-                    gcr_file.read_exact(&mut gcr_batch_buffer).await?;
+                    gcr_file.read_exact(&mut gcr_batch_buffer)?;
 
                     let mut received_gc_values = Vec::with_capacity(BATCH_SIZE);
                     for gcr_chunk in gcr_batch_buffer.chunks_exact(16) {
@@ -265,13 +257,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
 
                     for gc_val in received_gc_values {
-                        gc_file.write_all(&gc_val.to_le_bytes()).await?;
-                        gc_file.write_all(&[0u8; 8]).await?;
+                        gc_file.write_all(&gc_val.to_le_bytes())?;
+                        gc_file.write_all(&[0u8; 8])?;
                     }
-                    gc_file.flush().await?;
+                    gc_file.flush()?;
 
                     let mut angle_batch_buffer = vec![0u8; BATCH_SIZE / 2];
-                    angle_file.read_exact(&mut angle_batch_buffer).await?;
+                    angle_file.read_exact(&mut angle_batch_buffer)?;
 
                     for &packed_byte in &angle_batch_buffer {
                         let index1 = packed_byte & 0b0000_0011;
@@ -279,7 +271,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         all_bob_angles.push(index1);
                         all_bob_angles.push(index2);
                     }
-                    sleep(Duration::from_millis(100)).await;
+                    sleep(Duration::from_millis(100));
                 }
 
                 Ok::<_, Box<dyn std::error::Error + Send + Sync>>((
@@ -289,13 +281,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         });
 
-        let (bob_results, alice_results) = tokio::join!(bob_task, alice_task);
+        let bob_results = bob_task.join().expect("Bob's controller thread panicked");
+        let alice_results = alice_task
+            .join()
+            .expect("Alice's controller thread panicked");
 
         // Extract results from the spawned tasks
-        let (bob_angles, click_results) =
-            bob_results?.map_err(|e| e as Box<dyn std::error::Error>)?;
+        let (bob_angles, click_results) = bob_results.unwrap();
 
-        let alice_angles = alice_results?.map_err(|e| e as Box<dyn std::error::Error>)?;
+        let alice_angles = alice_results.unwrap();
 
         // --- Step 3: Check Correlation ---
         tracing::info!("SimuController: Performing correlation check...");
@@ -345,12 +339,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         // Add a small delay to allow the simulator to process the stop command and close its FIFOs.
         // This prevents a deadlock where the controller closes its read ends before the simulator is done.
-        sleep(Duration::from_secs(1)).await;
+        sleep(Duration::from_secs(1));
 
         tracing::info!("SimuController: Main logic finished. Files will be dropped now.");
         Ok(())
-    }
-    .await; // Run the inner async block
+    }; // Run the inner async block
 
     if result.is_ok() {
         tracing::info!("SimuController: Files have been dropped. Runtime should exit shortly.");
