@@ -1,8 +1,8 @@
-use std::fmt::Debug;
-use tokio::fs::File;
-use tokio::io::AsyncWriteExt;
-use tokio::sync::mpsc;
 use super::errors::Error;
+use std::fmt::Debug;
+use std::fs::File;
+use std::io::Write;
+use std::sync::mpsc;
 
 pub struct IPCWriterActor {
     receiver: mpsc::Receiver<WriterMessage>,
@@ -16,10 +16,14 @@ impl IPCWriterActor {
         angles_file: File, // For angles data
         receiver: mpsc::Receiver<WriterMessage>,
     ) -> Self {
-        IPCWriterActor { receiver, gcr_file, angles_file }
+        IPCWriterActor {
+            receiver,
+            gcr_file,
+            angles_file,
+        }
     }
 
-    async fn handle_message(&mut self, msg: WriterMessage) -> Result<(), Error> {
+    fn handle_message(&mut self, msg: WriterMessage) -> Result<(), Error> {
         match msg {
             WriterMessage::WriteGcrBatch(gcr_data_batch) => {
                 tracing::info!(
@@ -27,14 +31,14 @@ impl IPCWriterActor {
                     gcr_data_batch.len()
                 );
                 for gcr_item in gcr_data_batch {
-                    self.gcr_file.write_all(&gcr_item).await.map_err(|e| {
+                    self.gcr_file.write_all(&gcr_item).map_err(|e| {
                         tracing::error!("Failed to write GCR item: {:?}", e);
                         Error::Channel {
                             e: format!("Failed to write GCR item to FIFO: {}", e),
                         }
                     })?;
                 }
-                self.gcr_file.flush().await.map_err(|e| {
+                self.gcr_file.flush().map_err(|e| {
                     // Ensure data is sent
                     tracing::error!("Failed to flush GCR FIFO: {:?}", e);
                     Error::Channel {
@@ -49,7 +53,7 @@ impl IPCWriterActor {
                     "WriterActor: Received WriteAnglesBatch ({} raw bytes), packing them.",
                     angles_batch.len()
                 );
-                
+
                 // Pack angle indices. The raw data from the simulator has the 2-bit index
                 // in bits 1 and 2 of each byte. We take two such bytes and pack their
                 // indices into a single byte.
@@ -78,13 +82,13 @@ impl IPCWriterActor {
                     "WriterActor: Writing {} packed angle bytes.",
                     packed_angles.len()
                 );
-                self.angles_file.write_all(&packed_angles).await.map_err(|e| {
+                self.angles_file.write_all(&packed_angles).map_err(|e| {
                     tracing::error!("Failed to write packed angles batch: {:?}", e);
                     Error::Channel {
                         e: format!("Failed to write packed angles batch to FIFO: {}", e),
                     }
                 })?;
-                self.angles_file.flush().await.map_err(|e| {
+                self.angles_file.flush().map_err(|e| {
                     // Ensure data is sent
                     tracing::error!("Failed to flush packed angles FIFO: {:?}", e);
                     Error::Channel {
@@ -115,11 +119,11 @@ pub enum WriterMessage {
     Stop, // Command to stop (if needed for internal loops, currently informational)
 }
 
-pub async fn run_writer_actor(mut actor: IPCWriterActor) {
+pub fn run_writer_actor(mut actor: IPCWriterActor) {
     tracing::info!("IPCWriterActor running.");
-    while let Some(msg) = actor.receiver.recv().await {
+    while let Ok(msg) = actor.receiver.recv() {
         tracing::debug!("IPCWriterActor: Received message: {:?}", msg);
-        if let Err(e) = actor.handle_message(msg).await {
+        if let Err(e) = actor.handle_message(msg) {
             tracing::error!("IPCWriterActor: Failed to handle message: {:?}", e);
             // Depending on the error, might want to break or continue
         }
@@ -137,18 +141,18 @@ impl IPCWriterActorHandle {
         gcr_file: File, // Renamed parameter to match usage
         angles_file: File,
     ) -> Self {
-        let (sender, receiver) = mpsc::channel(8);
+        let (sender, receiver) = mpsc::channel();
         let actor = IPCWriterActor::new(gcr_file, angles_file, receiver);
-
-        // Spawn the actor task to run in the background.
-        tokio::spawn(run_writer_actor(actor));
+        std::thread::spawn(move || {
+            run_writer_actor(actor);
+        });
 
         Self { sender }
     }
 
     pub async fn write_gcr_batch(&self, gcr_data: Vec<[u8; 8]>) -> Result<(), Error> {
         let message = WriterMessage::WriteGcrBatch(gcr_data);
-        self.sender.send(message).await.map_err(|e| {
+        self.sender.send(message).map_err(|e| {
             tracing::error!("Failed to send WriteGcrBatch to IPCWriterActor: {}", e);
             Error::Channel {
                 e: format!("Send GCR batch failed: {}", e),
@@ -158,7 +162,7 @@ impl IPCWriterActorHandle {
 
     pub async fn write_angles_batch(&self, angles_data: Vec<u8>) -> Result<(), Error> {
         let message = WriterMessage::WriteAnglesBatch(angles_data);
-        self.sender.send(message).await.map_err(|e| {
+        self.sender.send(message).map_err(|e| {
             tracing::error!("Failed to send WriteAnglesBatch to IPCWriterActor: {}", e);
             Error::Channel {
                 e: format!("Send angles batch failed: {}", e),
@@ -170,7 +174,7 @@ impl IPCWriterActorHandle {
     // For now, the writer stops when its command channel is closed by the reader.
     pub async fn stop(&self) -> Result<(), Error> {
         let message = WriterMessage::Stop;
-        self.sender.send(message).await.map_err(|e| {
+        self.sender.send(message).map_err(|e| {
             tracing::error!("Failed to send Stop to IPCWriterActor: {}", e);
             Error::Channel {
                 e: format!("Send Stop failed: {}", e),

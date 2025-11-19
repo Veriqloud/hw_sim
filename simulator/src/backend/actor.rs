@@ -73,8 +73,7 @@ impl<T: BytesGenerator> Actor<T> {
                     .context(HardwareSnafu);
                 let _ = reply_to.send(result);
                 Ok(())
-            }
-            // ActorMessage::SetRole was removed
+            } // ActorMessage::SetRole was removed
         }
     }
 }
@@ -94,7 +93,8 @@ pub enum ActorMessage {
         received_gcs: Vec<u64>,
         reply_to: oneshot::Sender<Result<Vec<u8>, Error>>, // Returns Angles data
     },
-    SetAngles { // For configuring bases
+    SetAngles {
+        // For configuring bases
         angles: [u8; 4],
         reply_to: oneshot::Sender<Result<(), Error>>,
     },
@@ -186,10 +186,7 @@ impl ActorHandle {
         recv.await.context(errors::ActorDiedSnafu)?
     }
 
-    pub async fn generate_angles_for_gcs(
-        &self,
-        received_gcs: Vec<u64>,
-    ) -> Result<Vec<u8>, Error> {
+    pub async fn generate_angles_for_gcs(&self, received_gcs: Vec<u64>) -> Result<Vec<u8>, Error> {
         let (send, recv) = oneshot::channel();
         let message = ActorMessage::GenerateAnglesForGcs {
             received_gcs,
