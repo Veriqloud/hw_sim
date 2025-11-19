@@ -2,8 +2,6 @@ pub mod builder;
 pub mod errors;
 pub mod hardware;
 
-use async_trait::async_trait;
-
 use crate::backend::protocols::random::CorrelationsRandom;
 use crate::backend::role::SimulatorMode; // SimulatorMode is still needed
 use rand::SeedableRng;
@@ -43,7 +41,6 @@ pub struct Simulator {
     pub(crate) rate_limiting: bool,
 }
 
-#[async_trait]
 pub trait VqSim {
     /// Initializes the simulator state for starting a generation sequence.
     /// Resets counters and sets the modulator state.
@@ -55,7 +52,7 @@ pub trait VqSim {
     /// Generates a batch of GCR (Global Counter + Result) data and corresponding angles.
     /// The GCR data is returned, and angles are stored internally.
     /// GCs are deterministic (incrementing sequence). Clicks and angles are random.
-    async fn generate_gcr_and_angles_batch(&mut self) -> Result<Vec<[u8; 8]>, HardwareError>;
+    fn generate_gcr_and_angles_batch(&mut self) -> Result<Vec<[u8; 8]>, HardwareError>;
 
     /// Called after the reader has received GC values from the controller.
     /// This method retrieves the internally stored batch of angles corresponding
@@ -67,7 +64,7 @@ pub trait VqSim {
 
     /// Generates a batch of angles based on received GCs (primarily for Source mode).
     /// This method does not generate GCRs or affect the internal global_counter.
-    async fn generate_angles_for_gcs(
+    fn generate_angles_for_gcs(
         &mut self,
         received_gcs: Vec<u64>, // Used to determine BATCH_SIZE, actual values not used in random generation
     ) -> Result<Vec<u8>, HardwareError>;
@@ -76,7 +73,6 @@ pub trait VqSim {
     fn set_angles(&mut self, angles: [u8; 4]) -> Result<(), HardwareError>;
 }
 
-#[async_trait]
 impl VqSim for Simulator {
     fn start_session(&mut self) -> Result<(), HardwareError> {
         tracing::info!("Simulator: Start session command received. Initializing for generation.");
@@ -99,7 +95,7 @@ impl VqSim for Simulator {
         Ok(())
     }
 
-    async fn generate_gcr_and_angles_batch(&mut self) -> Result<Vec<[u8; 8]>, HardwareError> {
+    fn generate_gcr_and_angles_batch(&mut self) -> Result<Vec<[u8; 8]>, HardwareError> {
         if self.modulator_state != ModulatorState::Random {
             return Err(HardwareError::ModulatorStateNotSupported);
         }
@@ -200,7 +196,7 @@ impl VqSim for Simulator {
                 if elapsed_since_start < target_duration_from_start {
                     let sleep_duration = target_duration_from_start - elapsed_since_start;
                     tracing::debug!("Rate limiting: sleeping for {:?}", sleep_duration);
-                    tokio::time::sleep(sleep_duration).await;
+                    std::thread::sleep(sleep_duration);
                 }
             }
         }
@@ -235,7 +231,7 @@ impl VqSim for Simulator {
         Ok(())
     }
 
-    async fn generate_angles_for_gcs(
+    fn generate_angles_for_gcs(
         &mut self,
         received_gcs: Vec<u64>,
     ) -> Result<Vec<u8>, HardwareError> {
