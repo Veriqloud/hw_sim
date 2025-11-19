@@ -262,7 +262,7 @@ async fn run_alice_workflow(
 }
 
 // Bob's (Detector) workflow: starts immediately, does not wait for controller.
-async fn run_bob_workflow(
+fn run_bob_workflow(
     config: &BobIpcConfig,
     simu_handle: backend::actor::ActorHandle,
     simulator_mode: SimulatorMode,
@@ -357,7 +357,7 @@ async fn run_bob_workflow(
         );
 
         tracing::info!("Starting IPC command processing loop for Bob.");
-        if let Err(e) = ipc_reader.start().await {
+        if let Err(e) = ipc_reader.start() {
             tracing::error!(
                 "IPC processing for Bob ended with an error: {:?}. Preparing for new connection.",
                 e

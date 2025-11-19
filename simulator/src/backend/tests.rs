@@ -2,6 +2,7 @@ use std::{collections::HashMap, f64::consts::PI, time::Instant};
 
 use crate::backend::role::SimulatorMode;
 
+use configs::backend::Configuration;
 use rand::SeedableRng;
 use rand_pcg::Pcg64Mcg;
 
@@ -14,7 +15,35 @@ use crate::backend::{
     },
 };
 
-#[cfg(test)]
+#[test]
+fn valid_config() {
+    let config_json = r#"{
+    "angles": [0, 10, 11, 12],
+    "seed": 33,
+    "eta": 0.1,
+    "qberr": 0.02,
+    "pulse_distance": 1e-8,
+    "rate_limiting": false
+}"#;
+
+    let config_input: Configuration = serde_json::from_str(&config_json).unwrap();
+
+    println!("Backend Config {:?}", &config_input);
+
+    assert_eq!(
+        Configuration {
+            angles: vec![0, 10, 11, 12],
+            seed: 33,
+            eta: 0.1,
+            qberr: 0.02,
+            pulse_distance: 1e-8,
+            rate_limiting: false,
+        },
+        config_input
+    );
+}
+
+#[test]
 fn generate_bytes() {
     // test correctness of consecutive calls to correlations_random
     let hw = HardwareBuilder::new().with_pulse_distance(1e-8).build();
@@ -91,7 +120,7 @@ fn generate_bytes() {
     sim_b.stop_session().unwrap();
 }
 
-#[cfg(test)]
+#[test]
 fn source_angle_generation_consistency() {
     let seed = 12345;
     let common_angles = vec![0, 32, 64, 96];
@@ -147,7 +176,7 @@ fn source_angle_generation_consistency() {
     );
 }
 
-#[cfg(test)]
+#[test]
 fn qkd_statistics_asymmetric_workflow_ok() {
     // This test verifies that for any given combination of angles, the measured
     // deviation from the ideal quantum result matches the configured `qb_err`.
@@ -294,8 +323,8 @@ fn qkd_statistics_asymmetric_workflow_ok() {
     }
 }
 
-#[cfg(test)]
-async fn test_rate_limiting_slow_rate() {
+#[test]
+fn test_rate_limiting_slow_rate() {
     // This test verifies that the simulator's generation rate correctly
     // adheres to a slow configured rate by sleeping for the appropriate duration.
 
@@ -348,7 +377,7 @@ async fn test_rate_limiting_slow_rate() {
     );
 }
 
-#[cfg(test)]
+#[test]
 fn test_rate_limiting_high_speed() {
     // This test verifies that for a very high configured rate, the simulator
     // does not add any artificial delay and runs as fast as possible.

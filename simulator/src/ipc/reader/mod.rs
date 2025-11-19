@@ -305,7 +305,7 @@ impl IPCReader {
     }
 
     /// Runs the Source (Alice) workflow.
-    async fn run_source_workflow(&mut self) -> Result<(), errors::Error> {
+    fn run_source_workflow(&mut self) -> Result<(), errors::Error> {
         self.last_known_command_trigger_value = 0;
 
         loop {
@@ -313,7 +313,7 @@ impl IPCReader {
                 "Awaiting next command via MMIO (last known trigger value: {})...",
                 self.last_known_command_trigger_value
             );
-            let cmd = self.await_next_command().await?;
+            let cmd = self.await_next_command()?;
             tracing::info!("IPCReader (Alice): Processing command: {:?}", &cmd);
 
             match cmd {
@@ -419,15 +419,15 @@ impl IPCReader {
         }
     }
 
-    pub async fn start(mut self) -> Result<(), errors::Error> {
+    pub fn start(mut self) -> Result<(), errors::Error> {
         match self.simulator_mode {
             crate::backend::role::SimulatorMode::Detector => {
                 tracing::info!("IPCReader starting in Detector (Bob) mode. Awaiting commands.");
-                self.run_detector_workflow().await
+                self.run_detector_workflow()
             }
             crate::backend::role::SimulatorMode::Source => {
                 tracing::info!("IPCReader starting in Source (Alice) mode. Awaiting commands.");
-                self.run_source_workflow().await
+                self.run_source_workflow()
             }
         }
     }
