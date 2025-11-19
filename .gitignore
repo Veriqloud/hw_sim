@@ -2,3 +2,4 @@
 .aider*
 justfile
 CLAUDE.md
+perf.data*
