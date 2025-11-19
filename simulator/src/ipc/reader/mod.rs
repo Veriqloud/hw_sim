@@ -3,12 +3,7 @@ pub mod errors;
 use memmap2::MmapOptions;
 use std::fs::OpenOptions as StdOpenOptions;
 use std::time::Duration;
-use tokio::{
-    fs::File,
-    io::{AsyncReadExt},
-    task,
-    time,
-};
+use std::{fs::File, io::Read};
 
 use crate::backend::simulation::BATCH_SIZE;
 use crate::{backend::actor::ActorHandle as SimulatorHandle, ipc::Command};
@@ -72,7 +67,7 @@ impl IPCReader {
             BATCH_SIZE
         );
         for i in 0..BATCH_SIZE {
-            match self.gc_read_file.read_exact(&mut record_buffer).await {
+            match self.gc_read_file.read_exact(&mut record_buffer) {
                 Ok(_) => {
                     let gc_bytes: [u8; 8] = record_buffer[0..8].try_into().unwrap();
                     gc_values.push(u64::from_le_bytes(gc_bytes));
@@ -116,18 +111,15 @@ impl IPCReader {
     async fn await_next_command(&mut self) -> Result<Command, errors::Error> {
         loop {
             let device_path_clone = self.command_path.clone();
-            let read_result = task::spawn_blocking(move || {
-                read_u32_from_mmio(
-                    &device_path_clone,
-                    MMIO_MAP_OFFSET,
-                    MMIO_MAP_LEN,
-                    COMMAND_TRIGGER_ADDR_BYTES,
-                )
-            })
-            .await;
+            let read_result = read_u32_from_mmio(
+                &device_path_clone,
+                MMIO_MAP_OFFSET,
+                MMIO_MAP_LEN,
+                COMMAND_TRIGGER_ADDR_BYTES,
+            );
 
             match read_result {
-                Ok(Ok(current_value)) => {
+                Ok(current_value) => {
                     if current_value == 1 && self.last_known_command_trigger_value == 0 {
                         tracing::info!(
                             "Start command detected via MMIO (0->1 transition at addr {:#X}).",
@@ -152,12 +144,6 @@ impl IPCReader {
                         self.last_known_command_trigger_value = current_value;
                     }
                 }
-                Ok(Err(io_err)) => {
-                    tracing::warn!(
-                        "Error reading MMIO for command trigger: {}. Continuing.",
-                        io_err
-                    );
-                }
                 Err(join_err) => {
                     tracing::warn!(
                         "Task join error for MMIO command trigger read: {}. Continuing.",
@@ -165,7 +151,7 @@ impl IPCReader {
                     );
                 }
             }
-            time::sleep(Duration::from_millis(POLLING_INTERVAL_MS)).await;
+            std::thread::sleep(Duration::from_millis(POLLING_INTERVAL_MS));
         }
     }
 
@@ -186,7 +172,7 @@ impl IPCReader {
                     tracing::info!(
                         "IPCReader (Bob): Start command received. Initiating generation loop."
                     );
-                    self.simulator_handle.start_session().await.map_err(|e| {
+                    self.simulator_handle.start_session().map_err(|e| {
                         errors::Error::Unexpected {
                             reason: format!("Simulator start_session failed: {}", e),
                         }
@@ -335,7 +321,7 @@ impl IPCReader {
                     tracing::info!(
                         "IPCReader (Alice): Start command received. Initiating generation loop."
                     );
-                    self.simulator_handle.start_session().await.map_err(|e| {
+                    self.simulator_handle.start_session().map_err(|e| {
                         errors::Error::Unexpected {
                             reason: format!("Simulator start_session failed: {}", e),
                         }
