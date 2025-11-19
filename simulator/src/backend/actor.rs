@@ -1,5 +1,6 @@
+use std::sync::mpsc::{self, Sender};
+
 use snafu::ResultExt;
-use tokio::sync::{mpsc, oneshot};
 
 use super::{
     errors::{self, Error, HardwareSnafu},
@@ -19,7 +20,7 @@ impl<T: BytesGenerator> Actor<T> {
         }
     }
 
-    async fn handle_message(&mut self, msg: ActorMessage) -> Result<(), Error> {
+    fn handle_message(&mut self, msg: ActorMessage) -> Result<(), Error> {
         match msg {
             ActorMessage::StartSession { reply_to } => {
                 tracing::debug!("SimulatorActor: Processing StartSession");
@@ -38,7 +39,6 @@ impl<T: BytesGenerator> Actor<T> {
                 let result = self
                     .simulator
                     .generate_gcr_and_angles_batch()
-                    .await // This is async
                     .context(HardwareSnafu); // Assuming HardwareSnafu is appropriate
                 let _ = reply_to.send(result);
                 Ok(())
@@ -69,7 +69,6 @@ impl<T: BytesGenerator> Actor<T> {
                 let result = self
                     .simulator
                     .generate_angles_for_gcs(received_gcs) // This is async
-                    .await
                     .context(HardwareSnafu);
                 let _ = reply_to.send(result);
                 Ok(())
@@ -81,26 +80,26 @@ impl<T: BytesGenerator> Actor<T> {
 // #[derive(Debug)] // oneshot::Sender is not Debug, consider removing if not strictly needed or use a wrapper
 pub enum ActorMessage {
     StartSession {
-        reply_to: oneshot::Sender<Result<(), Error>>,
+        reply_to: Sender<Result<(), Error>>,
     },
     StopSession {
-        reply_to: oneshot::Sender<Result<(), Error>>,
+        reply_to: Sender<Result<(), Error>>,
     },
     GenerateGcrAndAnglesBatch {
-        reply_to: oneshot::Sender<Result<Vec<[u8; 8]>, Error>>, // Returns GCR data
+        reply_to: Sender<Result<Vec<[u8; 8]>, Error>>, // Returns GCR data
     },
     RetrievePendingAnglesBatch {
         received_gcs: Vec<u64>,
-        reply_to: oneshot::Sender<Result<Vec<u8>, Error>>, // Returns Angles data
+        reply_to: Sender<Result<Vec<u8>, Error>>, // Returns Angles data
     },
     SetAngles {
         // For configuring bases
         angles: [u8; 4],
-        reply_to: oneshot::Sender<Result<(), Error>>,
+        reply_to: Sender<Result<(), Error>>,
     },
     GenerateAnglesForGcs {
         received_gcs: Vec<u64>,
-        reply_to: oneshot::Sender<Result<Vec<u8>, Error>>, // Returns Angles data
+        reply_to: Sender<Result<Vec<u8>, Error>>, // Returns Angles data
     },
     // SetRole was removed
     // Old messages like ReadAngles, GetGlobalCounter, SeedAndStartGeneration, Start, Stop might be obsolete
@@ -110,9 +109,9 @@ pub enum ActorMessage {
     // Based on the VqSim changes, the old messages are indeed obsolete for the new flow.
 }
 
-pub async fn run_simulator_actor<T: BytesGenerator>(mut actor: Actor<T>) {
-    while let Some(msg) = actor.receiver.recv().await {
-        actor.handle_message(msg).await.unwrap();
+pub fn run_simulator_actor<T: BytesGenerator>(mut actor: Actor<T>) {
+    while let Ok(msg) = actor.receiver.recv() {
+        actor.handle_message(msg).unwrap();
     }
 }
 
@@ -123,90 +122,74 @@ pub struct ActorHandle {
 
 impl ActorHandle {
     pub fn new<T: BytesGenerator>(simulator: T) -> Self {
-        let (sender, receiver) = mpsc::channel(8);
+        let (sender, receiver) = mpsc::channel();
         let actor = Actor::new(simulator, receiver);
-        tokio::spawn(run_simulator_actor(actor));
+        std::thread::spawn(move || run_simulator_actor(actor));
 
         Self { sender }
     }
 
-    pub async fn start_session(&self) -> Result<(), Error> {
-        let (send, recv) = oneshot::channel();
+    pub fn start_session(&self) -> Result<(), Error> {
+        let (send, recv) = mpsc::channel();
         let message = ActorMessage::StartSession { reply_to: send };
         self.sender
             .send(message)
-            .await
             .map_err(|e| errors::Error::ActorSend { e: e.to_string() })?;
-        recv.await.context(errors::ActorDiedSnafu)?
+        recv.recv().context(errors::ActorDiedSnafu)?
     }
 
     pub async fn stop_session(&self) -> Result<(), Error> {
-        let (send, recv) = oneshot::channel();
+        let (send, recv) = mpsc::channel();
         let message = ActorMessage::StopSession { reply_to: send };
         self.sender
             .send(message)
-            .await
             .map_err(|e| errors::Error::ActorSend { e: e.to_string() })?;
-        recv.await.context(errors::ActorDiedSnafu)?
+        recv.recv().context(errors::ActorDiedSnafu)?
     }
 
     pub async fn generate_gcr_and_angles_batch(&self) -> Result<Vec<[u8; 8]>, Error> {
-        let (send, recv) = oneshot::channel();
+        let (send, recv) = mpsc::channel();
         let message = ActorMessage::GenerateGcrAndAnglesBatch { reply_to: send };
         self.sender
             .send(message)
-            .await
             .map_err(|e| errors::Error::ActorSend { e: e.to_string() })?;
-        recv.await.context(errors::ActorDiedSnafu)?
+        recv.recv().context(errors::ActorDiedSnafu)?
     }
 
     pub async fn retrieve_pending_angles_batch(
         &self,
         received_gcs: Vec<u64>,
     ) -> Result<Vec<u8>, Error> {
-        let (send, recv) = oneshot::channel();
+        let (send, recv) = mpsc::channel();
         let message = ActorMessage::RetrievePendingAnglesBatch {
             received_gcs,
             reply_to: send,
         };
         self.sender
             .send(message)
-            .await
             .map_err(|e| errors::Error::ActorSend { e: e.to_string() })?;
-        recv.await.context(errors::ActorDiedSnafu)?
+        recv.recv().context(errors::ActorDiedSnafu)?
     }
 
     pub async fn set_angles(&self, angles: [u8; 4]) -> Result<(), Error> {
-        let (send, recv) = oneshot::channel();
+        let (send, recv) = mpsc::channel();
         let message = ActorMessage::SetAngles {
             angles,
             reply_to: send,
         };
-        let _ = self.sender.send(message).await;
-        recv.await.context(errors::ActorDiedSnafu)?
+        let _ = self.sender.send(message);
+        recv.recv().context(errors::ActorDiedSnafu)?
     }
 
     pub async fn generate_angles_for_gcs(&self, received_gcs: Vec<u64>) -> Result<Vec<u8>, Error> {
-        let (send, recv) = oneshot::channel();
+        let (send, recv) = mpsc::channel();
         let message = ActorMessage::GenerateAnglesForGcs {
             received_gcs,
             reply_to: send,
         };
         self.sender
             .send(message)
-            .await
             .map_err(|e| errors::Error::ActorSend { e: e.to_string() })?;
-        recv.await.context(errors::ActorDiedSnafu)?
+        recv.recv().context(errors::ActorDiedSnafu)?
     }
-
-    // pub async fn set_role(&self, nb_parties: u32, position: u32) -> Result<(), Error> { // Removed
-    //     let (send, recv) = oneshot::channel(); // Removed
-    //     let message = ActorMessage::SetRole { // Removed
-    //         nb_parties, // Removed
-    //         position, // Removed
-    //         reply_to: send, // Removed
-    //     }; // Removed
-    //     let _ = self.sender.send(message).await; // Removed
-    //     recv.await.context(errors::ActorDiedSnafu)? // Removed
-    // } // Removed
 }
