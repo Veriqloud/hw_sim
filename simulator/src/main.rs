@@ -164,7 +164,7 @@ fn trigger_pps(command_path: &str) -> Result<(), std::io::Error> {
 }
 
 // Alice's (Source) workflow: waits for a controller connection in a loop.
-async fn run_alice_workflow(
+fn run_alice_workflow(
     config: &AliceIpcConfig,
     simu_handle: backend::actor::ActorHandle,
     simulator_mode: SimulatorMode,
