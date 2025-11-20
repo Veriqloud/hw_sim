@@ -30,14 +30,17 @@ impl IPCWriterActor {
                     "WriterActor: Received WriteGcrBatch ({} items).",
                     gcr_data_batch.len()
                 );
-                for gcr_item in gcr_data_batch {
-                    self.gcr_file.write_all(&gcr_item).map_err(|e| {
-                        tracing::error!("Failed to write GCR item: {:?}", e);
-                        Error::Channel {
-                            e: format!("Failed to write GCR item to FIFO: {}", e),
-                        }
+
+                // --- Batched Write Optimization (Safe Version) ---
+                // Flatten the Vec<[u8; 8]> into a single Vec<u8> for one write call.
+                // This is a safe operation that copies the data into a contiguous buffer.
+                let buffer: Vec<u8> = gcr_data_batch.into_iter().flatten().collect();
+                self.gcr_file
+                    .write_all(&buffer)
+                    .map_err(|e| Error::Channel {
+                        e: format!("Failed to write GCR batch to FIFO: {}", e),
                     })?;
-                }
+
                 self.gcr_file.flush().map_err(|e| {
                     // Ensure data is sent
                     tracing::error!("Failed to flush GCR FIFO: {:?}", e);
