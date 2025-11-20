@@ -249,7 +249,7 @@ async fn run_alice_workflow(
         );
 
         tracing::info!("Starting IPC command processing loop for Alice.");
-        if let Err(e) = ipc_reader.start().await {
+        if let Err(e) = ipc_reader.start() {
             tracing::warn!(
                 "IPC processing for Alice ended with an error: {:?}. Preparing for new connection.",
                 e
