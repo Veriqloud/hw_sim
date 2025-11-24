@@ -850,6 +850,7 @@ dependencies = [
  "itertools",
  "memmap2",
  "nix 0.30.1",
+ "once_cell",
  "rand",
  "rand_pcg",
  "serde",

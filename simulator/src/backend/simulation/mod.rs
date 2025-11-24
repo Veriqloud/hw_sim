@@ -38,7 +38,6 @@ pub struct Simulator {
     pub(crate) time_of_start: Option<Instant>, // To track time for potential future use or logging
     pub(crate) last_event_count: u64,  // Tracks total events generated in a session
     pub(crate) use_gcr_padding: bool,
-    pub(crate) rate_limiting: bool,
 }
 
 pub trait VqSim {
@@ -178,26 +177,23 @@ impl VqSim for Simulator {
             self.pending_angles_batch.as_ref().map_or(0, |v| v.len())
         );
 
-        // --- Rate Limiting Logic (Corrected Position) ---
         // This logic is now placed *after* all CPU-intensive work for the batch.
-        if self.rate_limiting {
-            // Calculate the theoretical time at which this batch should be finished.
-            let target_event_count = self.last_event_count; // Use the count *after* this batch
-            let target_duration_from_start = if self.eta > 0.0 {
-                // Time = (Number of events * pulse_distance) / eta
-                let time_in_secs = (target_event_count as f64 * self.hw.pulse_distance) / self.eta;
-                Duration::from_secs_f64(time_in_secs)
-            } else {
-                Duration::ZERO
-            };
+        // Calculate the theoretical time at which this batch should be finished.
+        let target_event_count = self.last_event_count; // Use the count *after* this batch
+        let target_duration_from_start = if self.eta > 0.0 {
+            // Time = (Number of events * pulse_distance) / eta
+            let time_in_secs = (target_event_count as f64 * self.hw.pulse_distance) / self.eta;
+            Duration::from_secs_f64(time_in_secs)
+        } else {
+            Duration::ZERO
+        };
 
-            if target_duration_from_start > Duration::ZERO {
-                let elapsed_since_start = time_of_start.elapsed();
-                if elapsed_since_start < target_duration_from_start {
-                    let sleep_duration = target_duration_from_start - elapsed_since_start;
-                    tracing::debug!("Rate limiting: sleeping for {:?}", sleep_duration);
-                    std::thread::sleep(sleep_duration);
-                }
+        if target_duration_from_start > Duration::ZERO {
+            let elapsed_since_start = time_of_start.elapsed();
+            if elapsed_since_start < target_duration_from_start {
+                let sleep_duration = target_duration_from_start - elapsed_since_start;
+                tracing::debug!("Rate limiting: sleeping for {:?}", sleep_duration);
+                std::thread::sleep(sleep_duration);
             }
         }
 

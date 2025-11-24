@@ -2,8 +2,8 @@ use rand::SeedableRng;
 use rand_pcg::Pcg64Mcg;
 use std::time::Instant;
 
-use configs::backend::Configuration;
-use crate::backend::role::SimulatorMode; // Keep SimulatorMode
+use crate::backend::role::SimulatorMode;
+use configs::backend::Configuration; // Keep SimulatorMode
 
 use super::hardware::builder::HardwareBuilder;
 use super::hardware::modulator_state::ModulatorState;
@@ -27,7 +27,6 @@ pub struct SimulatorBuilder {
     pub seed: u64,
     pub mode: SimulatorMode, // Mode is still needed
     pub use_gcr_padding: bool,
-    pub rate_limiting: bool,
 }
 
 impl SimulatorBuilder {
@@ -47,7 +46,6 @@ impl SimulatorBuilder {
             .with_rng(Pcg64Mcg::seed_from_u64(conf.seed))
             .with_seed(conf.seed)
             .with_mode(mode) // Set the mode from the passed argument
-            .with_rate_limiting(conf.rate_limiting)
             .build()
     }
 
@@ -67,7 +65,6 @@ impl SimulatorBuilder {
             time_of_start: None,        // Initialize to None
             use_gcr_padding: self.use_gcr_padding,
             last_event_count: 0, // Initialize to 0
-            rate_limiting: self.rate_limiting,
         }
     }
 
@@ -125,11 +122,6 @@ impl SimulatorBuilder {
         self.use_gcr_padding = use_padding;
         self
     }
-
-    pub fn with_rate_limiting(&mut self, rate_limiting: bool) -> &mut Self {
-        self.rate_limiting = rate_limiting;
-        self
-    }
 }
 
 impl Default for SimulatorBuilder {
@@ -146,7 +138,6 @@ impl Default for SimulatorBuilder {
             seed: 42,
             mode: SimulatorMode::default(), // Add mode default
             use_gcr_padding: true,
-            rate_limiting: true, // Default to true to simulate hardware rate
         }
     }
 }
@@ -181,7 +172,6 @@ pub mod tests {
             .with_seed(5)
             .with_angles(vec![0, 32, 34, 96])
             .with_gcr_padding(false)
-            .with_rate_limiting(true)
             .build();
 
         assert_eq!(
