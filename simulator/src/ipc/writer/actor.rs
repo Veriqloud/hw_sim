@@ -1,8 +1,8 @@
+use super::errors::Error;
 use std::fmt::Debug;
 use tokio::fs::File;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::mpsc;
-use super::errors::Error;
 
 pub struct IPCWriterActor {
     receiver: mpsc::Receiver<WriterMessage>,
@@ -16,7 +16,11 @@ impl IPCWriterActor {
         angles_file: File, // For angles data
         receiver: mpsc::Receiver<WriterMessage>,
     ) -> Self {
-        IPCWriterActor { receiver, gcr_file, angles_file }
+        IPCWriterActor {
+            receiver,
+            gcr_file,
+            angles_file,
+        }
     }
 
     async fn handle_message(&mut self, msg: WriterMessage) -> Result<(), Error> {
@@ -26,14 +30,15 @@ impl IPCWriterActor {
                     "WriterActor: Received WriteGcrBatch ({} items).",
                     gcr_data_batch.len()
                 );
-                for gcr_item in gcr_data_batch {
-                    self.gcr_file.write_all(&gcr_item).await.map_err(|e| {
-                        tracing::error!("Failed to write GCR item: {:?}", e);
-                        Error::Channel {
-                            e: format!("Failed to write GCR item to FIFO: {}", e),
-                        }
-                    })?;
-                }
+
+                let buffer: Vec<u8> = gcr_data_batch.into_iter().flatten().collect();
+                self.gcr_file.write_all(&buffer).await.map_err(|e| {
+                    tracing::error!("Failed to write GCR buffer: {:?}", e);
+                    Error::Channel {
+                        e: format!("Failed to write GCR item to FIFO: {}", e),
+                    }
+                })?;
+
                 self.gcr_file.flush().await.map_err(|e| {
                     // Ensure data is sent
                     tracing::error!("Failed to flush GCR FIFO: {:?}", e);
@@ -49,7 +54,7 @@ impl IPCWriterActor {
                     "WriterActor: Received WriteAnglesBatch ({} raw bytes), packing them.",
                     angles_batch.len()
                 );
-                
+
                 // Pack angle indices. The raw data from the simulator has the 2-bit index
                 // in bits 1 and 2 of each byte. We take two such bytes and pack their
                 // indices into a single byte.
@@ -78,12 +83,15 @@ impl IPCWriterActor {
                     "WriterActor: Writing {} packed angle bytes.",
                     packed_angles.len()
                 );
-                self.angles_file.write_all(&packed_angles).await.map_err(|e| {
-                    tracing::error!("Failed to write packed angles batch: {:?}", e);
-                    Error::Channel {
-                        e: format!("Failed to write packed angles batch to FIFO: {}", e),
-                    }
-                })?;
+                self.angles_file
+                    .write_all(&packed_angles)
+                    .await
+                    .map_err(|e| {
+                        tracing::error!("Failed to write packed angles batch: {:?}", e);
+                        Error::Channel {
+                            e: format!("Failed to write packed angles batch to FIFO: {}", e),
+                        }
+                    })?;
                 self.angles_file.flush().await.map_err(|e| {
                     // Ensure data is sent
                     tracing::error!("Failed to flush packed angles FIFO: {:?}", e);
