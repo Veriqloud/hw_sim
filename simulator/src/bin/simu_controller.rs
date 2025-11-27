@@ -144,12 +144,14 @@ fn run_alice(num_batches: u64, config: Config) -> io::Result<()> {
     for i in 0..num_batches {
         // 1. Write a batch of dummy GC values for the simulator to read.
         // The simulator expects 1024 records of 16 bytes each.
-        let mut gc_batch = Vec::with_capacity(BATCH_SIZE * GC_RECORD_SIZE);
-        for j in 0..BATCH_SIZE {
-            let gc_val: u64 = (i * BATCH_SIZE as u64) + j as u64;
-            gc_batch.extend_from_slice(&gc_val.to_le_bytes());
-            gc_batch.extend_from_slice(&[0u8; 8]); // Padding to make 16 bytes
-        }
+        let gc_batch: Vec<u8> = (0..BATCH_SIZE)
+            .flat_map(|j| {
+                let gc_val: u64 = (i * BATCH_SIZE as u64) + j as u64;
+                let mut record = [0u8; GC_RECORD_SIZE];
+                record[0..8].copy_from_slice(&gc_val.to_le_bytes());
+                record.into_iter()
+            })
+            .collect();
         gc_writer.write_all(&gc_batch)?;
         gc_writer.flush()?;
 
@@ -230,12 +232,14 @@ fn run_bob(num_batches: u64, config: Config) -> io::Result<()> {
 
         // 2. Write a batch of dummy "echoed" GC values for the simulator to read.
         // The simulator expects 1024 records of 16 bytes each.
-        let mut gc_batch = Vec::with_capacity(BATCH_SIZE * GC_RECORD_SIZE);
-        for j in 0..BATCH_SIZE {
-            let gc_val: u64 = (i * BATCH_SIZE as u64) + j as u64;
-            gc_batch.extend_from_slice(&gc_val.to_le_bytes());
-            gc_batch.extend_from_slice(&[0u8; 8]); // Padding to make 16 bytes
-        }
+        let gc_batch: Vec<u8> = (0..BATCH_SIZE)
+            .flat_map(|j| {
+                let gc_val: u64 = (i * BATCH_SIZE as u64) + j as u64;
+                let mut record = [0u8; GC_RECORD_SIZE];
+                record[0..8].copy_from_slice(&gc_val.to_le_bytes());
+                record.into_iter()
+            })
+            .collect();
         gc_writer.write_all(&gc_batch)?;
         gc_writer.flush()?;
 

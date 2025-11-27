@@ -31,22 +31,17 @@ impl IPCWriterActor {
                     gcr_data_batch.len()
                 );
 
-                // --- Batched Write Optimization (Safe Version) ---
-                // Flatten the Vec<[u8; 8]> into a single Vec<u8> for one write call.
-                // This is a safe operation that copies the data into a contiguous buffer.
+                // Flatten the Vec<[u8; 8]> into a single Vec<u8> for one write call
+                // for better performance.
                 let buffer: Vec<u8> = gcr_data_batch.into_iter().flatten().collect();
                 self.gcr_file
                     .write_all(&buffer)
                     .map_err(|e| Error::Channel {
                         e: format!("Failed to write GCR batch to FIFO: {}", e),
                     })?;
-
-                self.gcr_file.flush().map_err(|e| {
-                    // Ensure data is sent
-                    tracing::error!("Failed to flush GCR FIFO: {:?}", e);
-                    Error::Channel {
-                        e: format!("Failed to flush GCR FIFO: {}", e),
-                    }
+                // write_all may buffer, so we flush to ensure it's sent immediately over the pipe.
+                self.gcr_file.flush().map_err(|e| Error::Channel {
+                    e: format!("Failed to flush GCR FIFO: {}", e),
                 })?;
                 tracing::info!("WriterActor: Successfully wrote GCR batch.");
                 Ok(())
@@ -91,12 +86,9 @@ impl IPCWriterActor {
                         e: format!("Failed to write packed angles batch to FIFO: {}", e),
                     }
                 })?;
-                self.angles_file.flush().map_err(|e| {
-                    // Ensure data is sent
-                    tracing::error!("Failed to flush packed angles FIFO: {:?}", e);
-                    Error::Channel {
-                        e: format!("Failed to flush packed angles FIFO: {}", e),
-                    }
+                // write_all may buffer, so we flush to ensure it's sent immediately over the pipe.
+                self.angles_file.flush().map_err(|e| Error::Channel {
+                    e: format!("Failed to flush packed angles FIFO: {}", e),
                 })?;
                 tracing::info!("WriterActor: Successfully wrote packed angles batch.");
                 Ok(())
