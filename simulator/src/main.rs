@@ -290,13 +290,14 @@ fn run_bob_workflow(
             let gcr_handle = s.spawn(|| {
                 std::fs::OpenOptions::new()
                     .write(true)
+                    .read(true)
                     .open(&config.gcr_file_path)
             });
 
             let gc_read_handle = s.spawn(|| {
                 std::fs::OpenOptions::new()
-                    .write(true)
-                    .open(&config.gc_read_file_path)
+                    .read(true) // <-- This must be opened for READING for the IPCReader
+                    .open(&config.gc_read_file_path) 
             });
 
             (
