@@ -290,7 +290,6 @@ fn run_bob_workflow(
             let gcr_handle = s.spawn(|| {
                 std::fs::OpenOptions::new()
                     .write(true)
-                    .read(true)
                     .open(&config.gcr_file_path)
             });
 
