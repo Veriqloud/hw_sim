@@ -6,13 +6,10 @@ use configs::backend::Configuration;
 use rand::SeedableRng;
 use rand_pcg::Pcg64Mcg;
 
-use crate::backend::{
-    protocols::random::CorrelationsRandom,
-    simulation::{
-        builder::SimulatorBuilder,
-        hardware::{builder::HardwareBuilder, modulator_state::ModulatorState},
-        Simulator, VqSim,
-    },
+use crate::backend::simulation::{
+    builder::SimulatorBuilder,
+    hardware::{builder::HardwareBuilder, modulator_state::ModulatorState},
+    Simulator, VqSim,
 };
 
 #[test]
@@ -37,7 +34,6 @@ fn valid_config() {
             eta: 0.1,
             qberr: 0.02,
             pulse_distance: 1e-8,
-            rate_limiting: false,
         },
         config_input
     );
@@ -418,7 +414,7 @@ fn test_rate_limiting_high_speed() {
     // The theoretical time is extremely short (microseconds).
     // The actual execution time will be dominated by CPU work, not sleeping.
     let expected_time_secs = (total_events as f64 * pulse_distance) / eta;
-    let expected_duration = Duration::from_secs_f64(expected_time_secs);
+    let _expected_duration = Duration::from_secs_f64(expected_time_secs);
 
     // We assert that the elapsed time is much larger than the theoretical sleep time,
     // but still reasonably fast (e.g., under 200ms), proving no significant sleep occurred.

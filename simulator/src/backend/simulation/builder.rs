@@ -190,7 +190,6 @@ pub mod tests {
                 time_of_start: None,
                 use_gcr_padding: false,
                 last_event_count: 0,
-                rate_limiting: true,
             },
             sim
         )
