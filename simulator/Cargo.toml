@@ -15,7 +15,6 @@ tracing = { workspace = true }
 tracing-futures = { workspace = true }
 tracing-subscriber = { workspace = true }
 tracing-appender = { workspace = true }
-tokio = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 rand = { workspace = true }
@@ -29,3 +28,4 @@ nix = { workspace = true }
 memmap2 = { workspace = true }
 gc = { workspace = true }
 configs = { path = "../configs" }
+once_cell = "1.21.3"

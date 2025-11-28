@@ -2,8 +2,6 @@ pub mod builder;
 pub mod errors;
 pub mod hardware;
 
-use async_trait::async_trait;
-
 use crate::backend::protocols::random::CorrelationsRandom;
 use crate::backend::role::SimulatorMode; // SimulatorMode is still needed
 use rand::SeedableRng;
@@ -40,10 +38,8 @@ pub struct Simulator {
     pub(crate) time_of_start: Option<Instant>, // To track time for potential future use or logging
     pub(crate) last_event_count: u64,  // Tracks total events generated in a session
     pub(crate) use_gcr_padding: bool,
-    pub(crate) rate_limiting: bool,
 }
 
-#[async_trait]
 pub trait VqSim {
     /// Initializes the simulator state for starting a generation sequence.
     /// Resets counters and sets the modulator state.
@@ -55,7 +51,7 @@ pub trait VqSim {
     /// Generates a batch of GCR (Global Counter + Result) data and corresponding angles.
     /// The GCR data is returned, and angles are stored internally.
     /// GCs are deterministic (incrementing sequence). Clicks and angles are random.
-    async fn generate_gcr_and_angles_batch(&mut self) -> Result<Vec<[u8; 8]>, HardwareError>;
+    fn generate_gcr_and_angles_batch(&mut self) -> Result<Vec<[u8; 8]>, HardwareError>;
 
     /// Called after the reader has received GC values from the controller.
     /// This method retrieves the internally stored batch of angles corresponding
@@ -67,7 +63,7 @@ pub trait VqSim {
 
     /// Generates a batch of angles based on received GCs (primarily for Source mode).
     /// This method does not generate GCRs or affect the internal global_counter.
-    async fn generate_angles_for_gcs(
+    fn generate_angles_for_gcs(
         &mut self,
         received_gcs: Vec<u64>, // Used to determine BATCH_SIZE, actual values not used in random generation
     ) -> Result<Vec<u8>, HardwareError>;
@@ -76,7 +72,6 @@ pub trait VqSim {
     fn set_angles(&mut self, angles: [u8; 4]) -> Result<(), HardwareError>;
 }
 
-#[async_trait]
 impl VqSim for Simulator {
     fn start_session(&mut self) -> Result<(), HardwareError> {
         tracing::info!("Simulator: Start session command received. Initializing for generation.");
@@ -99,7 +94,7 @@ impl VqSim for Simulator {
         Ok(())
     }
 
-    async fn generate_gcr_and_angles_batch(&mut self) -> Result<Vec<[u8; 8]>, HardwareError> {
+    fn generate_gcr_and_angles_batch(&mut self) -> Result<Vec<[u8; 8]>, HardwareError> {
         if self.modulator_state != ModulatorState::Random {
             return Err(HardwareError::ModulatorStateNotSupported);
         }
@@ -182,26 +177,23 @@ impl VqSim for Simulator {
             self.pending_angles_batch.as_ref().map_or(0, |v| v.len())
         );
 
-        // --- Rate Limiting Logic (Corrected Position) ---
         // This logic is now placed *after* all CPU-intensive work for the batch.
-        if self.rate_limiting {
-            // Calculate the theoretical time at which this batch should be finished.
-            let target_event_count = self.last_event_count; // Use the count *after* this batch
-            let target_duration_from_start = if self.eta > 0.0 {
-                // Time = (Number of events * pulse_distance) / eta
-                let time_in_secs = (target_event_count as f64 * self.hw.pulse_distance) / self.eta;
-                Duration::from_secs_f64(time_in_secs)
-            } else {
-                Duration::ZERO
-            };
+        // Calculate the theoretical time at which this batch should be finished.
+        let target_event_count = self.last_event_count; // Use the count *after* this batch
+        let target_duration_from_start = if self.eta > 0.0 {
+            // Time = (Number of events * pulse_distance) / eta
+            let time_in_secs = (target_event_count as f64 * self.hw.pulse_distance) / self.eta;
+            Duration::from_secs_f64(time_in_secs)
+        } else {
+            Duration::ZERO
+        };
 
-            if target_duration_from_start > Duration::ZERO {
-                let elapsed_since_start = time_of_start.elapsed();
-                if elapsed_since_start < target_duration_from_start {
-                    let sleep_duration = target_duration_from_start - elapsed_since_start;
-                    tracing::debug!("Rate limiting: sleeping for {:?}", sleep_duration);
-                    tokio::time::sleep(sleep_duration).await;
-                }
+        if target_duration_from_start > Duration::ZERO {
+            let elapsed_since_start = time_of_start.elapsed();
+            if elapsed_since_start < target_duration_from_start {
+                let sleep_duration = target_duration_from_start - elapsed_since_start;
+                tracing::debug!("Rate limiting: sleeping for {:?}", sleep_duration);
+                std::thread::sleep(sleep_duration);
             }
         }
 
@@ -235,7 +227,7 @@ impl VqSim for Simulator {
         Ok(())
     }
 
-    async fn generate_angles_for_gcs(
+    fn generate_angles_for_gcs(
         &mut self,
         received_gcs: Vec<u64>,
     ) -> Result<Vec<u8>, HardwareError> {

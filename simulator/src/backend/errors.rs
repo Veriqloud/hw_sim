@@ -4,9 +4,7 @@ use snafu::prelude::*;
 #[snafu(visibility(pub))]
 pub enum Error {
     #[snafu(display("could not connect to Unix Stream because : {}", source))]
-    ActorDied {
-        source: tokio::sync::oneshot::error::RecvError,
-    },
+    ActorDied { source: std::sync::mpsc::RecvError },
     #[snafu(display("SerdeJson error because : {}", source))]
     SerdeJson { source: serde_json::Error },
     #[snafu(display("Simulator error : {}", source))]

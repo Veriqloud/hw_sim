@@ -2,6 +2,7 @@ use crate::backend::protocols::errors::ProtocolError;
 use crate::backend::simulation::hardware::modulator_state::ModulatorState;
 use crate::backend::simulation::Simulator;
 use rand::Rng;
+use once_cell::sync::Lazy;
 use std::f64::consts::PI;
 
 mod cr_constants {
@@ -44,7 +45,7 @@ impl CorrelationsRandom for Simulator {
         };
 
         // Pre-calculate the probability lookup table for measurement outcomes.
-        let overlap_probabilities = overlaps();
+        let overlap_probabilities = &OVERLAP_PROBABILITIES;
         // Convert the QBER (a float from 0.0 to 1.0) to a u16 threshold for random comparison.
         let qber_threshold: u16 = (self.qb_err * (u16::MAX as f64)) as u16;
 
@@ -115,21 +116,21 @@ impl CorrelationsRandom for Simulator {
     }
 }
 
-/// Calculates the detection probability based on the angle.
+/// A lazily-initialized static lookup table for detection probabilities.
 /// The state is |psi> = cos(alpha)|0> + sin(alpha)|1>, where alpha is derived from the angle index.
 /// The probability of measuring the initial state is cos^2(alpha).
 ///
 /// The angle index (0-127) maps to a physical angle from 0 to PI.
 ///
-/// Returns a lookup table where `table[index]` is `cos^2(angle)` scaled to `u16::MAX`.
-fn overlaps() -> [u16; 128] {
+/// The table holds `cos^2(angle)` scaled to `u16::MAX` for each index.
+static OVERLAP_PROBABILITIES: Lazy<[u16; 128]> = Lazy::new(|| {
     let mut buf = [0u16; 128];
     for (i, elt) in buf.iter_mut().enumerate() {
         let angle_rad = (i as f64 / 128.0) * PI;
         *elt = (angle_rad.cos().powi(2) * (u16::MAX as f64)) as u16;
     }
     buf
-}
+});
 
 #[cfg(test)]
 mod tests {

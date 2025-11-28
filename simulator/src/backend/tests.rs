@@ -1,17 +1,13 @@
-#![allow(unused_imports)]
-
-use core::time::Duration;
-use std::{collections::HashMap, f64::consts::PI, thread, time::Instant};
+use std::{collections::HashMap, f64::consts::PI, time::Instant};
 
 use crate::backend::role::SimulatorMode;
 
+use configs::backend::Configuration;
 use rand::SeedableRng;
 use rand_pcg::Pcg64Mcg;
 
 use crate::backend::{
     protocols::random::CorrelationsRandom,
-    // role::{Multiparty, Role}, // Removed Multiparty and Role
-    // role::SimulatorMode, // Keep SimulatorMode - This line is removed as it's imported above
     simulation::{
         builder::SimulatorBuilder,
         hardware::{builder::HardwareBuilder, modulator_state::ModulatorState},
@@ -19,8 +15,36 @@ use crate::backend::{
     },
 };
 
-#[tokio::test]
-async fn generate_bytes() {
+#[test]
+fn valid_config() {
+    let config_json = r#"{
+    "angles": [0, 10, 11, 12],
+    "seed": 33,
+    "eta": 0.1,
+    "qberr": 0.02,
+    "pulse_distance": 1e-8,
+    "rate_limiting": false
+}"#;
+
+    let config_input: Configuration = serde_json::from_str(&config_json).unwrap();
+
+    println!("Backend Config {:?}", &config_input);
+
+    assert_eq!(
+        Configuration {
+            angles: vec![0, 10, 11, 12],
+            seed: 33,
+            eta: 0.1,
+            qberr: 0.02,
+            pulse_distance: 1e-8,
+            rate_limiting: false,
+        },
+        config_input
+    );
+}
+
+#[test]
+fn generate_bytes() {
     // test correctness of consecutive calls to correlations_random
     let hw = HardwareBuilder::new().with_pulse_distance(1e-8).build();
     let now = Instant::now();
@@ -51,10 +75,10 @@ async fn generate_bytes() {
     sim_b.start_session().unwrap();
 
     // Batch 1
-    let gcr_a1_raw = sim_a.generate_gcr_and_angles_batch().await.unwrap();
+    let gcr_a1_raw = sim_a.generate_gcr_and_angles_batch().unwrap();
     let angles_a1 = sim_a.retrieve_pending_angles_batch(vec![]).unwrap();
 
-    let gcr_b1_raw = sim_b.generate_gcr_and_angles_batch().await.unwrap();
+    let gcr_b1_raw = sim_b.generate_gcr_and_angles_batch().unwrap();
     let angles_b1 = sim_b.retrieve_pending_angles_batch(vec![]).unwrap();
 
     // Helper to decode GCR into result bits.
@@ -74,10 +98,10 @@ async fn generate_bytes() {
     );
 
     // Batch 2
-    let gcr_a2_raw = sim_a.generate_gcr_and_angles_batch().await.unwrap();
+    let gcr_a2_raw = sim_a.generate_gcr_and_angles_batch().unwrap();
     let angles_a2 = sim_a.retrieve_pending_angles_batch(vec![]).unwrap();
 
-    let gcr_b2_raw = sim_b.generate_gcr_and_angles_batch().await.unwrap();
+    let gcr_b2_raw = sim_b.generate_gcr_and_angles_batch().unwrap();
     let angles_b2 = sim_b.retrieve_pending_angles_batch(vec![]).unwrap();
 
     let results_a2: Vec<u8> = gcr_a2_raw.iter().map(|gcr| extract_result(gcr)).collect();
@@ -96,8 +120,8 @@ async fn generate_bytes() {
     sim_b.stop_session().unwrap();
 }
 
-#[tokio::test]
-async fn source_angle_generation_consistency() {
+#[test]
+fn source_angle_generation_consistency() {
     let seed = 12345;
     let common_angles = vec![0, 32, 64, 96];
     let hw_config = HardwareBuilder::new().with_pulse_distance(1e-9).build();
@@ -115,10 +139,7 @@ async fn source_angle_generation_consistency() {
         .build();
 
     sim_gcr_source.start_session().unwrap();
-    let _gcr_data = sim_gcr_source
-        .generate_gcr_and_angles_batch()
-        .await
-        .unwrap();
+    let _gcr_data = sim_gcr_source.generate_gcr_and_angles_batch().unwrap();
     let angles_from_gcr_flow = sim_gcr_source
         .retrieve_pending_angles_batch(vec![]) // Dummy GCs, not used by retrieve
         .unwrap();
@@ -141,7 +162,6 @@ async fn source_angle_generation_consistency() {
     let dummy_gcs: Vec<u64> = (0..angles_from_gcr_flow.len() as u64).collect();
     let angles_from_direct_flow = sim_direct_angles_source
         .generate_angles_for_gcs(dummy_gcs)
-        .await
         .unwrap();
     sim_direct_angles_source.stop_session().unwrap();
 
@@ -156,8 +176,8 @@ async fn source_angle_generation_consistency() {
     );
 }
 
-#[tokio::test]
-async fn qkd_statistics_asymmetric_workflow_ok() {
+#[test]
+fn qkd_statistics_asymmetric_workflow_ok() {
     // This test verifies that for any given combination of angles, the measured
     // deviation from the ideal quantum result matches the configured `qb_err`.
     // The `qb_err` is modeled as a simple bit-flip probability.
@@ -206,7 +226,7 @@ async fn qkd_statistics_asymmetric_workflow_ok() {
 
     // Generate a larger number of batches for better statistical significance
     for _ in 0..32 {
-        let gcr_b_batch = sim_b.generate_gcr_and_angles_batch().await.unwrap();
+        let gcr_b_batch = sim_b.generate_gcr_and_angles_batch().unwrap();
         let angles_b_batch = sim_b.retrieve_pending_angles_batch(vec![]).unwrap();
 
         let mut gcs_for_alice = Vec::with_capacity(gcr_b_batch.len());
@@ -218,7 +238,7 @@ async fn qkd_statistics_asymmetric_workflow_ok() {
             current_results_b.push(result);
         }
 
-        let angles_a_batch = sim_a.generate_angles_for_gcs(gcs_for_alice).await.unwrap();
+        let angles_a_batch = sim_a.generate_angles_for_gcs(gcs_for_alice).unwrap();
 
         angles_a_all.extend(angles_a_batch);
         angles_b_all.extend(angles_b_batch);
@@ -303,10 +323,12 @@ async fn qkd_statistics_asymmetric_workflow_ok() {
     }
 }
 
-#[tokio::test]
-async fn test_rate_limiting_slow_rate() {
+#[test]
+fn test_rate_limiting_slow_rate() {
     // This test verifies that the simulator's generation rate correctly
     // adheres to a slow configured rate by sleeping for the appropriate duration.
+
+    use std::time::Duration;
 
     let pulse_distance = 1e-3; // 1ms per ideal event
     let eta = 1.0; // 100% efficiency for simpler calculation
@@ -316,7 +338,11 @@ async fn test_rate_limiting_slow_rate() {
     let total_events = num_batches * batch_size;
 
     let mut sim = SimulatorBuilder::new()
-        .with_hardware(HardwareBuilder::new().with_pulse_distance(pulse_distance).build())
+        .with_hardware(
+            HardwareBuilder::new()
+                .with_pulse_distance(pulse_distance)
+                .build(),
+        )
         .with_rng(Pcg64Mcg::seed_from_u64(seed))
         .with_mode(SimulatorMode::Detector)
         .with_eta(eta)
@@ -328,7 +354,7 @@ async fn test_rate_limiting_slow_rate() {
     let start_time = Instant::now();
 
     for _ in 0..num_batches {
-        sim.generate_gcr_and_angles_batch().await.unwrap();
+        sim.generate_gcr_and_angles_batch().unwrap();
         sim.retrieve_pending_angles_batch(vec![]).unwrap();
     }
 
@@ -345,14 +371,18 @@ async fn test_rate_limiting_slow_rate() {
     assert!(
         elapsed_time >= expected_duration && elapsed_time <= expected_duration + tolerance,
         "Slow rate test failed: Elapsed time ({:?}) did not match expected time ({:?} +/- {:?})",
-        elapsed_time, expected_duration, tolerance
+        elapsed_time,
+        expected_duration,
+        tolerance
     );
 }
 
-#[tokio::test]
-async fn test_rate_limiting_high_speed() {
+#[test]
+fn test_rate_limiting_high_speed() {
     // This test verifies that for a very high configured rate, the simulator
     // does not add any artificial delay and runs as fast as possible.
+
+    use std::time::Duration;
 
     let pulse_distance = 1e-9; // 1ns per ideal event -> 1 Giga-event/sec rate
     let eta = 1.0; // 100% efficiency for simpler calculation
@@ -362,7 +392,11 @@ async fn test_rate_limiting_high_speed() {
     let total_events = num_batches * batch_size;
 
     let mut sim = SimulatorBuilder::new()
-        .with_hardware(HardwareBuilder::new().with_pulse_distance(pulse_distance).build())
+        .with_hardware(
+            HardwareBuilder::new()
+                .with_pulse_distance(pulse_distance)
+                .build(),
+        )
         .with_rng(Pcg64Mcg::seed_from_u64(seed))
         .with_mode(SimulatorMode::Detector)
         .with_eta(eta)
@@ -374,7 +408,7 @@ async fn test_rate_limiting_high_speed() {
     let start_time = Instant::now();
 
     for _ in 0..num_batches {
-        sim.generate_gcr_and_angles_batch().await.unwrap();
+        sim.generate_gcr_and_angles_batch().unwrap();
         sim.retrieve_pending_angles_batch(vec![]).unwrap();
     }
 

@@ -3,21 +3,21 @@ pub mod cli_args;
 pub mod errors;
 pub mod ipc;
 
-use crate::{
-    backend::role::SimulatorMode,
-};
-use configs::{
-    Configuration,
-    ipc::{AliceIpcConfig, BobIpcConfig},
-};
+use crate::backend::role::SimulatorMode;
 use backend::simulation::builder::SimulatorBuilder;
 use clap::Parser;
+use configs::{
+    ipc::{AliceIpcConfig, BobIpcConfig},
+    Configuration,
+};
 use ipc::writer::actor::IPCWriterActorHandle;
 use snafu::ResultExt;
-use std::{io::SeekFrom, sync::OnceLock, time::Duration};
-use tokio::{
-    io::{AsyncSeekExt, AsyncWriteExt},
-    time::sleep,
+use std::{
+    fs,
+    io::{Seek, SeekFrom, Write},
+    sync::OnceLock,
+    thread::{self, sleep},
+    time::Duration,
 };
 use tracing::trace_span;
 use tracing_subscriber::fmt::writer::MakeWriterExt;
@@ -25,16 +25,15 @@ use uuid::Uuid;
 
 pub static CONFIG: OnceLock<Configuration> = OnceLock::new();
 
-#[tokio::main]
-async fn main() {
-    if let Err(e) = app_main().await {
+fn main() {
+    if let Err(e) = app_main() {
         eprintln!("Application exited with error: {}", e);
         std::process::exit(1);
     }
 }
 
 // Core application logic
-async fn app_main() -> Result<(), crate::errors::Error> {
+fn app_main() -> Result<(), crate::errors::Error> {
     let span = trace_span!("app_main");
     let _guard = span.enter();
 
@@ -112,7 +111,7 @@ async fn app_main() -> Result<(), crate::errors::Error> {
     match &CONFIG.get().unwrap().ipc_config {
         configs::ipc::Configuration::Alice(alice_config) => {
             tracing::info!("Attempting to trigger initial PPS for Alice...");
-            if let Err(e) = trigger_pps(&alice_config.command_path).await {
+            if let Err(e) = trigger_pps(&alice_config.command_path) {
                 tracing::error!(
                     "Failed to trigger initial PPS for Alice: {}. Continuing...",
                     e
@@ -120,12 +119,12 @@ async fn app_main() -> Result<(), crate::errors::Error> {
             } else {
                 tracing::info!("Initial PPS for Alice triggered successfully.");
             }
-            run_alice_workflow(&alice_config, simu_handle, simulator_mode).await;
+            run_alice_workflow(&alice_config, simu_handle, simulator_mode);
             tracing::error!("Alice's workflow function returned unexpectedly.");
         }
         configs::ipc::Configuration::Bob(bob_config) => {
             tracing::info!("Attempting to trigger initial PPS for Bob...");
-            if let Err(e) = trigger_pps(&bob_config.command_path).await {
+            if let Err(e) = trigger_pps(&bob_config.command_path) {
                 tracing::error!(
                     "Failed to trigger initial PPS for Bob: {}. Continuing...",
                     e
@@ -133,7 +132,7 @@ async fn app_main() -> Result<(), crate::errors::Error> {
             } else {
                 tracing::info!("Initial PPS for Bob triggered successfully.");
             }
-            run_bob_workflow(&bob_config, simu_handle, simulator_mode).await;
+            run_bob_workflow(&bob_config, simu_handle, simulator_mode);
             tracing::error!("Bob's workflow function returned unexpectedly.");
         }
     }
@@ -142,20 +141,19 @@ async fn app_main() -> Result<(), crate::errors::Error> {
 }
 
 /// Writes a '1' to a specific offset in the command file to trigger a PPS signal.
-async fn trigger_pps(command_path: &str) -> Result<(), std::io::Error> {
-    let mut file = tokio::fs::OpenOptions::new()
+fn trigger_pps(command_path: &str) -> Result<(), std::io::Error> {
+    let mut file = std::fs::OpenOptions::new()
         .read(true)
         .write(true)
-        .open(command_path)
-        .await?;
+        .open(command_path)?;
 
     // As per the sample function, write to offset 0x1000 + 48.
     let absolute_offset = 0x1000u64 + 48u64;
 
     // Seek to the position and write the value.
-    file.seek(SeekFrom::Start(absolute_offset)).await?;
-    file.write_all(&1u32.to_le_bytes()).await?;
-    file.flush().await?;
+    file.seek(SeekFrom::Start(absolute_offset))?;
+    file.write_all(&1u32.to_le_bytes())?;
+    file.flush()?;
 
     tracing::info!(
         "Successfully wrote 1u32 to offset 0x{:X} in file {} for PPS trigger.",
@@ -166,7 +164,7 @@ async fn trigger_pps(command_path: &str) -> Result<(), std::io::Error> {
 }
 
 // Alice's (Source) workflow: waits for a controller connection in a loop.
-async fn run_alice_workflow(
+fn run_alice_workflow(
     config: &AliceIpcConfig,
     simu_handle: backend::actor::ActorHandle,
     simulator_mode: SimulatorMode,
@@ -177,36 +175,41 @@ async fn run_alice_workflow(
         // Reset FIFOs for the new session.
         tracing::info!("Resetting FIFOs for new Alice session.");
         if let Err(e) = CONFIG.get().unwrap().ipc_config.reset_ipc_fifos() {
-            tracing::error!(
-                "Failed to reset FIFOs for Alice: {}. Retrying in 500ms.",
-                e
-            );
-            sleep(Duration::from_millis(500)).await;
+            tracing::error!("Failed to reset FIFOs for Alice: {}. Retrying in 500ms.", e);
+            sleep(Duration::from_millis(500));
             continue;
         }
 
         // For Alice, the GCR file is not used for writing data, but the IPCWriterActor
         // requires a file handle. We open /dev/null as a black hole for any potential writes.
-        let gcr_file_writer = match tokio::fs::OpenOptions::new()
-            .write(true)
-            .open("/dev/null")
-            .await
-        {
+        let gcr_file_writer = match std::fs::OpenOptions::new().write(true).open("/dev/null") {
             Ok(file) => file,
             Err(e) => {
                 tracing::error!("Failed to open /dev/null for GCR writer: {}. This is required for Alice's workflow. Exiting.", e);
                 return;
             }
         };
+        // Assuming `config` is available in this scope.
+        let (angles_res, gc_read_res) = thread::scope(|s| {
+            let angles_handle = s.spawn(|| {
+                fs::OpenOptions::new()
+                    .write(true)
+                    .open(&config.angle_file_path)
+            });
 
-        // Open file handles concurrently to prevent deadlocks with other processes.
-        // The `OpenOptions` structs must outlive the futures created by `open()`.
-        let mut angles_options = tokio::fs::OpenOptions::new();
-        let mut gc_read_options = tokio::fs::OpenOptions::new();
-        let (angles_res, gc_read_res) = tokio::join!(
-            angles_options.write(true).open(&config.angle_file_path),
-            gc_read_options.read(true).open(&config.gc_read_file_path)
-        );
+            let gc_read_handle = s.spawn(|| {
+                fs::OpenOptions::new()
+                    .read(true)
+                    .open(&config.gc_read_file_path)
+            });
+
+            // The .join() calls will block until the threads complete.
+            // The `unwrap()` here will propagate panics from the threads.
+            (
+                angles_handle.join().unwrap(),
+                gc_read_handle.join().unwrap(),
+            )
+        });
 
         let angles_file_writer = match angles_res {
             Ok(file) => file,
@@ -216,7 +219,7 @@ async fn run_alice_workflow(
                     &config.angle_file_path,
                     e
                 );
-                sleep(Duration::from_millis(500)).await;
+                sleep(Duration::from_millis(500));
                 continue;
             }
         };
@@ -229,7 +232,7 @@ async fn run_alice_workflow(
                     &config.gc_read_file_path,
                     e
                 );
-                sleep(Duration::from_millis(500)).await;
+                sleep(Duration::from_millis(500));
                 continue;
             }
         };
@@ -246,7 +249,7 @@ async fn run_alice_workflow(
         );
 
         tracing::info!("Starting IPC command processing loop for Alice.");
-        if let Err(e) = ipc_reader.start().await {
+        if let Err(e) = ipc_reader.start() {
             tracing::warn!(
                 "IPC processing for Alice ended with an error: {:?}. Preparing for new connection.",
                 e
@@ -254,12 +257,12 @@ async fn run_alice_workflow(
         } else {
             tracing::info!("IPCReader for Alice exited cleanly. Preparing for new connection.");
         }
-        sleep(Duration::from_millis(250)).await;
+        sleep(Duration::from_millis(250));
     }
 }
 
 // Bob's (Detector) workflow: starts immediately, does not wait for controller.
-async fn run_bob_workflow(
+fn run_bob_workflow(
     config: &BobIpcConfig,
     simu_handle: backend::actor::ActorHandle,
     simulator_mode: SimulatorMode,
@@ -270,24 +273,38 @@ async fn run_bob_workflow(
         // Reset FIFOs for the new session.
         tracing::info!("Resetting FIFOs for new Bob session.");
         if let Err(e) = CONFIG.get().unwrap().ipc_config.reset_ipc_fifos() {
-            tracing::error!(
-                "Failed to reset FIFOs for Bob: {}. Retrying in 500ms.",
-                e
-            );
-            sleep(Duration::from_millis(500)).await;
+            tracing::error!("Failed to reset FIFOs for Bob: {}. Retrying in 500ms.", e);
+            sleep(Duration::from_millis(500));
             continue;
         }
 
         // Open file handles concurrently to prevent deadlocks with other processes.
         // The `OpenOptions` structs must outlive the futures created by `open()`.
-        let mut angles_options = tokio::fs::OpenOptions::new();
-        let mut gcr_options = tokio::fs::OpenOptions::new();
-        let mut gc_read_options = tokio::fs::OpenOptions::new();
-        let (angles_res, gcr_res, gc_read_res) = tokio::join!(
-            angles_options.write(true).open(&config.angle_file_path),
-            gcr_options.write(true).open(&config.gcr_file_path),
-            gc_read_options.read(true).open(&config.gc_read_file_path)
-        );
+        let (angles_res, gcr_res, gc_read_res) = thread::scope(|s| {
+            let angles_handle = s.spawn(|| {
+                std::fs::OpenOptions::new()
+                    .write(true)
+                    .open(&config.angle_file_path)
+            });
+
+            let gcr_handle = s.spawn(|| {
+                std::fs::OpenOptions::new()
+                    .write(true)
+                    .open(&config.gcr_file_path)
+            });
+
+            let gc_read_handle = s.spawn(|| {
+                std::fs::OpenOptions::new()
+                    .read(true) // <-- This must be opened for READING for the IPCReader
+                    .open(&config.gc_read_file_path) 
+            });
+
+            (
+                angles_handle.join().unwrap(),
+                gcr_handle.join().unwrap(),
+                gc_read_handle.join().unwrap(),
+            )
+        });
 
         let angles_file_writer = match angles_res {
             Ok(f) => f,
@@ -297,7 +314,7 @@ async fn run_bob_workflow(
                     &config.angle_file_path,
                     e
                 );
-                sleep(Duration::from_millis(500)).await;
+                sleep(Duration::from_millis(500));
                 continue;
             }
         };
@@ -305,8 +322,12 @@ async fn run_bob_workflow(
         let gcr_file_writer = match gcr_res {
             Ok(f) => f,
             Err(e) => {
-                tracing::error!("Failed to open gcr_file_path '{}': {}. Retrying in 500ms.", &config.gcr_file_path, e);
-                sleep(Duration::from_millis(500)).await;
+                tracing::error!(
+                    "Failed to open gcr_file_path '{}': {}. Retrying in 500ms.",
+                    &config.gcr_file_path,
+                    e
+                );
+                sleep(Duration::from_millis(500));
                 continue;
             }
         };
@@ -319,7 +340,7 @@ async fn run_bob_workflow(
                     &config.gc_read_file_path,
                     e
                 );
-                sleep(Duration::from_millis(500)).await;
+                sleep(Duration::from_millis(500));
                 continue;
             }
         };
@@ -336,7 +357,7 @@ async fn run_bob_workflow(
         );
 
         tracing::info!("Starting IPC command processing loop for Bob.");
-        if let Err(e) = ipc_reader.start().await {
+        if let Err(e) = ipc_reader.start() {
             tracing::error!(
                 "IPC processing for Bob ended with an error: {:?}. Preparing for new connection.",
                 e
@@ -344,6 +365,6 @@ async fn run_bob_workflow(
         } else {
             tracing::info!("IPCReader for Bob exited cleanly. Preparing for new connection.");
         }
-        sleep(Duration::from_millis(250)).await;
+        sleep(Duration::from_millis(250));
     }
 }

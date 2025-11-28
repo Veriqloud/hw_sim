@@ -16,7 +16,7 @@ pub enum Error {
         source: crate::ipc::writer::errors::Error,
     },
     #[snafu(display("UnixStream error {}", source))]
-    UnixStream { source: tokio::io::Error },
+    UnixStream { source: std::io::Error },
     #[snafu(display("IO error {}", source))]
     IO { source: std::io::Error },
     #[snafu(display("SerdeJSON error {}", source))]
@@ -26,5 +26,7 @@ pub enum Error {
     #[snafu(display("IPC Configuration error: {source}"))]
     IpcConfig { source: configs::ipc::errors::Error },
     #[snafu(display("Logger initialization error: {source}"))]
-    LoggerInitialization { source: tracing_subscriber::filter::LevelParseError },
+    LoggerInitialization {
+        source: tracing_subscriber::filter::LevelParseError,
+    },
 }
