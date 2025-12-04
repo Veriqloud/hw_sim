@@ -1,2 +1,0 @@
-fiber_delay	100
-decoy_delay	100

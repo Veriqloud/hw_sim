@@ -8,7 +8,6 @@ name = "simulator"
 path = "src/main.rs"
 
 [dependencies]
-async-trait = { workspace = true }
 snafu = { workspace = true }
 tracing-test = { workspace = true }
 tracing = { workspace = true }
@@ -18,8 +17,6 @@ tracing-appender = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 rand = { workspace = true }
-tokio-test = { workspace = true }
-futures-util = { workspace = true }
 rand_pcg = { workspace = true }
 itertools = { workspace = true }
 clap = { workspace = true }
