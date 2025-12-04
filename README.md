@@ -17,9 +17,9 @@ cargo build --release
 
 The simulator expects a configuration file, likely in JSON format. The configuration file specifies various parameters for the simulation. While the exact structure is defined in the `configs` crate, it includes:
 
-*   Paths to input and output files.
-*   Simulation parameters (e.g., noise models, number of shots).
-*   Logging configuration.
+*   Paths to input and output files
+*   Hardware parameters (qber, pulse_rate, etc.)
+*   Logging configuration
 
 The configuration files can be generated using the [QLine Auto Setup Tool](https://github.com/Veriqloud/qline_backend/tree/master/auto_setup).
 
