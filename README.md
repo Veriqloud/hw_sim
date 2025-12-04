@@ -1,4 +1,4 @@
-# Hardware Simulator (`hw_sim`)
+# Hardware Simulator
 
 This project contains a simulator of the VeriQloud QKD hardware, along with a controller to manage it for test purposes.
 The simulator mimics a quantum key distribution protocol between Alice (the source) and Bob (the detector). In this simulator, no communication is used to have the expected correlation but instead a preshared seed. This simulator is not intended to be used in any production environment, and only used for test and debug purposes.
