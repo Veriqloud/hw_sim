@@ -39,3 +39,5 @@ To run the simu_controller for Alice :
 ```bash
 cargo run --bin simu_controller -- --config-path ~/.config/qline/alice/hw_sim_config.json alice 1000
 ```
+
+
