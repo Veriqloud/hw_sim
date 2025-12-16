@@ -18,7 +18,7 @@ cd hw_sim && cargo build --release && cd ..
 Clone and build gc and qber :
 ```
 git clone --branch master git@github.com:Veriqloud/kiwi_hw_control.git
-cd kiwi_hw_control/gc & cargo build --release
+cd kiwi_hw_control/gc && cargo build --release
 cd ../qber && cargo build --release && cd ..
 ```
 
@@ -144,19 +144,19 @@ Here is an example of qber configuration file for Bob :
 
 First, we run both simulators for Alice and Bob.
 ```
-cd hw_sim && cargo run --bin simulator -- --config-path PATH_TO_HW_ALICE_CONFIG
+cd ../hw_sim && cargo run --bin simulator -- --config-path PATH_TO_HW_ALICE_CONFIG
 cargo run --bin simulator -- --config-path PATH_TO_HW_BOB_CONFIG
 ```
 
 Then, we run both gc for Alice and Bob.
 ```
-cd .. && cargo run -- --c PATH_TO_GC_ALICE_CONFIG
-cargo run -- -c PATH_TO_GC_BOB_CONFIG
+cd ../kiwi_hw_control/gc && cargo run --bin alice -- -c PATH_TO_GC_ALICE_CONFIG
+cargo run --bin bob -- -c PATH_TO_GC_BOB_CONFIG
 ```
 
 
 Finally, we run both qber for Alice and Bob.
 ```
-cd .. && cargo run -- -c PATH_TO_QBER_ALICE_CONFIG
-cargo run -- -c PATH_TO_QBER_BOB_CONFIG
+cd ../qber && cargo run --bin bob -- -c PATH_TO_QBER_BOB_CONFIG
+cargo run --bin alice -- -c PATH_TO_QBER_ALICE_CONFIG 6400
 ```
