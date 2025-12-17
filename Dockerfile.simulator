@@ -1,0 +1,28 @@
+FROM rust:alpine AS builder
+
+WORKDIR /build
+
+RUN apk add --no-cache build-base git
+
+RUN git config --global url."https://github.com/".insteadOf "ssh://git@github.com/"
+
+RUN git clone --branch master https://github.com/Veriqloud/hw_sim.git
+WORKDIR /build/hw_sim
+RUN cargo fetch
+RUN cargo build --release --bin simulator
+
+WORKDIR /build
+RUN git clone --branch master https://github.com/Veriqloud/kiwi_hw_control.git
+WORKDIR /build/kiwi_hw_control/gc
+RUN cargo fetch
+RUN cargo build --release --bin alice --bin bob
+
+FROM alpine:latest
+
+RUN apk add --no-cache libgcc
+
+WORKDIR /usr/local/bin
+
+COPY --from=builder /build/hw_sim/target/release/simulator /usr/local/bin/
+COPY --from=builder /build/kiwi_hw_control/gc/target/release/alice /usr/local/bin/gc_alice
+COPY --from=builder /build/kiwi_hw_control/gc/target/release/bob /usr/local/bin/gc_bob

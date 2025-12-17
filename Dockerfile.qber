@@ -1,0 +1,21 @@
+# Stage 1: Build qber application
+FROM rust:alpine AS builder
+
+WORKDIR /build
+
+RUN apk add --no-cache build-base git
+RUN git clone --branch master https://github.com/Veriqloud/kiwi_hw_control.git
+
+WORKDIR /build/kiwi_hw_control/qber
+
+RUN cargo fetch
+RUN cargo build --release --bin alice --bin bob
+
+FROM alpine:latest
+
+RUN apk add --no-cache libgcc
+
+WORKDIR /usr/local/bin
+
+COPY --from=builder /build/kiwi_hw_control/qber/target/release/alice /usr/local/bin/
+COPY --from=builder /build/kiwi_hw_control/qber/target/release/bob /usr/local/bin/

@@ -1,0 +1,17 @@
+{
+  "player": {
+    "Alice": {
+      "fifo": {
+        "command_socket_path": "/tmp/gc_alice_command.socket",
+        "gc_file_path": "/tmp/gc_alice_gc.fifo"
+      },
+      "network": {
+        "ip_gc": "127.0.0.1:53948"
+      }
+    }
+  },
+  "current_hw_parameters_file_path": "/tmp/hw_params_alice.txt",
+  "fpga_start_socket_path": "/tmp/fpga_alice",
+  "log_level": "Info",
+  "ignore_gcr_timeout": true
+}
