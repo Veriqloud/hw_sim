@@ -17,5 +17,5 @@
     "gc_read_file_path": "/tmp/gc_alice_gc.fifo",
     "hw_params_file_path": "/tmp/hw_params_alice.txt"
   },
-  "log_level": "Info"
+  "log_level": "Error"
 }

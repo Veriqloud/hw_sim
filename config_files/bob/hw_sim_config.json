@@ -18,5 +18,5 @@
     "gc_read_file_path": "/tmp/gc_bob_gc.fifo",
     "hw_params_file_path": "/tmp/hw_params_bob.txt"
   },
-  "log_level": "Info"
+  "log_level": "Error"
 }
