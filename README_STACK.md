@@ -15,162 +15,99 @@ The goal of this guide is to show you how to run the simulator (`hw_sim` + `gc`)
 
 ## 1. Prerequisites
 
-- **Rust Toolchain**: Ensure you have Rust and Cargo installed. You can get them from rustup.rs.
+For running with Docker (recommended):
+- **Docker**: Ensure you have a recent version of Docker installed.
+- **Docker Compose**: The `compose` plugin for Docker is required.
+
+For running manually (for development):
+- **Rust Toolchain**: Ensure you have Rust and Cargo installed (`rustup.rs`).
 - **Git**: Required for cloning the repositories.
-- **Build Tools**: A C compiler and build tools are needed (`build-essential` on Debian/Ubuntu).
+- **Build Tools**: A C compiler and build tools (`build-essential` on Debian/Ubuntu).
 
-## 2. Installation
+## 2. Configuration
 
-First, clone the necessary repositories and build the binaries for each component.
+The stack requires several configuration files for each component (hw_sim, gc, qber) and for each player (Alice, Bob).
 
-Clone and build hw_sim :
+Example configuration files are provided in the `config_files/` directory, organized by player:
+
 ```
-git clone --branch master git@github.com:Veriqloud/hw_sim.git
+config_files/
+├── alice/
+│   ├── gc_config.json
+│   ├── hw_sim_config.json
+│   └── qber_config.json
+└── bob/
+    ├── gc_config.json
+    ├── hw_sim_config.json
+    └── qber_config.json
+```
+
+These files are set up for local communication using FIFOs and sockets in the `/tmp` directory and are ready to be used with the provided `docker-compose.yml`.
+
+## 3. Running the Stack
+
+### Using Docker Compose (Recommended)
+
+The easiest way to run the full simulation stack is with Docker Compose. This will build the necessary container images and run all services with the correct configuration.
+
+To start the stack, run:
+```bash
+docker compose up --build
+```
+
+You will see logs from all the services (`hw_sim`, `gc`, and `qber` for both Alice and Bob).
+
+To stop the services and remove the containers, press `Ctrl+C` and then run:
+```bash
+docker compose down
+```
+
+### Running Manually (for Development)
+
+If you prefer to run the components manually for development or debugging, you can build and run them directly using Cargo.
+
+**1. Build the Binaries**
+```bash
+# Clone and build hw_sim
+git clone --branch master https://github.com/Veriqloud/hw_sim.git
 cd hw_sim && cargo build --release && cd ..
+
+# Clone and build gc and qber
+git clone --branch master https://github.com/Veriqloud/kiwi_hw_control.git
+cd kiwi_hw_control/gc && cargo build --release && cd ..
+cd qber && cargo build --release && cd ../..
 ```
 
-Clone and build gc and qber :
-```
-git clone --branch master git@github.com:Veriqloud/kiwi_hw_control.git
-cd kiwi_hw_control/gc && cargo build --release
-cd ../qber && cargo build --release && cd ..
+**2. Run the Services**
+
+You will need to open multiple terminal windows to run each component. Make sure to replace the placeholder paths with the actual paths to the configuration files in the `config_files` directory.
+
+*In terminal 1 (hw_sim Alice):*
+```bash
+cd hw_sim && cargo run --bin simulator -- --config-path ../config_files/alice/hw_sim_config.json
 ```
 
-## 3. Configuration
-
-### For Alice
-Here is an example of hw_sim configuration file for Alice :
-```
-{
-  "backend_config": {
-    "angles": [
-      0,
-      32,
-      64,
-      96
-    ],
-    "seed": 42,
-    "eta": 0.0,
-    "qberr": 0.05,
-    "pulse_distance": 1e-8
-  },
-  "ipc_config": {
-    "command_path": "/tmp/fpga_alice",
-    "angle_file_path": "/tmp/gc_alice_angle.fifo",
-    "gc_read_file_path": "/tmp/gc_alice_gc.fifo",
-    "hw_params_file_path": "/tmp/hw_params_alice.txt"
-  },
-  "log_level": "Info"
-}
+*In terminal 2 (hw_sim Bob):*
+```bash
+cd hw_sim && cargo run --bin simulator -- --config-path ../config_files/bob/hw_sim_config.json
 ```
 
-Here is an example of gc configuration file for Alice :
-```
-{
-  "player": {
-    "Alice": {
-      "fifo": {
-        "command_socket_path": "/tmp/gc_alice_command.socket",
-        "gc_file_path": "/tmp/gc_alice_gc.fifo"
-      },
-      "network": {
-        "ip_gc": "127.0.0.1:53948"
-      }
-    }
-  },
-  "current_hw_parameters_file_path": "/tmp/hw_params_alice.txt",
-  "fpga_start_socket_path": "/tmp/fpga_alice",
-  "log_level": "Info",
-  "ignore_gcr_timeout": true
-}
+*In terminal 3 (gc Alice):*
+```bash
+cd kiwi_hw_control/gc && cargo run --bin alice -- -c ../../config_files/alice/gc_config.json
 ```
 
-Here is an example of qber configuration file for Alice :
-```
-{
-  "ip_bob": "127.0.0.1:58000",
-  "angle_file_path": "/tmp/gc_alice_angle.fifo",
-  "command_socket_path": "/tmp/gc_alice_command.socket"
-}
+*In terminal 4 (gc Bob):*
+```bash
+cd kiwi_hw_control/gc && cargo run --bin bob -- -c ../../config_files/bob/gc_config.json
 ```
 
-
-### For Bob
-Here is an example of hw_sim configuration file for Bob :
-```
-{
-  "backend_config": {
-    "angles": [
-      0,
-      32,
-      64,
-      96
-    ],
-    "seed": 42,
-    "eta": 0.0,
-    "qberr": 0.05,
-    "pulse_distance": 1e-8
-  },
-  "ipc_config": {
-    "command_path": "/tmp/fpga_bob",
-    "angle_file_path": "/tmp/gc_bob_angle.fifo",
-    "gcr_file_path": "/tmp/gc_bob_gcr.fifo",
-    "gc_read_file_path": "/tmp/gc_bob_gc.fifo",
-    "hw_params_file_path": "/tmp/hw_params_bob.txt"
-  },
-  "log_level": "Info"
-}
+*In terminal 5 (qber Bob):*
+```bash
+cd kiwi_hw_control/qber && cargo run --bin bob -- -c ../../config_files/bob/qber_config.json
 ```
 
-Here is an example of gc configuration file for Bob:
-```
-{
-  "player": {
-    "Bob": {
-      "fifo": {
-        "gcr_file_path": "/tmp/gc_bob_gcr.fifo",
-        "gc_file_path": "/tmp/gc_bob_gc.fifo",
-        "click_result_file_path": "/tmp/gc_bob_click_result.fifo",
-        "gcuser_file_path": ""
-      },
-      "network": {
-        "ip_gc": "127.0.0.1:53948"
-      }
-    }
-  },
-  "current_hw_parameters_file_path": "/tmp/hw_params_bob.txt",
-  "fpga_start_socket_path": "/tmp/fpga_bob",
-  "log_level": "Info",
-  "ignore_gcr_timeout": true
-}
-```
-
-Here is an example of qber configuration file for Bob :
-```
-{
-  "ip_listen": "127.0.0.1:58000",
-  "angle_file_path": "/tmp/gc_bob_angle.fifo",
-  "click_result_file_path": "/tmp/gc_bob_click_result.fifo"
-}
-```
-
-## Run the stack locally
-
-First, we run both simulators for Alice and Bob.
-```
-cd ../hw_sim && cargo run --bin simulator -- --config-path PATH_TO_HW_ALICE_CONFIG
-cargo run --bin simulator -- --config-path PATH_TO_HW_BOB_CONFIG
-```
-
-Then, we run both gc for Alice and Bob.
-```
-cd ../kiwi_hw_control/gc && cargo run --bin alice -- -c PATH_TO_GC_ALICE_CONFIG
-cargo run --bin bob -- -c PATH_TO_GC_BOB_CONFIG
-```
-
-
-Finally, we run both qber for Alice and Bob.
-```
-cd ../qber && cargo run --bin bob -- -c PATH_TO_QBER_BOB_CONFIG
-cargo run --bin alice -- -c PATH_TO_QBER_ALICE_CONFIG 6400
+*In terminal 6 (qber Alice):*
+```bash
+cd kiwi_hw_control/qber && cargo run --bin alice -- -c ../../config_files/alice/qber_config.json 6400
 ```
