@@ -1,5 +1,6 @@
 volumes:
-  tmp_data:
+  tmp_data_alice:
+  tmp_data_bob:
 
 services:
   hw_sim_alice:
@@ -10,7 +11,7 @@ services:
     network_mode: "host"
     volumes:
       - ./config_files/alice:/data
-      - tmp_data:/tmp
+      - tmp_data_alice:/tmp
 
   hw_sim_bob:
     build:
@@ -20,7 +21,7 @@ services:
     network_mode: "host"
     volumes:
       - ./config_files/bob:/data
-      - tmp_data:/tmp
+      - tmp_data_bob:/tmp
 
   gc_alice:
     build:
@@ -30,7 +31,7 @@ services:
     network_mode: "host"
     volumes:
       - ./config_files/alice:/data
-      - tmp_data:/tmp
+      - tmp_data_alice:/tmp
     depends_on:
       - hw_sim_alice
 
@@ -42,7 +43,7 @@ services:
     network_mode: "host"
     volumes:
       - ./config_files/bob:/data
-      - tmp_data:/tmp
+      - tmp_data_bob:/tmp
     depends_on:
       - hw_sim_bob
 
@@ -54,7 +55,7 @@ services:
     network_mode: "host"
     volumes:
       - ./config_files/bob:/data
-      - tmp_data:/tmp
+      - tmp_data_bob:/tmp
     depends_on:
       - gc_bob
 
@@ -66,7 +67,7 @@ services:
     network_mode: "host"
     volumes:
       - ./config_files/alice:/data
-      - tmp_data:/tmp
+      - tmp_data_alice:/tmp
     depends_on:
       - gc_alice
       - qber_bob
