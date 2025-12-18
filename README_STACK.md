@@ -52,7 +52,7 @@ The easiest way to run the full simulation stack is with Docker Compose. This wi
 
 To start the stack, run:
 ```bash
-docker compose up --build
+docker compose up
 ```
 
 You will see logs from all the services (`hw_sim`, `gc`, and `qber` for both Alice and Bob).
