@@ -63,7 +63,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.qber
-    command: sh -c "sleep 2 && alice -c /data/qber_config.json 6400"
+    command: alice -c /data/qber_config.json 6400
     network_mode: "host"
     volumes:
       - ./config_files/alice:/data
