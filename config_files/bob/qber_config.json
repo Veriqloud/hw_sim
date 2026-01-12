@@ -1,0 +1,5 @@
+{
+  "ip_listen": "127.0.0.1:58000",
+  "angle_file_path": "/tmp/gc_bob_angle.fifo",
+  "click_result_file_path": "/tmp/gc_bob_click_result.fifo"
+}

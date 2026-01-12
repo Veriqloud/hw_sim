@@ -1,9 +1,14 @@
 {
   "backend_config": {
-    "angles": [0, 32, 64, 96],
+    "angles": [
+      0,
+      32,
+      96,
+      64
+    ],
     "seed": 42,
-    "eta": 0.1,
-    "qberr": 0.02,
+    "eta": 0.0,
+    "qberr": 0.05,
     "pulse_distance": 1e-8
   },
   "ipc_config": {
@@ -13,5 +18,5 @@
     "gc_read_file_path": "/tmp/gc_bob_gc.fifo",
     "hw_params_file_path": "/tmp/hw_params_bob.txt"
   },
-  "log_level": "Info"
+  "log_level": "Error"
 }

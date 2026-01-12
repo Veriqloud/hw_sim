@@ -1,0 +1,19 @@
+{
+  "player": {
+    "Bob": {
+      "fifo": {
+        "gcr_file_path": "/tmp/gc_bob_gcr.fifo",
+        "gc_file_path": "/tmp/gc_bob_gc.fifo",
+        "click_result_file_path": "/tmp/gc_bob_click_result.fifo",
+        "gcuser_file_path": ""
+      },
+      "network": {
+        "ip_gc": "127.0.0.1:53948"
+      }
+    }
+  },
+  "current_hw_parameters_file_path": "/tmp/hw_params_bob.txt",
+  "fpga_start_socket_path": "/tmp/fpga_bob",
+  "log_level": "Error",
+  "ignore_gcr_timeout": true
+}

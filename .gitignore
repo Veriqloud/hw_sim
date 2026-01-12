@@ -3,3 +3,4 @@
 justfile
 CLAUDE.md
 perf.data*
+Cargo.lock

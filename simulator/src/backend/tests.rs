@@ -19,8 +19,7 @@ fn valid_config() {
     "seed": 33,
     "eta": 0.1,
     "qberr": 0.02,
-    "pulse_distance": 1e-8,
-    "rate_limiting": false
+    "pulse_distance": 1e-8
 }"#;
 
     let config_input: Configuration = serde_json::from_str(&config_json).unwrap();

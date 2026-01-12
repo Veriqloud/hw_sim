@@ -1,0 +1,5 @@
+{
+  "ip_bob": "127.0.0.1:58000",
+  "angle_file_path": "/tmp/gc_alice_angle.fifo",
+  "command_socket_path": "/tmp/gc_alice_command.socket"
+}
