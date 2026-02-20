@@ -18,21 +18,14 @@ pub trait QkdSession {
     fn next_batch(&mut self) -> Result<QkdBatch, ProtocolError>;
 }
 
-/// `QkdService` provides a high-level interface to run a QKD session using a single `Simulator`.
-/// It acts as a "black box" that produces correlated QKD batches, abstracting away the
-/// simulation details. This design allows a future implementation to use real hardware
-/// (with an adapter) without changing the service consumer.
-///
-/// It can generate batches of QKD data on-demand or as a continuous stream.
 pub struct QkdService {
     simulator: Arc<Mutex<Simulator>>,
     stop_tx: Option<mpsc::Sender<()>>,
 }
 
 impl QkdService {
-    /// Creates a new `QkdService` that takes ownership of a `Simulator`.
-    /// The simulator should be configured for `ModulatorState::Random` to generate correlations.
-    pub fn new(simulator: Simulator) -> Self {
+    pub fn new(mut simulator: Simulator) -> Self {
+        simulator.rate_limiting_enabled = false;
         Self {
             simulator: Arc::new(Mutex::new(simulator)),
             stop_tx: None,
@@ -41,7 +34,6 @@ impl QkdService {
 }
 
 impl QkdSession for QkdService {
-    /// Stops the continuous generation of `QkdBatch`es if it is running.
     fn stop(&mut self) {
         if let Some(stop_tx) = self.stop_tx.take() {
             // The send may fail if the receiver is already dropped, which is fine.
@@ -78,13 +70,11 @@ impl QkdSession for QkdService {
 
             match batch_result {
                 Ok(batch) => {
-                    // If sending fails, the receiver was dropped, so the consumer is gone.
                     if batch_tx.send(batch).is_err() {
                         break;
                     }
                 }
                 Err(e) => {
-                    // Log the error and stop generation.
                     tracing::error!("Error generating QKD batch in streaming mode: {:?}. Stopping.", e);
                     break;
                 }

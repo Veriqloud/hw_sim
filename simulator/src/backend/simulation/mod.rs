@@ -19,25 +19,21 @@ pub const BATCH_SIZE: usize = 1024;
 #[derive(Debug, PartialEq)]
 pub struct Simulator {
     pub(crate) angles: Vec<u8>,
-    /// Total qubit detection efficiency
     pub eta: f64,
-    /// Offset is taken care of automatically.
-    /// Equivalent to Bob broadcasting his global counter in the real world.
-    /// Probably not required ...
     pub(crate) global_counter: u64,
     pub(crate) hw: Hardware,
     pub(crate) modulator_state: ModulatorState,
     pub now: Instant,
     // Replaced by batch-oriented processing
     pub(crate) pending_angles_batch: Option<Vec<u8>>,
-    /// Qubit error rate
     pub qb_err: f64,
     pub(crate) rng: Pcg64Mcg,
     pub(crate) seed: u64,
-    pub simulator_mode: SimulatorMode, // Added simulator_mode field
-    pub(crate) time_of_start: Option<Instant>, // To track time for potential future use or logging
-    pub(crate) last_event_count: u64,  // Tracks total events generated in a session
+    pub simulator_mode: SimulatorMode,
+    pub(crate) time_of_start: Option<Instant>,
+    pub(crate) last_event_count: u64, 
     pub(crate) use_gcr_padding: bool,
+    pub rate_limiting_enabled: bool,
 }
 
 pub trait VqSim {
@@ -188,7 +184,7 @@ impl VqSim for Simulator {
             Duration::ZERO
         };
 
-        if target_duration_from_start > Duration::ZERO {
+        if self.rate_limiting_enabled && target_duration_from_start > Duration::ZERO {
             let elapsed_since_start = time_of_start.elapsed();
             if elapsed_since_start < target_duration_from_start {
                 let sleep_duration = target_duration_from_start - elapsed_since_start;

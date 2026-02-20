@@ -11,22 +11,18 @@ use super::hardware::Hardware;
 use super::Simulator;
 
 pub struct SimulatorBuilder {
-    /// Total qubit detection efficiency
     pub eta: f64,
-    /// Offset is taken care of automatically.
-    /// Equivalent to Bob broadcasting his global counter in the real world.
-    /// Probably not required ...
     pub global_counter: u64,
     pub hw: Hardware,
     pub modulator_state: ModulatorState,
     pub angles: Vec<u8>,
     pub now: Instant,
-    /// Qubit error rate
     pub qb_err: f64,
     pub rng: Pcg64Mcg,
     pub seed: u64,
-    pub mode: SimulatorMode, // Mode is still needed
+    pub mode: SimulatorMode,
     pub use_gcr_padding: bool,
+    pub use_rate_limiter: bool,
 }
 
 impl SimulatorBuilder {
@@ -45,14 +41,14 @@ impl SimulatorBuilder {
             .with_eta(conf.eta)
             .with_rng(Pcg64Mcg::seed_from_u64(conf.seed))
             .with_seed(conf.seed)
-            .with_mode(mode) // Set the mode from the passed argument
+            .with_mode(mode) 
             .build()
     }
 
     pub fn build(&self) -> Simulator {
         Simulator {
             hw: self.hw.to_owned(),
-            simulator_mode: self.mode, // Ensure mode is assigned from builder's mode field
+            simulator_mode: self.mode, 
             rng: self.rng.to_owned(),
             eta: self.eta,
             seed: self.seed,
@@ -61,10 +57,11 @@ impl SimulatorBuilder {
             global_counter: self.global_counter,
             modulator_state: self.modulator_state.to_owned(),
             angles: self.angles.to_owned(),
-            pending_angles_batch: None, // Initialize to None
-            time_of_start: None,        // Initialize to None
+            pending_angles_batch: None, 
+            time_of_start: None,        
             use_gcr_padding: self.use_gcr_padding,
-            last_event_count: 0, // Initialize to 0
+            rate_limiting_enabled: self.use_rate_limiter,
+            last_event_count: 0, 
         }
     }
 
@@ -122,6 +119,11 @@ impl SimulatorBuilder {
         self.use_gcr_padding = use_padding;
         self
     }
+
+    pub fn with_rate_limiter(&mut self, use_limiter: bool) -> &mut Self {
+        self.use_rate_limiter = use_limiter;
+        self
+    }
 }
 
 impl Default for SimulatorBuilder {
@@ -138,6 +140,7 @@ impl Default for SimulatorBuilder {
             seed: 42,
             mode: SimulatorMode::default(), // Add mode default
             use_gcr_padding: true,
+            use_rate_limiter: true,
         }
     }
 }
@@ -172,6 +175,7 @@ pub mod tests {
             .with_seed(5)
             .with_angles(vec![0, 32, 34, 96])
             .with_gcr_padding(false)
+            .with_rate_limiter(false)
             .build();
 
         assert_eq!(
@@ -189,6 +193,7 @@ pub mod tests {
                 pending_angles_batch: None,
                 time_of_start: None,
                 use_gcr_padding: false,
+                rate_limiting_enabled: false,
                 last_event_count: 0,
             },
             sim
