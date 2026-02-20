@@ -1,6 +1,7 @@
 pub mod actor;
 pub mod errors;
 pub mod protocols;
+pub mod service;
 pub mod role;
 pub mod simulation;
 #[cfg(test)]

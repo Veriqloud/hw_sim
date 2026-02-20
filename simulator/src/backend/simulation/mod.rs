@@ -113,13 +113,13 @@ impl VqSim for Simulator {
         );
 
         // Obtain raw random bytes for events. Each byte from correlations_random is one event (angle + result).
-        let data = self.correlations_random(BATCH_SIZE).map_err(|e| {
+        let data = self.generate_encoded_party_data(BATCH_SIZE).map_err(|e| {
             tracing::error!(
-                "Failed to get raw random bytes from correlations_random: {:?}",
+                "Failed to get raw random bytes from generate_encoded_party_data: {:?}",
                 e
             );
             HardwareError::Other {
-                reason: format!("correlations_random failed: {}", e),
+                reason: format!("generate_encoded_party_data failed: {}", e),
             }
         })?;
 
@@ -249,13 +249,13 @@ impl VqSim for Simulator {
         );
 
         // Obtain raw random bytes for events. Each byte from correlations_random is one event (angle + result).
-        let data = self.correlations_random(current_batch_size).map_err(|e| {
+        let data = self.generate_encoded_party_data(current_batch_size).map_err(|e| {
             tracing::error!(
-                "Failed to get raw random bytes from correlations_random: {:?}",
+                "Failed to get raw random bytes from generate_encoded_party_data: {:?}",
                 e
             );
             HardwareError::Other {
-                reason: format!("correlations_random failed: {}", e),
+                reason: format!("generate_encoded_party_data failed: {}", e),
             }
         })?;
 
