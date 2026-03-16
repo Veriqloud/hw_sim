@@ -2,18 +2,17 @@ use std::sync::mpsc::{self, Sender};
 
 use snafu::ResultExt;
 
-use super::{
-    errors::{self, Error, HardwareSnafu},
-    BytesGenerator,
-};
+use crate::backend::simulation::Simulator;
 
-pub struct Actor<T: BytesGenerator> {
+use super::errors::{self, Error, HardwareSnafu};
+
+pub struct Actor {
     receiver: mpsc::Receiver<ActorMessage>,
-    simulator: T,
+    simulator: Simulator,
 }
 
-impl<T: BytesGenerator> Actor<T> {
-    pub fn new(simulator: T, receiver: mpsc::Receiver<ActorMessage>) -> Self {
+impl Actor {
+    pub fn new(simulator: Simulator, receiver: mpsc::Receiver<ActorMessage>) -> Self {
         Actor {
             receiver,
             simulator,
@@ -39,7 +38,7 @@ impl<T: BytesGenerator> Actor<T> {
                 let result = self
                     .simulator
                     .generate_gcr_and_angles_batch()
-                    .context(HardwareSnafu); // Assuming HardwareSnafu is appropriate
+                    .context(HardwareSnafu);
                 let _ = reply_to.send(result);
                 Ok(())
             }
@@ -51,7 +50,7 @@ impl<T: BytesGenerator> Actor<T> {
                 let result = self
                     .simulator
                     .retrieve_pending_angles_batch(received_gcs)
-                    .context(HardwareSnafu); // Assuming HardwareSnafu is appropriate
+                    .context(HardwareSnafu);
                 let _ = reply_to.send(result);
                 Ok(())
             }
@@ -68,16 +67,16 @@ impl<T: BytesGenerator> Actor<T> {
                 tracing::debug!("SimulatorActor: Processing GenerateAnglesForGcs");
                 let result = self
                     .simulator
-                    .generate_angles_for_gcs(received_gcs) // This is async
+                    .generate_angles_for_gcs(received_gcs)
                     .context(HardwareSnafu);
                 let _ = reply_to.send(result);
                 Ok(())
-            } // ActorMessage::SetRole was removed
+            }
         }
     }
 }
 
-// #[derive(Debug)] // oneshot::Sender is not Debug, consider removing if not strictly needed or use a wrapper
+// #[derive(Debug)]
 pub enum ActorMessage {
     StartSession {
         reply_to: Sender<Result<(), Error>>,
@@ -109,7 +108,7 @@ pub enum ActorMessage {
     // Based on the VqSim changes, the old messages are indeed obsolete for the new flow.
 }
 
-pub fn run_simulator_actor<T: BytesGenerator>(mut actor: Actor<T>) {
+pub fn run_simulator_actor(mut actor: Actor) {
     while let Ok(msg) = actor.receiver.recv() {
         actor.handle_message(msg).unwrap();
     }
@@ -121,7 +120,7 @@ pub struct ActorHandle {
 }
 
 impl ActorHandle {
-    pub fn new<T: BytesGenerator>(simulator: T) -> Self {
+    pub fn new(simulator: Simulator) -> Self {
         let (sender, receiver) = mpsc::channel();
         let actor = Actor::new(simulator, receiver);
         std::thread::spawn(move || run_simulator_actor(actor));

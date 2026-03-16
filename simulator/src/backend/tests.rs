@@ -9,7 +9,7 @@ use rand_pcg::Pcg64Mcg;
 use crate::backend::simulation::{
     builder::SimulatorBuilder,
     hardware::{builder::HardwareBuilder, modulator_state::ModulatorState},
-    Simulator, VqSim,
+    Simulator,
 };
 
 #[test]

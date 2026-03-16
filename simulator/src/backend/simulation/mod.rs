@@ -142,70 +142,10 @@ impl Simulator {
     pub fn reset_time(&mut self) {
         self.now = Instant::now();
     }
-}
 
-impl SimCorrelationsRandom for Simulator {
-    fn generate_encoded_party_data(&mut self, l: usize) -> Result<Vec<u8>, ProtocolError> {
-        // The output vector to store the encoded results.
-        let mut output_bytes: Vec<u8> = Vec::with_capacity(l);
-
-        // Process in batches for efficiency.
-        for _ in 0..(l.div_ceil(cr_constants::BATCH)) {
-            let (alice_indices, bob_indices, click_results) = self.generate_correlation_batch()?;
-
-            let my_indices = match self.simulator_mode {
-                crate::backend::role::SimulatorMode::Source => &alice_indices,
-                crate::backend::role::SimulatorMode::Detector => &bob_indices,
-            };
-
-            for i in 0..cr_constants::BATCH {
-                let my_basis_index = my_indices[i];
-                let result = click_results[i];
-                output_bytes.push(((my_basis_index as u8) << 1) | result);
-            }
-        }
-
-        // Trim the vector to the exact requested length `l`.
-        output_bytes.truncate(l);
-        output_bytes.shrink_to_fit();
-        Ok(output_bytes)
-    }
-}
-
-pub trait VqSim {
     /// Initializes the simulator state for starting a generation sequence.
     /// Resets counters and sets the modulator state.
-    fn start_session(&mut self) -> Result<(), HardwareError>;
-
-    /// Stops the current generation sequence and resets state.
-    fn stop_session(&mut self) -> Result<(), HardwareError>;
-
-    /// Generates a batch of GCR (Global Counter + Result) data and corresponding angles.
-    /// The GCR data is returned, and angles are stored internally.
-    /// GCs are deterministic (incrementing sequence). Clicks and angles are random.
-    fn generate_gcr_and_angles_batch(&mut self) -> Result<Vec<[u8; 8]>, HardwareError>;
-
-    /// Called after the reader has received GC values from the controller.
-    /// This method retrieves the internally stored batch of angles corresponding
-    /// to the previously generated GCR data.
-    fn retrieve_pending_angles_batch(
-        &mut self,
-        received_gc_values: Vec<u64>,
-    ) -> Result<Vec<u8>, HardwareError>;
-
-    /// Generates a batch of angles based on received GCs (primarily for Source mode).
-    /// This method does not generate GCRs or affect the internal global_counter.
-    fn generate_angles_for_gcs(
-        &mut self,
-        received_gcs: Vec<u64>, // Used to determine BATCH_SIZE, actual values not used in random generation
-    ) -> Result<Vec<u8>, HardwareError>;
-
-    // set_angles remains for configuration purposes
-    fn set_angles(&mut self, angles: [u8; 4]) -> Result<(), HardwareError>;
-}
-
-impl VqSim for Simulator {
-    fn start_session(&mut self) -> Result<(), HardwareError> {
+    pub fn start_session(&mut self) -> Result<(), HardwareError> {
         tracing::info!("Simulator: Start session command received. Initializing for generation.");
         self.global_counter = 0; // Reset GC for the new session
         self.time_of_start = Some(Instant::now());
@@ -217,7 +157,8 @@ impl VqSim for Simulator {
         Ok(())
     }
 
-    fn stop_session(&mut self) -> Result<(), HardwareError> {
+    /// Stops the current generation sequence and resets state.
+    pub fn stop_session(&mut self) -> Result<(), HardwareError> {
         tracing::info!("Simulator: Stop session command received. Halting generation.");
         self.modulator_state = ModulatorState::Idle;
         self.time_of_start = None;
@@ -226,7 +167,10 @@ impl VqSim for Simulator {
         Ok(())
     }
 
-    fn generate_gcr_and_angles_batch(&mut self) -> Result<Vec<[u8; 8]>, HardwareError> {
+    /// Generates a batch of GCR (Global Counter + Result) data and corresponding angles.
+    /// The GCR data is returned, and angles are stored internally.
+    /// GCs are deterministic (incrementing sequence). Clicks and angles are random.
+    pub fn generate_gcr_and_angles_batch(&mut self) -> Result<Vec<[u8; 8]>, HardwareError> {
         if self.modulator_state != ModulatorState::Random {
             return Err(HardwareError::ModulatorStateNotSupported);
         }
@@ -332,9 +276,12 @@ impl VqSim for Simulator {
         Ok(gcr_batch)
     }
 
-    fn retrieve_pending_angles_batch(
+    /// Called after the reader has received GC values from the controller.
+    /// This method retrieves the internally stored batch of angles corresponding
+    /// to the previously generated GCR data.
+    pub fn retrieve_pending_angles_batch(
         &mut self,
-        received_gc_values: Vec<u64>,
+        received_gc_values: Vec<u64>, // Used to determine BATCH_SIZE, actual values not used in random generation
     ) -> Result<Vec<u8>, HardwareError> {
         tracing::info!(
             "Simulator: Received {} GC values from reader. Retrieving pending angles.",
@@ -354,12 +301,15 @@ impl VqSim for Simulator {
         }
     }
 
-    fn set_angles(&mut self, angles_config: [u8; 4]) -> Result<(), HardwareError> {
+    // set_angles remains for configuration purposes
+    pub fn set_angles(&mut self, angles_config: [u8; 4]) -> Result<(), HardwareError> {
         self.angles = angles_config.to_vec(); // These are configuration angles (bases)
         Ok(())
     }
 
-    fn generate_angles_for_gcs(
+    /// Generates a batch of angles based on received GCs (primarily for Source mode).
+    /// This method does not generate GCRs or affect the internal global_counter.
+    pub fn generate_angles_for_gcs(
         &mut self,
         received_gcs: Vec<u64>,
     ) -> Result<Vec<u8>, HardwareError> {
@@ -413,5 +363,33 @@ impl VqSim for Simulator {
             angles_data.len()
         );
         Ok(angles_data)
+    }
+}
+
+impl SimCorrelationsRandom for Simulator {
+    fn generate_encoded_party_data(&mut self, l: usize) -> Result<Vec<u8>, ProtocolError> {
+        // The output vector to store the encoded results.
+        let mut output_bytes: Vec<u8> = Vec::with_capacity(l);
+
+        // Process in batches for efficiency.
+        for _ in 0..(l.div_ceil(cr_constants::BATCH)) {
+            let (alice_indices, bob_indices, click_results) = self.generate_correlation_batch()?;
+
+            let my_indices = match self.simulator_mode {
+                crate::backend::role::SimulatorMode::Source => &alice_indices,
+                crate::backend::role::SimulatorMode::Detector => &bob_indices,
+            };
+
+            for i in 0..cr_constants::BATCH {
+                let my_basis_index = my_indices[i];
+                let result = click_results[i];
+                output_bytes.push(((my_basis_index as u8) << 1) | result);
+            }
+        }
+
+        // Trim the vector to the exact requested length `l`.
+        output_bytes.truncate(l);
+        output_bytes.shrink_to_fit();
+        Ok(output_bytes)
     }
 }
