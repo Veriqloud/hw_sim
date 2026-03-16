@@ -10,3 +10,4 @@ rand_pcg = { workspace = true }
 once_cell = "1.21.3"
 tracing = { workspace = true }
 serde = { workspace = true }
+configs = { path = "../configs" }

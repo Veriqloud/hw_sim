@@ -12,6 +12,13 @@ pub const BATCH_SIZE: usize = 1024;
 // We work on batches of const size that are appended to v. It's faster that way.
 pub const BATCH: usize = 1 << 10;
 
+/// A lazily-initialized static lookup table for detection probabilities.
+/// The state is |psi> = cos(alpha)|0> + sin(alpha)|1>, where alpha is derived from the angle index.
+/// The probability of measuring the initial state is cos^2(alpha).
+///
+/// The angle index (0-127) maps to a physical angle from 0 to PI.
+///
+/// The table holds `cos^2(angle)` scaled to `u16::MAX` for each index.
 pub(crate) static OVERLAP_PROBABILITIES: Lazy<[u16; 128]> = Lazy::new(|| {
     let mut buf = [0u16; 128];
     for (i, elt) in buf.iter_mut().enumerate() {

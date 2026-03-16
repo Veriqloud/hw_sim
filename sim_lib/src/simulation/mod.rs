@@ -9,6 +9,7 @@ use crate::{
 };
 
 pub mod batches;
+pub mod builder;
 
 #[derive(Debug, PartialEq)]
 pub struct Simulator {
@@ -160,7 +161,7 @@ impl Simulator {
         Ok(())
     }
 
-    fn generate_encoded_party_data(&mut self, l: usize) -> Result<Vec<u8>, ProtocolError> {
+    pub fn generate_encoded_party_data(&mut self, l: usize) -> Result<Vec<u8>, ProtocolError> {
         // The output vector to store the encoded results.
         let mut output_bytes: Vec<u8> = Vec::with_capacity(l);
 

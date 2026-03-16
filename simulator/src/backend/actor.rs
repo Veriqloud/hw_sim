@@ -1,7 +1,6 @@
 use std::sync::mpsc::{self, Sender};
 
 use sim_lib::{errors::SimulationError, simulation::Simulator};
-use snafu::{AsErrorSource, ResultExt};
 
 use super::errors::{self, Error};
 
