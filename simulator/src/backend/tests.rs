@@ -1,15 +1,12 @@
 use std::{collections::HashMap, f64::consts::PI, time::Instant};
 
-use crate::backend::role::SimulatorMode;
-
 use configs::backend::Configuration;
 use rand::SeedableRng;
 use rand_pcg::Pcg64Mcg;
-
-use crate::backend::simulation::{
-    builder::SimulatorBuilder,
-    hardware::{builder::HardwareBuilder, modulator_state::ModulatorState},
-    Simulator,
+use sim_lib::{
+    hardware::{builder::HardwareBuilder, modes::SimulatorMode, modulator_state::ModulatorState},
+    simulation::{builder::SimulatorBuilder, Simulator},
+    BATCH_SIZE,
 };
 
 #[test]
@@ -329,7 +326,7 @@ fn test_rate_limiting_slow_rate() {
     let eta = 1.0; // 100% efficiency for simpler calculation
     let seed = 123;
     let num_batches = 20; // Use more batches for a better average
-    let batch_size = crate::backend::simulation::BATCH_SIZE; // 1024 events per batch
+    let batch_size = BATCH_SIZE; // 1024 events per batch
     let total_events = num_batches * batch_size;
 
     let mut sim = SimulatorBuilder::new()
@@ -383,7 +380,7 @@ fn test_rate_limiting_high_speed() {
     let eta = 1.0; // 100% efficiency for simpler calculation
     let seed = 456;
     let num_batches = 50; // Generate a lot more batches to ensure CPU work is significant
-    let batch_size = crate::backend::simulation::BATCH_SIZE; // 1024 events per batch
+    let batch_size = BATCH_SIZE; // 1024 events per batch
     let total_events = num_batches * batch_size;
 
     let mut sim = SimulatorBuilder::new()

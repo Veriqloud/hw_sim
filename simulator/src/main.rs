@@ -3,14 +3,13 @@ pub mod cli_args;
 pub mod errors;
 pub mod ipc;
 
-use crate::backend::role::SimulatorMode;
-use backend::simulation::builder::SimulatorBuilder;
 use clap::Parser;
 use configs::{
     ipc::{AliceIpcConfig, BobIpcConfig},
     Configuration,
 };
 use ipc::writer::actor::IPCWriterActorHandle;
+use sim_lib::{hardware::modes::SimulatorMode, simulation::builder::SimulatorBuilder};
 use snafu::ResultExt;
 use std::{
     fs,
@@ -296,7 +295,7 @@ fn run_bob_workflow(
             let gc_read_handle = s.spawn(|| {
                 std::fs::OpenOptions::new()
                     .read(true) // <-- This must be opened for READING for the IPCReader
-                    .open(&config.gc_read_file_path) 
+                    .open(&config.gc_read_file_path)
             });
 
             (

@@ -2,7 +2,14 @@ use rand::SeedableRng;
 use rand_pcg::Pcg64Mcg;
 use std::time::Instant;
 
-use configs::backend::Configuration; // Keep SimulatorMode
+use configs::backend::Configuration;
+
+use crate::{
+    hardware::{
+        Hardware, builder::HardwareBuilder, modes::SimulatorMode, modulator_state::ModulatorState,
+    },
+    simulation::Simulator,
+}; // Keep SimulatorMode
 
 pub struct SimulatorBuilder {
     pub eta: f64,
@@ -141,14 +148,16 @@ impl Default for SimulatorBuilder {
 
 #[cfg(test)]
 pub mod tests {
-    use crate::backend::role::SimulatorMode; // Ensure SimulatorMode is imported
-    use crate::backend::simulation::builder::SimulatorBuilder;
-    use crate::backend::simulation::hardware::builder::HardwareBuilder;
-    use crate::backend::simulation::hardware::modulator_state::ModulatorState;
-    use crate::backend::simulation::Simulator;
     use rand::SeedableRng;
     use rand_pcg::Pcg64Mcg;
     use std::time::Instant;
+
+    use crate::{
+        hardware::{
+            builder::HardwareBuilder, modes::SimulatorMode, modulator_state::ModulatorState,
+        },
+        simulation::{Simulator, builder::SimulatorBuilder},
+    };
 
     #[test]
     fn test_builder() {
