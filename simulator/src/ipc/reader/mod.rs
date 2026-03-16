@@ -1,11 +1,11 @@
 pub mod errors;
 
 use memmap2::MmapOptions;
+use sim_lib::BATCH_SIZE;
 use std::fs::OpenOptions as StdOpenOptions;
 use std::time::Duration;
 use std::{fs::File, io::Read};
 
-use crate::backend::simulation::BATCH_SIZE;
 use crate::{backend::actor::ActorHandle as SimulatorHandle, ipc::Command};
 
 use super::writer::actor::IPCWriterActorHandle;

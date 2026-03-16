@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 
 use crate::{
     BATCH, BATCH_SIZE, OVERLAP_PROBABILITIES,
-    errors::{HardwareError, ProtocolError},
+    errors::{HardwareError, ProtocolError, SimulationError},
     hardware::{Hardware, modes::SimulatorMode, modulator_state::ModulatorState},
 };
 
@@ -138,7 +138,7 @@ impl Simulator {
 
     /// Initializes the simulator state for starting a generation sequence.
     /// Resets counters and sets the modulator state.
-    pub fn start_session(&mut self) -> Result<(), HardwareError> {
+    pub fn start_session(&mut self) -> Result<(), SimulationError> {
         tracing::info!("Simulator: Start session command received. Initializing for generation.");
         self.global_counter = 0; // Reset GC for the new session
         self.time_of_start = Some(Instant::now());
@@ -151,7 +151,7 @@ impl Simulator {
     }
 
     /// Stops the current generation sequence and resets state.
-    pub fn stop_session(&mut self) -> Result<(), HardwareError> {
+    pub fn stop_session(&mut self) -> Result<(), SimulationError> {
         tracing::info!("Simulator: Stop session command received. Halting generation.");
         self.modulator_state = ModulatorState::Idle;
         self.time_of_start = None;
@@ -189,9 +189,11 @@ impl Simulator {
     /// Generates a batch of GCR (Global Counter + Result) data and corresponding angles.
     /// The GCR data is returned, and angles are stored internally.
     /// GCs are deterministic (incrementing sequence). Clicks and angles are random.
-    pub fn generate_gcr_and_angles_batch(&mut self) -> Result<Vec<[u8; 8]>, HardwareError> {
+    pub fn generate_gcr_and_angles_batch(&mut self) -> Result<Vec<[u8; 8]>, SimulationError> {
         if self.modulator_state != ModulatorState::Random {
-            return Err(HardwareError::ModulatorStateNotSupported);
+            return Err(SimulationError::HardwareError {
+                source: HardwareError::ModulatorStateNotSupported,
+            });
         }
 
         let time_of_start = self.time_of_start.ok_or_else(|| HardwareError::Other {
@@ -219,12 +221,14 @@ impl Simulator {
         })?;
 
         if data.len() < BATCH_SIZE {
-            return Err(HardwareError::Other {
-                reason: format!(
-                    "correlations_random returned insufficient data: got {}, expected {}",
-                    data.len(),
-                    BATCH_SIZE
-                ),
+            return Err(SimulationError::HardwareError {
+                source: HardwareError::Other {
+                    reason: format!(
+                        "correlations_random returned insufficient data: got {}, expected {}",
+                        data.len(),
+                        BATCH_SIZE
+                    ),
+                },
             });
         }
 
@@ -301,7 +305,7 @@ impl Simulator {
     pub fn retrieve_pending_angles_batch(
         &mut self,
         received_gc_values: Vec<u64>, // Used to determine BATCH_SIZE, actual values not used in random generation
-    ) -> Result<Vec<u8>, HardwareError> {
+    ) -> Result<Vec<u8>, SimulationError> {
         tracing::info!(
             "Simulator: Received {} GC values from reader. Retrieving pending angles.",
             received_gc_values.len()
@@ -314,14 +318,16 @@ impl Simulator {
             tracing::warn!(
                 "Simulator: retrieve_pending_angles_batch called but no pending angles found."
             );
-            Err(HardwareError::Other {
-                reason: "No pending angles batch to retrieve.".to_string(),
+            Err(SimulationError::HardwareError {
+                source: HardwareError::Other {
+                    reason: "No pending angles batch to retrieve.".to_string(),
+                },
             })
         }
     }
 
     // set_angles remains for configuration purposes
-    pub fn set_angles(&mut self, angles_config: [u8; 4]) -> Result<(), HardwareError> {
+    pub fn set_angles(&mut self, angles_config: [u8; 4]) -> Result<(), SimulationError> {
         self.angles = angles_config.to_vec(); // These are configuration angles (bases)
         Ok(())
     }
@@ -331,16 +337,20 @@ impl Simulator {
     pub fn generate_angles_for_gcs(
         &mut self,
         received_gcs: Vec<u64>,
-    ) -> Result<Vec<u8>, HardwareError> {
+    ) -> Result<Vec<u8>, SimulationError> {
         if self.modulator_state != ModulatorState::Random {
-            return Err(HardwareError::ModulatorStateNotSupported);
+            return Err(SimulationError::HardwareError {
+                source: HardwareError::ModulatorStateNotSupported,
+            });
         }
         let current_batch_size = received_gcs.len();
 
         if current_batch_size == 0 {
             // Or handle as appropriate, e.g., return empty Vec or specific error
-            return Err(HardwareError::Other {
-                reason: "Received empty GC batch for angle generation.".to_string(),
+            return Err(SimulationError::HardwareError {
+                source: HardwareError::Other {
+                    reason: "Received empty GC batch for angle generation.".to_string(),
+                },
             });
         }
 
@@ -363,12 +373,14 @@ impl Simulator {
             })?;
 
         if data.len() < current_batch_size {
-            return Err(HardwareError::Other {
-                reason: format!(
-                    "correlations_random returned insufficient data: got {}, expected {}",
-                    data.len(),
-                    current_batch_size
-                ),
+            return Err(SimulationError::HardwareError {
+                source: HardwareError::Other {
+                    reason: format!(
+                        "correlations_random returned insufficient data: got {}, expected {}",
+                        data.len(),
+                        current_batch_size
+                    ),
+                },
             });
         }
 

@@ -1,4 +1,3 @@
-use crate::backend::protocols::errors::ProtocolError;
 use once_cell::sync::Lazy;
 use std::f64::consts::PI;
 
@@ -25,13 +24,11 @@ pub(crate) static OVERLAP_PROBABILITIES: Lazy<[u16; 128]> = Lazy::new(|| {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::backend::{
-        role::SimulatorMode,
-        simulation::{builder::SimulatorBuilder, hardware::modulator_state::ModulatorState},
-    };
+    use crate::backend::simulation::builder::SimulatorBuilder;
     use rand::SeedableRng;
     use rand_pcg::Pcg64Mcg;
+    use sim_lib::hardware::modes::SimulatorMode;
+    use sim_lib::hardware::modulator_state::ModulatorState;
     use std::collections::HashMap;
     use std::f64::consts::PI;
 
