@@ -2,15 +2,18 @@ pub mod builder;
 pub mod errors;
 pub mod hardware;
 
-use crate::backend::protocols::random::CorrelationsRandom;
+use crate::backend::protocols::random::{
+    cr_constants, SimCorrelationsRandom, OVERLAP_PROBABILITIES,
+};
 use crate::backend::role::SimulatorMode; // SimulatorMode is still needed
-use rand::SeedableRng;
+use rand::{Rng, SeedableRng};
 use rand_pcg::Pcg64Mcg;
 use std::time::{Duration, Instant};
 
 use self::hardware::errors::HardwareError;
 use self::hardware::modulator_state::ModulatorState;
 use self::hardware::Hardware;
+use crate::backend::protocols::errors::ProtocolError;
 // Removed: use crate::backend::protocols::errors::ProtocolError;
 // Removed: use rand::Rng;
 
@@ -31,9 +34,122 @@ pub struct Simulator {
     pub(crate) seed: u64,
     pub simulator_mode: SimulatorMode,
     pub(crate) time_of_start: Option<Instant>,
-    pub(crate) last_event_count: u64, 
+    pub(crate) last_event_count: u64,
     pub(crate) use_gcr_padding: bool,
     pub rate_limiting_enabled: bool,
+}
+
+impl Simulator {
+    /// The core logic for generating a single batch of correlated events.
+    /// This private helper function simulates a two-party quantum communication protocol.
+    /// For each event, both parties randomly choose a basis (angle). The sum of their angles
+    /// determines the probability of the measurement outcome (0 or 1). Because both parties'
+    /// It returns the raw data for a full batch: the chosen basis indices for both parties
+    /// and the shared measurement results.
+    fn generate_correlation_batch(
+        &mut self,
+    ) -> Result<([usize; 1024], [usize; 1024], [u8; 1024]), ProtocolError> {
+        // Ensure the simulator is in the correct state for this protocol.
+        let (angles_vec, num_angles) = match &self.modulator_state {
+            ModulatorState::Random => {
+                let angles = &self.angles;
+                (angles.as_slice(), angles.len() as u16)
+            }
+            _ => {
+                return Err(ProtocolError::Role {
+                    reason: "Modulator state must be Random for generating correlations."
+                        .to_string(),
+                });
+            }
+        };
+
+        // Pre-calculate the probability lookup table for measurement outcomes.
+        let overlap_probabilities = &OVERLAP_PROBABILITIES;
+        // Convert the QBER (a float from 0.0 to 1.0) to a u16 threshold for random comparison.
+        let qber_threshold: u16 = (self.qb_err * (u16::MAX as f64)) as u16;
+
+        // --- Random Number Generation ---
+        // These random numbers determine the choices and outcomes for the batch.
+        // Since the RNG is seeded, both Alice's and Bob's simulators will generate
+        // the identical streams of random numbers, ensuring their results are correlated.
+
+        // Random numbers to select Alice's basis for each event.
+        let mut alice_basis_rand = [0u16; cr_constants::BATCH];
+        self.rng.fill(&mut alice_basis_rand);
+
+        // Random numbers to select Bob's basis for each event.
+        let mut bob_basis_rand = [0u16; cr_constants::BATCH];
+        self.rng.fill(&mut bob_basis_rand);
+
+        // Random numbers to determine the measurement outcome based on probability.
+        let mut result_rand = [0u16; cr_constants::BATCH];
+        self.rng.fill(&mut result_rand);
+
+        // Random numbers to simulate the Quantum Bit Error Rate (QBER).
+        let mut qber_rand = [0u16; cr_constants::BATCH];
+        self.rng.fill(&mut qber_rand);
+
+        let mut alice_indices = [0; cr_constants::BATCH];
+        let mut bob_indices = [0; cr_constants::BATCH];
+        let mut click_results = [0; cr_constants::BATCH];
+
+        for i in 0..cr_constants::BATCH {
+            let alice_basis_index = (alice_basis_rand[i] % num_angles) as usize;
+            let bob_basis_index = (bob_basis_rand[i] % num_angles) as usize;
+
+            // Calculate the total angle. Angles are u8 offsets in a 128-step circle.
+            // The +32 simulates Alice sending a |+> state instead of |0>.
+            let total_angle_offset = (angles_vec[alice_basis_index] as u32
+                + angles_vec[bob_basis_index] as u32
+                + 32) as u8
+                & 127;
+
+            // Determine the measurement result based on the total angle.
+            // `overlap_probabilities` holds pre-calculated cos^2 values scaled to u16::MAX.
+            // This value represents the probability of a '0' outcome.
+            let probability_of_0 = overlap_probabilities[total_angle_offset as usize];
+            let mut result = (result_rand[i] > probability_of_0) as u8;
+
+            // Simulate Quantum Bit Error Rate (QBER).
+            if qber_rand[i] < qber_threshold {
+                result ^= 1;
+            }
+
+            alice_indices[i] = alice_basis_index;
+            bob_indices[i] = bob_basis_index;
+            click_results[i] = result;
+        }
+
+        Ok((alice_indices, bob_indices, click_results))
+    }
+}
+
+impl SimCorrelationsRandom for Simulator {
+    fn generate_encoded_party_data(&mut self, l: usize) -> Result<Vec<u8>, ProtocolError> {
+        // The output vector to store the encoded results.
+        let mut output_bytes: Vec<u8> = Vec::with_capacity(l);
+
+        // Process in batches for efficiency.
+        for _ in 0..(l.div_ceil(cr_constants::BATCH)) {
+            let (alice_indices, bob_indices, click_results) = self.generate_correlation_batch()?;
+
+            let my_indices = match self.simulator_mode {
+                crate::backend::role::SimulatorMode::Source => &alice_indices,
+                crate::backend::role::SimulatorMode::Detector => &bob_indices,
+            };
+
+            for i in 0..cr_constants::BATCH {
+                let my_basis_index = my_indices[i];
+                let result = click_results[i];
+                output_bytes.push(((my_basis_index as u8) << 1) | result);
+            }
+        }
+
+        // Trim the vector to the exact requested length `l`.
+        output_bytes.truncate(l);
+        output_bytes.shrink_to_fit();
+        Ok(output_bytes)
+    }
 }
 
 pub trait VqSim {
@@ -245,15 +361,17 @@ impl VqSim for Simulator {
         );
 
         // Obtain raw random bytes for events. Each byte from correlations_random is one event (angle + result).
-        let data = self.generate_encoded_party_data(current_batch_size).map_err(|e| {
-            tracing::error!(
-                "Failed to get raw random bytes from generate_encoded_party_data: {:?}",
-                e
-            );
-            HardwareError::Other {
-                reason: format!("generate_encoded_party_data failed: {}", e),
-            }
-        })?;
+        let data = self
+            .generate_encoded_party_data(current_batch_size)
+            .map_err(|e| {
+                tracing::error!(
+                    "Failed to get raw random bytes from generate_encoded_party_data: {:?}",
+                    e
+                );
+                HardwareError::Other {
+                    reason: format!("generate_encoded_party_data failed: {}", e),
+                }
+            })?;
 
         if data.len() < current_batch_size {
             return Err(HardwareError::Other {
