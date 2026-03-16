@@ -701,6 +701,7 @@ name = "sim_lib"
 version = "0.1.0"
 dependencies = [
  "configs",
+ "crossbeam-channel",
  "once_cell",
  "rand",
  "rand_pcg",
