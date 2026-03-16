@@ -3,7 +3,7 @@ use std::{
     thread,
 };
 
-use crate::{BATCH, ServiceCorrelationsRandom, errors::ProtocolError, simulation::Simulator};
+use crate::{BATCH, ServiceCorrelationsRandom, errors::SimulationError, simulation::Simulator};
 
 #[derive(Debug, Clone, Copy)]
 pub struct QkdBatch {
@@ -15,7 +15,7 @@ pub struct QkdBatch {
 pub trait QkdSession {
     fn stop(&mut self);
     fn start(&mut self) -> mpsc::Receiver<QkdBatch>;
-    fn next_batch(&mut self) -> Result<QkdBatch, ProtocolError>;
+    fn next_batch(&mut self) -> Result<QkdBatch, SimulationError>;
 }
 
 pub struct QkdService {
@@ -91,14 +91,14 @@ impl QkdSession for QkdService {
 
     /// Generates a single `QkdBatch` on-demand.
     /// This will block if a streaming session is currently generating a batch.
-    fn next_batch(&mut self) -> Result<QkdBatch, ProtocolError> {
+    fn next_batch(&mut self) -> Result<QkdBatch, SimulationError> {
         let mut sim_guard = self.simulator.lock().expect("Simulator mutex poisoned");
         sim_guard.generate_qkd_batch()
     }
 }
 
 impl ServiceCorrelationsRandom for Simulator {
-    fn generate_qkd_batch(&mut self) -> Result<QkdBatch, ProtocolError> {
+    fn generate_qkd_batch(&mut self) -> Result<QkdBatch, SimulationError> {
         let (alice_indices, bob_indices, click_results) = self.generate_correlation_batch()?;
 
         let angles_vec = &self.angles;

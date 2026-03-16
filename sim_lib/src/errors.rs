@@ -1,5 +1,15 @@
 use snafu::Snafu;
 
+#[derive(Debug, Snafu)]
+pub enum SimulationError {
+    #[snafu(display("hardware error: {}", source))]
+    #[snafu(context(false))]
+    HardwareError { source: HardwareError },
+    #[snafu(display("protocol error: {}", source))]
+    #[snafu(context(false))]
+    ProtocolError { source: ProtocolError },
+}
+
 #[derive(Debug, PartialEq, Snafu)]
 pub enum HardwareError {
     GlobalCounterNotSynced,

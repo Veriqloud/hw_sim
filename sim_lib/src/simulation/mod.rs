@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 
 use crate::{
     BATCH, BATCH_SIZE, OVERLAP_PROBABILITIES,
-    errors::HardwareError,
+    errors::{HardwareError, ProtocolError},
     hardware::{Hardware, modes::SimulatorMode, modulator_state::ModulatorState},
 };
 

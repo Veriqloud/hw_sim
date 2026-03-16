@@ -2,7 +2,7 @@ use once_cell::sync::Lazy;
 use snafu::Whatever;
 use std::f64::consts::PI;
 
-use crate::simulation::batches::QkdBatch;
+use crate::{errors::SimulationError, simulation::batches::QkdBatch};
 
 mod errors;
 mod hardware;
@@ -24,5 +24,5 @@ pub(crate) static OVERLAP_PROBABILITIES: Lazy<[u16; 128]> = Lazy::new(|| {
 
 pub trait ServiceCorrelationsRandom {
     /// Generates a complete batch of QKD data, including choices and results for both parties.
-    fn generate_qkd_batch(&mut self) -> Result<QkdBatch, Whatever>;
+    fn generate_qkd_batch(&mut self) -> Result<QkdBatch, SimulationError>;
 }
