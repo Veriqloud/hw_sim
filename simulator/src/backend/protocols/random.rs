@@ -7,13 +7,6 @@ pub(crate) mod cr_constants {
     pub const BATCH: usize = 1 << 10;
 }
 
-/// A trait for generating correlated random data for QKD simulation.
-pub trait SimCorrelationsRandom {
-    /// Generates encoded event data for a single party (Source or Detector).
-    /// The output `Vec<u8>` encodes this party's basis choice and the shared result for each event.
-    fn generate_encoded_party_data(&mut self, l: usize) -> Result<Vec<u8>, ProtocolError>;
-}
-
 /// A lazily-initialized static lookup table for detection probabilities.
 /// The state is |psi> = cos(alpha)|0> + sin(alpha)|1>, where alpha is derived from the angle index.
 /// The probability of measuring the initial state is cos^2(alpha).
