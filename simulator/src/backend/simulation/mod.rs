@@ -5,7 +5,7 @@ pub mod hardware;
 use crate::backend::protocols::random::{
     cr_constants, SimCorrelationsRandom, OVERLAP_PROBABILITIES,
 };
-use crate::backend::role::SimulatorMode; // SimulatorMode is still needed
+use crate::backend::role::SimulatorMode;
 use rand::{Rng, SeedableRng};
 use rand_pcg::Pcg64Mcg;
 use std::time::{Duration, Instant};
@@ -14,8 +14,6 @@ use self::hardware::errors::HardwareError;
 use self::hardware::modulator_state::ModulatorState;
 use self::hardware::Hardware;
 use crate::backend::protocols::errors::ProtocolError;
-// Removed: use crate::backend::protocols::errors::ProtocolError;
-// Removed: use rand::Rng;
 
 pub const BATCH_SIZE: usize = 1024;
 
@@ -121,6 +119,28 @@ impl Simulator {
         }
 
         Ok((alice_indices, bob_indices, click_results))
+    }
+
+    /// Encodes a Global Counter (GC) and a single result bit into an 8-byte GCR format.
+    /// Inverse of the user-provided `split_gcr` function.
+    /// `split_gcr` implies:
+    ///   `gc_val = (original_gc / 2)` stored in most of the 8 bytes.
+    ///   `buf[6]` bit 0 stores `original_gc % 2`.
+    ///   `buf[6]` bit 1 stores `result_bit`.
+    fn encode_gcr(&self, gc: u64, result_bit: u8) -> [u8; 8] {
+        let shifted_gc = gc >> 1; // gc / 2
+        let gc_lsb = (gc & 1) as u8; // gc % 2
+
+        let mut buffer = shifted_gc.to_le_bytes();
+
+        // Clear bits 0 and 1 of buffer[6] then set them
+        buffer[6] = (buffer[6] & 0b1111_1100) | gc_lsb | ((result_bit & 1) << 1);
+
+        buffer
+    }
+    /// Reset time to now
+    pub fn reset_time(&mut self) {
+        self.now = Instant::now();
     }
 }
 
@@ -393,29 +413,5 @@ impl VqSim for Simulator {
             angles_data.len()
         );
         Ok(angles_data)
-    }
-}
-
-impl Simulator {
-    /// Encodes a Global Counter (GC) and a single result bit into an 8-byte GCR format.
-    /// Inverse of the user-provided `split_gcr` function.
-    /// `split_gcr` implies:
-    ///   `gc_val = (original_gc / 2)` stored in most of the 8 bytes.
-    ///   `buf[6]` bit 0 stores `original_gc % 2`.
-    ///   `buf[6]` bit 1 stores `result_bit`.
-    fn encode_gcr(&self, gc: u64, result_bit: u8) -> [u8; 8] {
-        let shifted_gc = gc >> 1; // gc / 2
-        let gc_lsb = (gc & 1) as u8; // gc % 2
-
-        let mut buffer = shifted_gc.to_le_bytes();
-
-        // Clear bits 0 and 1 of buffer[6] then set them
-        buffer[6] = (buffer[6] & 0b1111_1100) | gc_lsb | ((result_bit & 1) << 1);
-
-        buffer
-    }
-    /// Reset time to now
-    pub fn reset_time(&mut self) {
-        self.now = Instant::now();
     }
 }
