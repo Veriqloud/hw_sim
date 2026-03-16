@@ -2,13 +2,7 @@ use rand::SeedableRng;
 use rand_pcg::Pcg64Mcg;
 use std::time::Instant;
 
-use crate::backend::role::SimulatorMode;
 use configs::backend::Configuration; // Keep SimulatorMode
-
-use super::hardware::builder::HardwareBuilder;
-use super::hardware::modulator_state::ModulatorState;
-use super::hardware::Hardware;
-use super::Simulator;
 
 pub struct SimulatorBuilder {
     pub eta: f64,
@@ -41,14 +35,14 @@ impl SimulatorBuilder {
             .with_eta(conf.eta)
             .with_rng(Pcg64Mcg::seed_from_u64(conf.seed))
             .with_seed(conf.seed)
-            .with_mode(mode) 
+            .with_mode(mode)
             .build()
     }
 
     pub fn build(&self) -> Simulator {
         Simulator {
             hw: self.hw.to_owned(),
-            simulator_mode: self.mode, 
+            simulator_mode: self.mode,
             rng: self.rng.to_owned(),
             eta: self.eta,
             seed: self.seed,
@@ -57,11 +51,11 @@ impl SimulatorBuilder {
             global_counter: self.global_counter,
             modulator_state: self.modulator_state.to_owned(),
             angles: self.angles.to_owned(),
-            pending_angles_batch: None, 
-            time_of_start: None,        
+            pending_angles_batch: None,
+            time_of_start: None,
             use_gcr_padding: self.use_gcr_padding,
             rate_limiting_enabled: self.use_rate_limiter,
-            last_event_count: 0, 
+            last_event_count: 0,
         }
     }
 

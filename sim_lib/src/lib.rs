@@ -1,12 +1,11 @@
 use once_cell::sync::Lazy;
-use snafu::Whatever;
 use std::f64::consts::PI;
 
 use crate::{errors::SimulationError, simulation::batches::QkdBatch};
 
-mod errors;
-mod hardware;
-mod simulation;
+pub mod errors;
+pub mod hardware;
+pub mod simulation;
 
 pub const BATCH_SIZE: usize = 1024;
 

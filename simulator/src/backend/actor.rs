@@ -1,10 +1,9 @@
 use std::sync::mpsc::{self, Sender};
 
-use snafu::ResultExt;
+use sim_lib::{errors::SimulationError, simulation::Simulator};
+use snafu::{AsErrorSource, ResultExt};
 
-use crate::backend::simulation::Simulator;
-
-use super::errors::{self, Error, HardwareSnafu};
+use super::errors::{self, Error};
 
 pub struct Actor {
     receiver: mpsc::Receiver<ActorMessage>,
@@ -19,26 +18,23 @@ impl Actor {
         }
     }
 
-    fn handle_message(&mut self, msg: ActorMessage) -> Result<(), Error> {
+    fn handle_message(&mut self, msg: ActorMessage) -> Result<(), SimulationError> {
         match msg {
             ActorMessage::StartSession { reply_to } => {
                 tracing::debug!("SimulatorActor: Processing StartSession");
-                let result = self.simulator.start_session().context(HardwareSnafu);
+                let result = self.simulator.start_session();
                 let _ = reply_to.send(result);
                 Ok(())
             }
             ActorMessage::StopSession { reply_to } => {
                 tracing::debug!("SimulatorActor: Processing StopSession");
-                let result = self.simulator.stop_session().context(HardwareSnafu);
+                let result = self.simulator.stop_session();
                 let _ = reply_to.send(result);
                 Ok(())
             }
             ActorMessage::GenerateGcrAndAnglesBatch { reply_to } => {
                 tracing::debug!("SimulatorActor: Processing GenerateGcrAndAnglesBatch");
-                let result = self
-                    .simulator
-                    .generate_gcr_and_angles_batch()
-                    .context(HardwareSnafu);
+                let result = self.simulator.generate_gcr_and_angles_batch();
                 let _ = reply_to.send(result);
                 Ok(())
             }
@@ -47,16 +43,13 @@ impl Actor {
                 reply_to,
             } => {
                 tracing::debug!("SimulatorActor: Processing RetrievePendingAnglesBatch");
-                let result = self
-                    .simulator
-                    .retrieve_pending_angles_batch(received_gcs)
-                    .context(HardwareSnafu);
+                let result = self.simulator.retrieve_pending_angles_batch(received_gcs);
                 let _ = reply_to.send(result);
                 Ok(())
             }
             ActorMessage::SetAngles { angles, reply_to } => {
                 tracing::debug!("SimulatorActor: Processing SetAngles");
-                let result = self.simulator.set_angles(angles).context(HardwareSnafu);
+                let result = self.simulator.set_angles(angles);
                 let _ = reply_to.send(result);
                 Ok(())
             }
@@ -65,10 +58,7 @@ impl Actor {
                 reply_to,
             } => {
                 tracing::debug!("SimulatorActor: Processing GenerateAnglesForGcs");
-                let result = self
-                    .simulator
-                    .generate_angles_for_gcs(received_gcs)
-                    .context(HardwareSnafu);
+                let result = self.simulator.generate_angles_for_gcs(received_gcs);
                 let _ = reply_to.send(result);
                 Ok(())
             }
@@ -79,26 +69,26 @@ impl Actor {
 // #[derive(Debug)]
 pub enum ActorMessage {
     StartSession {
-        reply_to: Sender<Result<(), Error>>,
+        reply_to: Sender<Result<(), SimulationError>>,
     },
     StopSession {
-        reply_to: Sender<Result<(), Error>>,
+        reply_to: Sender<Result<(), SimulationError>>,
     },
     GenerateGcrAndAnglesBatch {
-        reply_to: Sender<Result<Vec<[u8; 8]>, Error>>, // Returns GCR data
+        reply_to: Sender<Result<Vec<[u8; 8]>, SimulationError>>, // Returns GCR data
     },
     RetrievePendingAnglesBatch {
         received_gcs: Vec<u64>,
-        reply_to: Sender<Result<Vec<u8>, Error>>, // Returns Angles data
+        reply_to: Sender<Result<Vec<u8>, SimulationError>>, // Returns Angles data
     },
     SetAngles {
         // For configuring bases
         angles: [u8; 4],
-        reply_to: Sender<Result<(), Error>>,
+        reply_to: Sender<Result<(), SimulationError>>,
     },
     GenerateAnglesForGcs {
         received_gcs: Vec<u64>,
-        reply_to: Sender<Result<Vec<u8>, Error>>, // Returns Angles data
+        reply_to: Sender<Result<Vec<u8>, SimulationError>>, // Returns Angles data
     },
     // SetRole was removed
     // Old messages like ReadAngles, GetGlobalCounter, SeedAndStartGeneration, Start, Stop might be obsolete
@@ -134,7 +124,19 @@ impl ActorHandle {
         self.sender
             .send(message)
             .map_err(|e| errors::Error::ActorSend { e: e.to_string() })?;
-        recv.recv().context(errors::ActorDiedSnafu)?
+
+        match recv.recv() {
+            Ok(v) => match v {
+                Ok(_) => {
+                    // Nothing to do
+                    Ok(())
+                }
+                Err(e) => Err(Error::Simulation { source: e }),
+            },
+            Err(e) => {
+                return Err(Error::ActorDied { source: e });
+            }
+        }
     }
 
     pub fn stop_session(&self) -> Result<(), Error> {
@@ -143,7 +145,18 @@ impl ActorHandle {
         self.sender
             .send(message)
             .map_err(|e| errors::Error::ActorSend { e: e.to_string() })?;
-        recv.recv().context(errors::ActorDiedSnafu)?
+        match recv.recv() {
+            Ok(v) => match v {
+                Ok(_) => {
+                    // Nothing to do
+                    Ok(())
+                }
+                Err(e) => Err(Error::Simulation { source: e }),
+            },
+            Err(e) => {
+                return Err(Error::ActorDied { source: e });
+            }
+        }
     }
 
     pub fn generate_gcr_and_angles_batch(&self) -> Result<Vec<[u8; 8]>, Error> {
@@ -152,7 +165,18 @@ impl ActorHandle {
         self.sender
             .send(message)
             .map_err(|e| errors::Error::ActorSend { e: e.to_string() })?;
-        recv.recv().context(errors::ActorDiedSnafu)?
+        match recv.recv() {
+            Ok(v) => match v {
+                Ok(b) => {
+                    // Nothing to do
+                    Ok(b)
+                }
+                Err(e) => Err(Error::Simulation { source: e }),
+            },
+            Err(e) => {
+                return Err(Error::ActorDied { source: e });
+            }
+        }
     }
 
     pub fn retrieve_pending_angles_batch(&self, received_gcs: Vec<u64>) -> Result<Vec<u8>, Error> {
@@ -164,7 +188,18 @@ impl ActorHandle {
         self.sender
             .send(message)
             .map_err(|e| errors::Error::ActorSend { e: e.to_string() })?;
-        recv.recv().context(errors::ActorDiedSnafu)?
+        match recv.recv() {
+            Ok(v) => match v {
+                Ok(b) => {
+                    // Nothing to do
+                    Ok(b)
+                }
+                Err(e) => Err(Error::Simulation { source: e }),
+            },
+            Err(e) => {
+                return Err(Error::ActorDied { source: e });
+            }
+        }
     }
 
     pub fn set_angles(&self, angles: [u8; 4]) -> Result<(), Error> {
@@ -174,7 +209,18 @@ impl ActorHandle {
             reply_to: send,
         };
         let _ = self.sender.send(message);
-        recv.recv().context(errors::ActorDiedSnafu)?
+        match recv.recv() {
+            Ok(v) => match v {
+                Ok(_) => {
+                    // Nothing to do
+                    Ok(())
+                }
+                Err(e) => Err(Error::Simulation { source: e }),
+            },
+            Err(e) => {
+                return Err(Error::ActorDied { source: e });
+            }
+        }
     }
 
     pub fn generate_angles_for_gcs(&self, received_gcs: Vec<u64>) -> Result<Vec<u8>, Error> {
@@ -186,6 +232,17 @@ impl ActorHandle {
         self.sender
             .send(message)
             .map_err(|e| errors::Error::ActorSend { e: e.to_string() })?;
-        recv.recv().context(errors::ActorDiedSnafu)?
+        match recv.recv() {
+            Ok(v) => match v {
+                Ok(b) => {
+                    // Nothing to do
+                    Ok(b)
+                }
+                Err(e) => Err(Error::Simulation { source: e }),
+            },
+            Err(e) => {
+                return Err(Error::ActorDied { source: e });
+            }
+        }
     }
 }
