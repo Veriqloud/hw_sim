@@ -1,5 +1,5 @@
 [workspace]
-members = ["simulator", "configs"]
+members = ["simulator", "configs", "sim_lib"]
 resolver = "2"
 
 [workspace.dependencies]
