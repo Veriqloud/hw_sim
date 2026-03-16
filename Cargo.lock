@@ -699,6 +699,14 @@ checksum = "0fda2ff0d084019ba4d7c6f371c95d8fd75ce3524c3cb8fb653a3023f6323e64"
 [[package]]
 name = "sim_lib"
 version = "0.1.0"
+dependencies = [
+ "once_cell",
+ "rand",
+ "rand_pcg",
+ "serde",
+ "snafu",
+ "tracing",
+]
 
 [[package]]
 name = "simulator"
@@ -715,6 +723,7 @@ dependencies = [
  "rand_pcg",
  "serde",
  "serde_json",
+ "sim_lib",
  "snafu",
  "tracing",
  "tracing-appender",

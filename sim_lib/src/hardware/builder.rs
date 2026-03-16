@@ -1,4 +1,4 @@
-use crate::backend::simulation::Hardware;
+use crate::hardware::Hardware;
 
 /// Mapped on [Hardware].
 #[derive(Debug)]
@@ -43,7 +43,7 @@ impl HardwareBuilder {
 
 #[cfg(test)]
 pub mod tests {
-    use crate::backend::simulation::hardware::{builder::HardwareBuilder, Hardware};
+    use crate::hardware::{Hardware, builder::HardwareBuilder};
 
     #[test]
     fn hardware_builder() {
