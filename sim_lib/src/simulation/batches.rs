@@ -1,7 +1,5 @@
-use std::{
-    sync::{Arc, Mutex, mpsc},
-    thread,
-};
+use std::thread::{self, JoinHandle};
+use crossbeam_channel::{bounded, select, Receiver, Sender};
 
 use crate::{BATCH, ServiceCorrelationsRandom, errors::SimulationError, simulation::Simulator};
 
@@ -12,89 +10,89 @@ pub struct QkdBatch {
     pub bob_angles: [u8; 1024],
 }
 
-pub trait QkdSession {
-    fn stop(&mut self);
-    fn start(&mut self) -> mpsc::Receiver<QkdBatch>;
-    fn next_batch(&mut self) -> Result<QkdBatch, SimulationError>;
+/// Handle to manage a running QKD session.
+pub struct SessionHandle {
+    stop_tx: Sender<()>,
+    thread_handle: Option<JoinHandle<()>>,
 }
 
-pub struct QkdService {
-    simulator: Arc<Mutex<Simulator>>,
-    stop_tx: Option<mpsc::Sender<()>>,
-}
-
-impl QkdService {
-    pub fn new(mut simulator: Simulator) -> Self {
-        simulator.rate_limiting_enabled = false;
-        Self {
-            simulator: Arc::new(Mutex::new(simulator)),
-            stop_tx: None,
-        }
-    }
-}
-
-impl QkdSession for QkdService {
-    fn stop(&mut self) {
-        if let Some(stop_tx) = self.stop_tx.take() {
-            // The send may fail if the receiver is already dropped, which is fine.
-            let _ = stop_tx.send(());
+impl SessionHandle {
+    /// Signals the session to stop and waits for the thread to exit.
+    pub fn stop(mut self) {
+        let _ = self.stop_tx.send(());
+        if let Some(handle) = self.thread_handle.take() {
+            let _ = handle.join();
         }
     }
 
-    /// Starts a new background thread that continuously generates `QkdBatch`es.
-    /// Returns a receiver to get the generated batches.
-    /// Calling `start` again will stop the previous session and start a new one.
-    fn start(&mut self) -> mpsc::Receiver<QkdBatch> {
-        self.stop(); // Ensure any previous session is stopped.
+    /// Sends a stop signal without waiting for the thread to exit.
+    pub fn stop_async(&mut self) {
+        let _ = self.stop_tx.send(());
+    }
+}
 
-        let (batch_tx, batch_rx) = mpsc::channel();
-        let (stop_tx, stop_rx) = mpsc::channel::<()>();
-        self.stop_tx = Some(stop_tx);
+/// Spawns a new QKD session in a background thread.
+/// Takes ownership of the `Simulator` to allow parallel, independent instances.
+/// Returns a handle to stop the session and a receiver for the generated batches.
+pub fn spawn_session(
+    mut simulator: Simulator,
+    buffer_size: usize,
+) -> (SessionHandle, Receiver<QkdBatch>) {
+    // Disable rate limiting to generate as fast as possible for the buffer
+    simulator.rate_limiting_enabled = false;
+    let _ = simulator.start_session();
 
-        let sim_arc = Arc::clone(&self.simulator);
+    // Channel for outputting batches. Bounded so we can use `select!` effectively.
+    let (batch_tx, batch_rx) = bounded(buffer_size);
 
-        thread::spawn(move || {
-            loop {
-                // Non-blocking check for a stop signal.
-                // If `try_recv` returns Ok or a Disconnected error, we should stop.
-                match stop_rx.try_recv() {
-                    Ok(_) | Err(mpsc::TryRecvError::Disconnected) => break,
-                    Err(mpsc::TryRecvError::Empty) => {} // Continue
-                }
+    // Channel for stopping the thread.
+    let (stop_tx, stop_rx) = bounded(1);
 
-                let batch_result = {
-                    // Lock the simulator to generate a single batch.
-                    let mut sim_guard = sim_arc.lock().expect("Simulator mutex poisoned");
-                    // Use the high-level batch generation method from the `CorrelationsRandom` trait.
-                    sim_guard.generate_qkd_batch()
-                };
+    let handle = thread::spawn(move || {
+        loop {
+            // 1. Non-blocking check before we start heavy generation
+            if stop_rx.try_recv().is_ok() {
+                break;
+            }
 
-                match batch_result {
-                    Ok(batch) => {
-                        if batch_tx.send(batch).is_err() {
+            // 2. Generate the batch (cannot be interrupted internally)
+            let batch_result = simulator.generate_qkd_batch();
+
+            match batch_result {
+                Ok(batch) => {
+                    // 3. The "Select" mechanism.
+                    // Wait to either successfully send the batch OR receive a stop signal.
+                    select! {
+                        send(batch_tx, batch) -> res => {
+                            if res.is_err() {
+                                // Receiver was dropped by orchestrator
+                                break;
+                            }
+                        }
+                        recv(stop_rx) -> _ => {
+                            // Stop signal received. We throw away the generated `batch`
+                            // and break the loop.
                             break;
                         }
                     }
-                    Err(e) => {
-                        tracing::error!(
-                            "Error generating QKD batch in streaming mode: {:?}. Stopping.",
-                            e
-                        );
-                        break;
-                    }
+                }
+                Err(e) => {
+                    tracing::error!("Error generating QKD batch: {:?}. Stopping session.", e);
+                    break;
                 }
             }
-        });
+        }
 
-        batch_rx
-    }
+        // Ensure simulator state is reset on exit
+        let _ = simulator.stop_session();
+    });
 
-    /// Generates a single `QkdBatch` on-demand.
-    /// This will block if a streaming session is currently generating a batch.
-    fn next_batch(&mut self) -> Result<QkdBatch, SimulationError> {
-        let mut sim_guard = self.simulator.lock().expect("Simulator mutex poisoned");
-        sim_guard.generate_qkd_batch()
-    }
+    let handle = SessionHandle {
+        stop_tx,
+        thread_handle: Some(handle),
+    };
+
+    (handle, batch_rx)
 }
 
 impl ServiceCorrelationsRandom for Simulator {
