@@ -1,5 +1,5 @@
+use crossbeam_channel::{Receiver, Sender, bounded};
 use std::thread::{self, JoinHandle};
-use crossbeam_channel::{bounded, select, Receiver, Sender};
 
 use crate::{BATCH, ServiceCorrelationsRandom, errors::SimulationError, simulation::Simulator};
 
@@ -35,56 +35,44 @@ impl SessionHandle {
 /// Takes ownership of the `Simulator` to allow parallel, independent instances.
 /// Returns a handle to stop the session and a receiver for the generated batches.
 pub fn spawn_session(
-    mut simulator: Simulator,
+    mut simulator: impl ServiceCorrelationsRandom + 'static,
     buffer_size: usize,
-) -> (SessionHandle, Receiver<QkdBatch>) {
-    // Disable rate limiting to generate as fast as possible for the buffer
-    simulator.rate_limiting_enabled = false;
-    let _ = simulator.start_session();
+) -> Result<(SessionHandle, Receiver<QkdBatch>), SimulationError> {
+    if let Err(e) = simulator.start_session() {
+        return Err(e);
+    };
 
-    // Channel for outputting batches. Bounded so we can use `select!` effectively.
     let (batch_tx, batch_rx) = bounded(buffer_size);
-
-    // Channel for stopping the thread.
     let (stop_tx, stop_rx) = bounded(1);
 
     let handle = thread::spawn(move || {
         loop {
-            // 1. Non-blocking check before we start heavy generation
+            // Generate the batch (cannot be interrupted internally)
+            let batch_result = simulator.generate_qkd_batch();
+            let batch = match batch_result {
+                Ok(b) => b,
+                Err(e) => {
+                    tracing::error!("session failed: {e}");
+                    return;
+                }
+            };
+
             if stop_rx.try_recv().is_ok() {
                 break;
             }
 
-            // 2. Generate the batch (cannot be interrupted internally)
-            let batch_result = simulator.generate_qkd_batch();
-
-            match batch_result {
-                Ok(batch) => {
-                    // 3. The "Select" mechanism.
-                    // Wait to either successfully send the batch OR receive a stop signal.
-                    select! {
-                        send(batch_tx, batch) -> res => {
-                            if res.is_err() {
-                                // Receiver was dropped by orchestrator
-                                break;
-                            }
-                        }
-                        recv(stop_rx) -> _ => {
-                            // Stop signal received. We throw away the generated `batch`
-                            // and break the loop.
-                            break;
-                        }
-                    }
-                }
-                Err(e) => {
-                    tracing::error!("Error generating QKD batch: {:?}. Stopping session.", e);
-                    break;
-                }
-            }
+            if let Err(e) = batch_tx.send(batch) {
+                tracing::error!(
+                    "failed to send qkd batch over results channel. Ending session: {e}"
+                );
+                return;
+            };
         }
 
-        // Ensure simulator state is reset on exit
-        let _ = simulator.stop_session();
+        if let Err(e) = simulator.stop_session() {
+            tracing::error!("failed to stop session: {e}");
+            return;
+        }
     });
 
     let handle = SessionHandle {
@@ -92,7 +80,7 @@ pub fn spawn_session(
         thread_handle: Some(handle),
     };
 
-    (handle, batch_rx)
+    Ok((handle, batch_rx))
 }
 
 impl ServiceCorrelationsRandom for Simulator {
@@ -112,5 +100,13 @@ impl ServiceCorrelationsRandom for Simulator {
         }
 
         Ok(batch)
+    }
+
+    fn start_session(&mut self) -> Result<(), SimulationError> {
+        self.start_session()
+    }
+
+    fn stop_session(&mut self) -> Result<(), SimulationError> {
+        self.stop_session()
     }
 }
