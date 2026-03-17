@@ -8,6 +8,8 @@ pub struct QkdBatch {
     pub click_results: [u8; 1024],
     pub alice_angles: [u8; 1024],
     pub bob_angles: [u8; 1024],
+    // Logical timestamp of that qkdbatch.
+    pub logical_timestamp: usize,
 }
 
 /// Handle to manage a running QKD session.
@@ -46,10 +48,13 @@ pub fn spawn_session(
     let (stop_tx, stop_rx) = bounded(1);
 
     let handle = thread::spawn(move || {
+        // Init at 1 for defensive programing later on
+        let mut logical_timestamp = 1;
+
         loop {
             // Generate the batch (cannot be interrupted internally)
             let batch_result = simulator.generate_qkd_batch();
-            let batch = match batch_result {
+            let mut batch = match batch_result {
                 Ok(b) => b,
                 Err(e) => {
                     tracing::error!("session failed: {e}");
@@ -61,12 +66,19 @@ pub fn spawn_session(
                 break;
             }
 
+            batch.logical_timestamp = logical_timestamp;
+
+            // Make sure the logical timestamp was set
+            assert_ne!(batch.logical_timestamp, 0);
+
             if let Err(e) = batch_tx.send(batch) {
                 tracing::error!(
                     "failed to send qkd batch over results channel. Ending session: {e}"
                 );
                 return;
             };
+
+            logical_timestamp += 1;
         }
 
         if let Err(e) = simulator.stop_session() {
@@ -92,6 +104,7 @@ impl ServiceCorrelationsRandom for Simulator {
             click_results,
             alice_angles: [0; 1024],
             bob_angles: [0; 1024],
+            logical_timestamp: 0,
         };
 
         for i in 0..BATCH {
