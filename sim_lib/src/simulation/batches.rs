@@ -1,5 +1,5 @@
-use crossbeam_channel::{Receiver, Sender, bounded};
-use std::thread::{self, JoinHandle};
+use crossbeam_channel::Sender;
+use std::thread::JoinHandle;
 
 use crate::{BATCH, ServiceCorrelationsRandom, errors::SimulationError, simulation::Simulator};
 
@@ -9,7 +9,7 @@ pub struct QkdBatch {
     pub alice_angles: [u8; 1024],
     pub bob_angles: [u8; 1024],
     // Logical timestamp of that qkdbatch.
-    pub logical_timestamp: usize,
+    pub logical_timestamp: Option<usize>,
 }
 
 /// Handle to manage a running QKD session.
@@ -33,70 +33,12 @@ impl SessionHandle {
     }
 }
 
-/// Spawns a new QKD session in a background thread.
-/// Takes ownership of the `Simulator` to allow parallel, independent instances.
-/// Returns a handle to stop the session and a receiver for the generated batches.
-pub fn spawn_session(
-    mut simulator: impl ServiceCorrelationsRandom + 'static,
-    buffer_size: usize,
-) -> Result<(SessionHandle, Receiver<QkdBatch>), SimulationError> {
-    if let Err(e) = simulator.start_session() {
-        return Err(e);
-    };
-
-    let (batch_tx, batch_rx) = bounded(buffer_size);
-    let (stop_tx, stop_rx) = bounded(1);
-
-    let handle = thread::spawn(move || {
-        // Init at 1 for defensive programing later on
-        let mut logical_timestamp = 1;
-
-        loop {
-            // Generate the batch (cannot be interrupted internally)
-            let batch_result = simulator.generate_qkd_batch();
-            let mut batch = match batch_result {
-                Ok(b) => b,
-                Err(e) => {
-                    tracing::error!("session failed: {e}");
-                    return;
-                }
-            };
-
-            if stop_rx.try_recv().is_ok() {
-                break;
-            }
-
-            batch.logical_timestamp = logical_timestamp;
-
-            // Make sure the logical timestamp was set
-            assert_ne!(batch.logical_timestamp, 0);
-
-            if let Err(e) = batch_tx.send(batch) {
-                tracing::error!(
-                    "failed to send qkd batch over results channel. Ending session: {e}"
-                );
-                return;
-            };
-
-            logical_timestamp += 1;
-        }
-
-        if let Err(e) = simulator.stop_session() {
-            tracing::error!("failed to stop session: {e}");
-            return;
-        }
-    });
-
-    let handle = SessionHandle {
-        stop_tx,
-        thread_handle: Some(handle),
-    };
-
-    Ok((handle, batch_rx))
-}
-
 impl ServiceCorrelationsRandom for Simulator {
-    fn generate_qkd_batch(&mut self) -> Result<QkdBatch, SimulationError> {
+    fn generate_qkd_batch(
+        &mut self,
+        batch_logical_timestamp: Option<usize>,
+    ) -> Result<QkdBatch, SimulationError> {
+        // Alice and bob produce indices of angles from the "angle table"
         let (alice_indices, bob_indices, click_results) = self.generate_correlation_batch()?;
 
         let angles_vec = &self.angles;
@@ -104,7 +46,7 @@ impl ServiceCorrelationsRandom for Simulator {
             click_results,
             alice_angles: [0; 1024],
             bob_angles: [0; 1024],
-            logical_timestamp: 0,
+            logical_timestamp: batch_logical_timestamp,
         };
 
         for i in 0..BATCH {
@@ -115,11 +57,11 @@ impl ServiceCorrelationsRandom for Simulator {
         Ok(batch)
     }
 
-    fn start_session(&mut self) -> Result<(), SimulationError> {
-        self.start_session()
+    fn init_session(&mut self) -> Result<(), SimulationError> {
+        self.initialize_session()
     }
 
-    fn stop_session(&mut self) -> Result<(), SimulationError> {
-        self.stop_session()
+    fn setup_session_end(&self) -> Result<(), SimulationError> {
+        self.setup_session_end()
     }
 }
