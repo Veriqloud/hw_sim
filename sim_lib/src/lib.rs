@@ -30,7 +30,6 @@ pub(crate) static OVERLAP_PROBABILITIES: Lazy<[u16; 128]> = Lazy::new(|| {
 
 pub trait ServiceCorrelationsRandom: Send {
     fn init_session(&mut self) -> Result<(), SimulationError>;
-    fn setup_session_end(&self) -> Result<(), SimulationError>;
     /// Generates a complete batch of QKD data, including choices and results for both parties.
     fn generate_qkd_batch(
         &mut self,

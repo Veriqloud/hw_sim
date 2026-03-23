@@ -10,6 +10,7 @@ use crate::{
 
 pub mod batches;
 pub mod builder;
+pub mod service;
 
 #[derive(Debug, PartialEq)]
 pub struct Simulator {
