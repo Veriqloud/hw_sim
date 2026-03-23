@@ -21,13 +21,13 @@ impl Actor {
         match msg {
             ActorMessage::StartSession { reply_to } => {
                 tracing::debug!("SimulatorActor: Processing StartSession");
-                let result = self.simulator.start_session();
+                let result = self.simulator.initialize_session();
                 let _ = reply_to.send(result);
                 Ok(())
             }
             ActorMessage::StopSession { reply_to } => {
                 tracing::debug!("SimulatorActor: Processing StopSession");
-                let result = self.simulator.stop_session();
+                let result = self.simulator.setup_session_end();
                 let _ = reply_to.send(result);
                 Ok(())
             }

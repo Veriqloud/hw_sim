@@ -139,7 +139,7 @@ impl Simulator {
 
     /// Initializes the simulator state for starting a generation sequence.
     /// Resets counters and sets the modulator state.
-    pub fn start_session(&mut self) -> Result<(), SimulationError> {
+    pub fn initialize_session(&mut self) -> Result<(), SimulationError> {
         tracing::info!("Simulator: Start session command received. Initializing for generation.");
         self.global_counter = 0; // Reset GC for the new session
         self.time_of_start = Some(Instant::now());
@@ -152,7 +152,7 @@ impl Simulator {
     }
 
     /// Stops the current generation sequence and resets state.
-    pub fn stop_session(&mut self) -> Result<(), SimulationError> {
+    pub fn setup_session_end(&mut self) -> Result<(), SimulationError> {
         tracing::info!("Simulator: Stop session command received. Halting generation.");
         self.modulator_state = ModulatorState::Idle;
         self.time_of_start = None;
