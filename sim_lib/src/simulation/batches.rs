@@ -4,8 +4,11 @@ use std::thread::JoinHandle;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct QkdBatch {
+    #[serde(with = "serde_bytes")]
     pub click_results: [u8; 1024],
+    #[serde(with = "serde_bytes")]
     pub alice_angles: [u8; 1024],
+    #[serde(with = "serde_bytes")]
     pub bob_angles: [u8; 1024],
     // Logical timestamp of that qkdbatch.
     pub logical_timestamp: Option<usize>,
