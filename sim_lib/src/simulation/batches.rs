@@ -10,8 +10,6 @@ pub struct QkdBatch {
     pub alice_angles: [u8; 1024],
     #[serde(with = "serde_bytes")]
     pub bob_angles: [u8; 1024],
-    // Logical timestamp of that qkdbatch.
-    pub logical_timestamp: Option<usize>,
 }
 
 /// Handle to manage a running QKD session.
