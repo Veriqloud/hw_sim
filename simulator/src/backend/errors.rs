@@ -1,3 +1,4 @@
+use sim_lib::errors::SimulationError;
 use snafu::prelude::*;
 
 #[derive(Debug, Snafu)]
@@ -8,13 +9,7 @@ pub enum Error {
     #[snafu(display("SerdeJson error because : {}", source))]
     SerdeJson { source: serde_json::Error },
     #[snafu(display("Simulator error : {}", source))]
-    Simulation {
-        source: crate::backend::simulation::errors::Error,
-    },
-    #[snafu(display("Hardware error : {}", source))]
-    Hardware {
-        source: crate::backend::simulation::hardware::errors::HardwareError,
-    },
+    Simulation { source: SimulationError },
     #[snafu(display("IO Error : {}", source))]
     Io { source: std::io::Error },
     #[snafu(display("Actor channel send error : {}", e))]

@@ -1,5 +1,6 @@
 pub mod builder;
 pub mod errors;
+pub mod modes;
 pub mod modulator_state;
 
 #[derive(PartialEq, Debug, Clone, Default)]

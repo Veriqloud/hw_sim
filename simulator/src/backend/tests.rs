@@ -1,15 +1,12 @@
 use std::{collections::HashMap, f64::consts::PI, time::Instant};
 
-use crate::backend::role::SimulatorMode;
-
 use configs::backend::Configuration;
 use rand::SeedableRng;
 use rand_pcg::Pcg64Mcg;
-
-use crate::backend::simulation::{
-    builder::SimulatorBuilder,
-    hardware::{builder::HardwareBuilder, modulator_state::ModulatorState},
-    Simulator, VqSim,
+use sim_lib::{
+    hardware::{builder::HardwareBuilder, modes::SimulatorMode, modulator_state::ModulatorState},
+    simulation::{builder::SimulatorBuilder, Simulator},
+    BATCH_SIZE,
 };
 
 #[test]
@@ -66,8 +63,8 @@ fn generate_bytes() {
         .with_gcr_padding(false)
         .build();
 
-    sim_a.start_session().unwrap();
-    sim_b.start_session().unwrap();
+    sim_a.initialize_session().unwrap();
+    sim_b.initialize_session().unwrap();
 
     // Batch 1
     let gcr_a1_raw = sim_a.generate_gcr_and_angles_batch().unwrap();
@@ -111,8 +108,8 @@ fn generate_bytes() {
         "Result bits for batch 2 should be identical"
     );
 
-    sim_a.stop_session().unwrap();
-    sim_b.stop_session().unwrap();
+    sim_a.setup_session_end().unwrap();
+    sim_b.setup_session_end().unwrap();
 }
 
 #[test]
@@ -133,12 +130,12 @@ fn source_angle_generation_consistency() {
         .with_gcr_padding(false)
         .build();
 
-    sim_gcr_source.start_session().unwrap();
+    sim_gcr_source.initialize_session().unwrap();
     let _gcr_data = sim_gcr_source.generate_gcr_and_angles_batch().unwrap();
     let angles_from_gcr_flow = sim_gcr_source
         .retrieve_pending_angles_batch(vec![]) // Dummy GCs, not used by retrieve
         .unwrap();
-    sim_gcr_source.stop_session().unwrap();
+    sim_gcr_source.setup_session_end().unwrap();
 
     // Simulator 2: Using generate_angles_for_gcs flow
     let mut sim_direct_angles_source = SimulatorBuilder::new()
@@ -151,14 +148,14 @@ fn source_angle_generation_consistency() {
         .with_modulator_state(ModulatorState::Random)
         .build();
 
-    sim_direct_angles_source.start_session().unwrap();
+    sim_direct_angles_source.initialize_session().unwrap();
     // Create a dummy vector of GCs with the expected batch size.
     // The actual GC values don't influence random angle generation in generate_angles_for_gcs.
     let dummy_gcs: Vec<u64> = (0..angles_from_gcr_flow.len() as u64).collect();
     let angles_from_direct_flow = sim_direct_angles_source
         .generate_angles_for_gcs(dummy_gcs)
         .unwrap();
-    sim_direct_angles_source.stop_session().unwrap();
+    sim_direct_angles_source.setup_session_end().unwrap();
 
     assert_eq!(
         angles_from_gcr_flow.len(),
@@ -202,8 +199,8 @@ fn qkd_statistics_asymmetric_workflow_ok() {
         .with_gcr_padding(false)
         .build();
 
-    sim_a.start_session().unwrap();
-    sim_b.start_session().unwrap();
+    sim_a.initialize_session().unwrap();
+    sim_b.initialize_session().unwrap();
 
     let split_gcr = |buf_gcr: &[u8; 8]| -> (u64, u8) {
         let mut temp_buf = *buf_gcr;
@@ -240,8 +237,8 @@ fn qkd_statistics_asymmetric_workflow_ok() {
         results_b_all.extend(current_results_b);
     }
 
-    sim_a.stop_session().unwrap();
-    sim_b.stop_session().unwrap();
+    sim_a.setup_session_end().unwrap();
+    sim_b.setup_session_end().unwrap();
 
     // --- Data Gathering ---
     let l = results_b_all.len();
@@ -329,7 +326,7 @@ fn test_rate_limiting_slow_rate() {
     let eta = 1.0; // 100% efficiency for simpler calculation
     let seed = 123;
     let num_batches = 20; // Use more batches for a better average
-    let batch_size = crate::backend::simulation::BATCH_SIZE; // 1024 events per batch
+    let batch_size = BATCH_SIZE; // 1024 events per batch
     let total_events = num_batches * batch_size;
 
     let mut sim = SimulatorBuilder::new()
@@ -345,7 +342,7 @@ fn test_rate_limiting_slow_rate() {
         .with_modulator_state(ModulatorState::Random)
         .build();
 
-    sim.start_session().unwrap();
+    sim.initialize_session().unwrap();
     let start_time = Instant::now();
 
     for _ in 0..num_batches {
@@ -354,7 +351,7 @@ fn test_rate_limiting_slow_rate() {
     }
 
     let elapsed_time = start_time.elapsed();
-    sim.stop_session().unwrap();
+    sim.setup_session_end().unwrap();
 
     // Expected time calculation based on the simulator's rate limiting logic:
     // time_in_secs = (target_event_count * pulse_distance) / eta
@@ -383,7 +380,7 @@ fn test_rate_limiting_high_speed() {
     let eta = 1.0; // 100% efficiency for simpler calculation
     let seed = 456;
     let num_batches = 50; // Generate a lot more batches to ensure CPU work is significant
-    let batch_size = crate::backend::simulation::BATCH_SIZE; // 1024 events per batch
+    let batch_size = BATCH_SIZE; // 1024 events per batch
     let total_events = num_batches * batch_size;
 
     let mut sim = SimulatorBuilder::new()
@@ -399,7 +396,7 @@ fn test_rate_limiting_high_speed() {
         .with_modulator_state(ModulatorState::Random)
         .build();
 
-    sim.start_session().unwrap();
+    sim.initialize_session().unwrap();
     let start_time = Instant::now();
 
     for _ in 0..num_batches {
@@ -408,7 +405,7 @@ fn test_rate_limiting_high_speed() {
     }
 
     let elapsed_time = start_time.elapsed();
-    sim.stop_session().unwrap();
+    sim.setup_session_end().unwrap();
 
     // The theoretical time is extremely short (microseconds).
     // The actual execution time will be dominated by CPU work, not sleeping.
