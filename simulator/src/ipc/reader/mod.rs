@@ -1,11 +1,12 @@
 pub mod errors;
 
 use memmap2::MmapOptions;
+use sim_lib::hardware::modes::SimulatorMode;
+use sim_lib::BATCH_SIZE;
 use std::fs::OpenOptions as StdOpenOptions;
 use std::time::Duration;
 use std::{fs::File, io::Read};
 
-use crate::backend::simulation::BATCH_SIZE;
 use crate::{backend::actor::ActorHandle as SimulatorHandle, ipc::Command};
 
 use super::writer::actor::IPCWriterActorHandle;
@@ -22,7 +23,7 @@ pub struct IPCReader {
     writer_handle: IPCWriterActorHandle,
     simulator_handle: SimulatorHandle,
     last_known_command_trigger_value: u32,
-    simulator_mode: crate::backend::role::SimulatorMode,
+    simulator_mode: SimulatorMode,
 }
 
 /// Synchronously reads a u32 value from a memory-mapped device.
@@ -96,7 +97,7 @@ impl IPCReader {
         gc_read_file: File,
         simulator_handle: SimulatorHandle,
         writer_handle: IPCWriterActorHandle,
-        simulator_mode: crate::backend::role::SimulatorMode,
+        simulator_mode: SimulatorMode,
     ) -> Self {
         IPCReader {
             command_path,
@@ -413,11 +414,11 @@ impl IPCReader {
 
     pub fn start(mut self) -> Result<(), errors::Error> {
         match self.simulator_mode {
-            crate::backend::role::SimulatorMode::Detector => {
+            SimulatorMode::Detector => {
                 tracing::info!("IPCReader starting in Detector (Bob) mode. Awaiting commands.");
                 self.run_detector_workflow()
             }
-            crate::backend::role::SimulatorMode::Source => {
+            SimulatorMode::Source => {
                 tracing::info!("IPCReader starting in Source (Alice) mode. Awaiting commands.");
                 self.run_source_workflow()
             }

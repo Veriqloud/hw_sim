@@ -1,0 +1,15 @@
+[package]
+name = "sim_lib"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+snafu = { workspace = true }
+rand = { workspace = true }
+rand_pcg = { workspace = true }
+once_cell = "1.21.3"
+tracing = { workspace = true }
+serde = { workspace = true }
+serde_bytes = "0.11"
+configs = { path = "../configs" }
+crossbeam-channel = "0.5.15"
