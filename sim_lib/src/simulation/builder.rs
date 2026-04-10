@@ -2,7 +2,7 @@ use rand::SeedableRng;
 use rand_pcg::Pcg64Mcg;
 use std::time::Instant;
 
-use configs::backend::Configuration;
+use configs::backend::{Configuration, QberConfig};
 
 use crate::{
     hardware::{
@@ -18,7 +18,7 @@ pub struct SimulatorBuilder {
     pub modulator_state: ModulatorState,
     pub angles: Vec<u8>,
     pub now: Instant,
-    pub qb_err: f64,
+    pub qb_err: QberConfig,
     pub rng: Pcg64Mcg,
     pub seed: u64,
     pub mode: SimulatorMode,
@@ -38,7 +38,7 @@ impl SimulatorBuilder {
         SimulatorBuilder::default()
             .with_hardware(hw)
             .with_angles(conf.angles.to_owned())
-            .with_qb_err(conf.qberr)
+            .with_qb_err(conf.qberr.to_owned())
             .with_eta(conf.eta)
             .with_rng(Pcg64Mcg::seed_from_u64(conf.seed))
             .with_seed(conf.seed)
@@ -51,9 +51,10 @@ impl SimulatorBuilder {
             hw: self.hw.to_owned(),
             simulator_mode: self.mode,
             rng: self.rng.to_owned(),
+            qber_oscillation_rng: Pcg64Mcg::seed_from_u64(self.seed),
             eta: self.eta,
             seed: self.seed,
-            qb_err: self.qb_err,
+            qb_err: self.qb_err.to_owned(),
             now: self.now,
             global_counter: self.global_counter,
             modulator_state: self.modulator_state.to_owned(),
@@ -96,7 +97,7 @@ impl SimulatorBuilder {
         self
     }
 
-    pub fn with_qb_err(&mut self, qb_err: f64) -> &mut Self {
+    pub fn with_qb_err(&mut self, qb_err: QberConfig) -> &mut Self {
         self.qb_err = qb_err;
         self
     }
@@ -159,6 +160,8 @@ pub mod tests {
         simulation::{Simulator, builder::SimulatorBuilder},
     };
 
+    use configs::backend::QberConfig;
+
     #[test]
     fn test_builder() {
         let now = Instant::now();
@@ -171,7 +174,7 @@ pub mod tests {
             .with_mode(SimulatorMode::Detector) // Add with_mode for testing
             .with_rng(Pcg64Mcg::seed_from_u64(5))
             .with_eta(13.)
-            .with_qb_err(42.)
+            .with_qb_err(QberConfig::Fixed { value: 42. })
             .with_now(now)
             .with_global_counter(99)
             .with_modulator_state(ModulatorState::Random)
@@ -186,8 +189,9 @@ pub mod tests {
                 hw,
                 simulator_mode: SimulatorMode::Detector, // Add mode to assertion
                 rng: Pcg64Mcg::seed_from_u64(5),
+                qber_oscillation_rng: Pcg64Mcg::seed_from_u64(5),
                 eta: 13.,
-                qb_err: 42.,
+                qb_err: QberConfig::Fixed { value: 42. },
                 now,
                 seed: 5,
                 global_counter: 99,
