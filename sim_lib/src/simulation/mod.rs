@@ -1,3 +1,4 @@
+use configs::backend::QberConfig;
 use rand::{Rng, SeedableRng};
 use rand_pcg::Pcg64Mcg;
 use std::time::{Duration, Instant};
@@ -22,8 +23,9 @@ pub struct Simulator {
     pub now: Instant,
     // Replaced by batch-oriented processing
     pub(crate) pending_angles_batch: Option<Vec<u8>>,
-    pub qb_err: f64,
+    pub qb_err: QberConfig,
     pub(crate) rng: Pcg64Mcg,
+    pub(crate) qber_oscillation_rng: Pcg64Mcg,
     pub(crate) seed: u64,
     pub simulator_mode: SimulatorMode,
     pub(crate) time_of_start: Option<Instant>,
@@ -58,8 +60,24 @@ impl Simulator {
 
         // Pre-calculate the probability lookup table for measurement outcomes.
         let overlap_probabilities = &OVERLAP_PROBABILITIES;
-        // Convert the QBER (a float from 0.0 to 1.0) to a u16 threshold for random comparison.
-        let qber_threshold: u16 = (self.qb_err * (u16::MAX as f64)) as u16;
+
+        // --- QBER Oscillation (using dedicated RNG) ---
+        // We use a separate RNG so that changing QBER parameters doesn't
+        // desynchronize the main RNG sequence used for angles and measurement results.
+        let current_qb_err = match &self.qb_err {
+            QberConfig::Fixed { value } => *value,
+            QberConfig::Uniform { min, max } => self.qber_oscillation_rng.gen_range(*min..=*max),
+            QberConfig::Gaussian { mean, std_dev } => {
+                // Box-Muller transform for normal distribution
+                let u1: f64 = self.qber_oscillation_rng.r#gen();
+                let u2: f64 = self.qber_oscillation_rng.gen();
+                let z0 = (-2.0 * u1.ln()).sqrt() * (2.0 * std::f64::consts::PI * u2).cos();
+                (mean + z0 * std_dev).clamp(0.0, 1.0)
+            }
+        };
+
+        // Convert the current QBER (a float from 0.0 to 1.0) to a u16 threshold for random comparison.
+        let qber_threshold: u16 = (current_qb_err * (u16::MAX as f64)) as u16;
 
         // --- Random Number Generation ---
         // These random numbers determine the choices and outcomes for the batch.
@@ -149,6 +167,7 @@ impl Simulator {
         self.reset_time(); // Reset self.now for internal time calculations if any
         self.last_event_count = 0; // Reset event counter for the new session
         self.rng = Pcg64Mcg::seed_from_u64(self.seed); // Re-seed the RNG
+        self.qber_oscillation_rng = Pcg64Mcg::seed_from_u64(self.seed); // Re-seed the oscillation RNG
         Ok(())
     }
 

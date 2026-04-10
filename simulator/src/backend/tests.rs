@@ -1,6 +1,6 @@
 use std::{collections::HashMap, f64::consts::PI, time::Instant};
 
-use configs::backend::Configuration;
+use configs::backend::{Configuration, QberConfig};
 use rand::SeedableRng;
 use rand_pcg::Pcg64Mcg;
 use sim_lib::{
@@ -28,7 +28,7 @@ fn valid_config() {
             angles: vec![0, 10, 11, 12],
             seed: 33,
             eta: 0.1,
-            qberr: 0.02,
+            qberr: QberConfig::Fixed { value: 0.02 },
             pulse_distance: 1e-8,
         },
         config_input
@@ -45,7 +45,7 @@ fn generate_bytes() {
         .with_rng(Pcg64Mcg::seed_from_u64(42))
         .with_mode(SimulatorMode::Source) // Added mode
         .with_eta(1e-2)
-        .with_qb_err(0 as f64)
+        .with_qb_err(QberConfig::Fixed { value: 0.0 })
         .with_angles(vec![0, 32, 64, 96])
         .with_modulator_state(ModulatorState::Random)
         .with_now(now)
@@ -56,7 +56,7 @@ fn generate_bytes() {
         .with_rng(Pcg64Mcg::seed_from_u64(42))
         .with_mode(SimulatorMode::Source) // Changed to Source for identical comparison
         .with_eta(1e-2)
-        .with_qb_err(0 as f64)
+        .with_qb_err(QberConfig::Fixed { value: 0.0 })
         .with_angles(vec![0, 32, 64, 96])
         .with_modulator_state(ModulatorState::Random)
         .with_now(now)
@@ -124,7 +124,7 @@ fn source_angle_generation_consistency() {
         .with_rng(Pcg64Mcg::seed_from_u64(seed))
         .with_mode(SimulatorMode::Source)
         .with_eta(1.0) // Eta doesn't affect angle generation itself
-        .with_qb_err(0.0) // QBER doesn't affect angle choice
+        .with_qb_err(QberConfig::Fixed { value: 0.0 }) // QBER doesn't affect angle choice
         .with_angles(common_angles.clone())
         .with_modulator_state(ModulatorState::Random)
         .with_gcr_padding(false)
@@ -143,7 +143,7 @@ fn source_angle_generation_consistency() {
         .with_rng(Pcg64Mcg::seed_from_u64(seed)) // Same seed
         .with_mode(SimulatorMode::Source) // Same mode
         .with_eta(1.0)
-        .with_qb_err(0.0)
+        .with_qb_err(QberConfig::Fixed { value: 0.0 })
         .with_angles(common_angles.clone())
         .with_modulator_state(ModulatorState::Random)
         .build();
@@ -184,7 +184,7 @@ fn qkd_statistics_asymmetric_workflow_ok() {
         .with_rng(Pcg64Mcg::seed_from_u64(seed))
         .with_mode(SimulatorMode::Source)
         .with_eta(1e-2)
-        .with_qb_err(qb_err)
+        .with_qb_err(QberConfig::Fixed { value: qb_err })
         .with_angles(test_config_angles.clone())
         .with_gcr_padding(false)
         .build();
@@ -194,7 +194,7 @@ fn qkd_statistics_asymmetric_workflow_ok() {
         .with_rng(Pcg64Mcg::seed_from_u64(seed))
         .with_mode(SimulatorMode::Detector)
         .with_eta(1e-2)
-        .with_qb_err(qb_err)
+        .with_qb_err(QberConfig::Fixed { value: qb_err })
         .with_angles(test_config_angles.clone())
         .with_gcr_padding(false)
         .build();
