@@ -1,5 +1,5 @@
 use configs::backend::QberConfig;
-use rand::{Rng, SeedableRng};
+use rand::{RngExt, SeedableRng};
 use rand_pcg::Pcg64Mcg;
 use std::time::{Duration, Instant};
 
@@ -66,11 +66,11 @@ impl Simulator {
         // desynchronize the main RNG sequence used for angles and measurement results.
         let current_qb_err = match &self.qb_err {
             QberConfig::Fixed { value } => *value,
-            QberConfig::Uniform { min, max } => self.qber_oscillation_rng.gen_range(*min..=*max),
+            QberConfig::Uniform { min, max } => self.qber_oscillation_rng.random_range(*min..=*max),
             QberConfig::Gaussian { mean, std_dev } => {
                 // Box-Muller transform for normal distribution
-                let u1: f64 = self.qber_oscillation_rng.r#gen();
-                let u2: f64 = self.qber_oscillation_rng.gen();
+                let u1: f64 = self.qber_oscillation_rng.random();
+                let u2: f64 = self.qber_oscillation_rng.random();
                 let z0 = (-2.0 * u1.ln()).sqrt() * (2.0 * std::f64::consts::PI * u2).cos();
                 (mean + z0 * std_dev).clamp(0.0, 1.0)
             }
@@ -79,7 +79,7 @@ impl Simulator {
         // Convert the current QBER (a float from 0.0 to 1.0) to a u16 threshold for random comparison.
         let qber_threshold: u16 = (current_qb_err * (u16::MAX as f64)) as u16;
 
-        // --- Random Number Generation ---
+        // --- Random Number Generation (using main RNG) ---
         // These random numbers determine the choices and outcomes for the batch.
         // Since the RNG is seeded, both Alice's and Bob's simulators will generate
         // the identical streams of random numbers, ensuring their results are correlated.
