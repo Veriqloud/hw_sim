@@ -414,10 +414,113 @@ fn test_rate_limiting_high_speed() {
 
     // We assert that the elapsed time is much larger than the theoretical sleep time,
     // but still reasonably fast (e.g., under 200ms), proving no significant sleep occurred.
-    let max_expected_runtime = Duration::from_millis(500);
+    let max_expected_runtime = std::time::Duration::from_millis(500);
     assert!(
         elapsed_time < max_expected_runtime,
         "High-speed rate test failed: Elapsed time ({:?}) was too long, suggesting an artificial delay.",
         elapsed_time
     );
+}
+
+#[test]
+fn test_qber_oscillation_distributions() {
+    let hw = HardwareBuilder::new().with_pulse_distance(1e-8).build();
+    let seed = 12345;
+
+    // Helper to run simulation for 15 batches and return result bits
+    let run_sim = |qber_config: QberConfig| -> Vec<Vec<u8>> {
+        let mut sim = SimulatorBuilder::new()
+            .with_hardware(hw.clone())
+            .with_rng(Pcg64Mcg::seed_from_u64(seed))
+            .with_seed(seed)
+            .with_mode(SimulatorMode::Detector)
+            .with_qb_err(qber_config)
+            .with_angles(vec![0, 32, 64, 96])
+            .with_modulator_state(ModulatorState::Random)
+            .with_gcr_padding(false)
+            .build();
+
+        sim.initialize_session().unwrap();
+
+        let mut batches = Vec::new();
+        for _ in 0..15 {
+            let gcr_raw = sim.generate_gcr_and_angles_batch().unwrap();
+            let result_bits: Vec<u8> = gcr_raw.iter().map(|gcr| (gcr[6] >> 1) & 1).collect();
+            batches.push(result_bits);
+        }
+        sim.setup_session_end().unwrap();
+        batches
+    };
+
+    // Reference (Zero Error)
+    let batches_zero = run_sim(QberConfig::Fixed { value: 0.0 });
+
+    // Define the variants we want to test
+    let test_cases = vec![
+        QberConfig::Fixed { value: 0.2 },
+        QberConfig::Uniform { min: 0.0, max: 0.5 },
+        QberConfig::Gaussian {
+            mean: 0.25,
+            std_dev: 0.1,
+        },
+    ];
+
+    for config in test_cases {
+        let batches_test = run_sim(config.clone());
+        let mut observed_qbers = Vec::new();
+
+        for i in 0..batches_test.len() {
+            let mut diffs = 0;
+            for j in 0..batches_test[i].len() {
+                if batches_zero[i][j] != batches_test[i][j] {
+                    diffs += 1;
+                }
+            }
+            observed_qbers.push(diffs as f64 / batches_zero[i].len() as f64);
+        }
+
+        // The exhaustive match here ensures that any new variant added to QberConfig
+        // will cause a compilation error in this test, forcing an update.
+        match config {
+            QberConfig::Fixed { value } => {
+                for (i, &qber) in observed_qbers.iter().enumerate() {
+                    assert!(
+                        (qber - value).abs() < 0.05,
+                        "Fixed QBER unstable at batch {} (got {})",
+                        i,
+                        qber
+                    );
+                }
+            }
+            QberConfig::Uniform { .. } => {
+                // The reason this finds the max and min values is that f64 can be NaN, but f64::max or f64::min ignores NaN in coparisons and returns the other number.
+                // On first pass, we get 0./0. which is NaN, and compare it to the first value of the vec. We cannot use .min() directly on the collection because f64 does not implement Ord because of NaN.
+                // Note that if both arguments are NaN, we just return NaN (and not an error) so tests won't crash if we use this.
+                let max_qber = observed_qbers.iter().cloned().fold(0. / 0., f64::max);
+                let min_qber = observed_qbers.iter().cloned().fold(0. / 0., f64::min);
+                assert!(
+                    max_qber - min_qber > 0.1,
+                    "Uniform QBER should vary across batches (range: {:.3})",
+                    max_qber - min_qber
+                );
+            }
+            QberConfig::Gaussian { mean, .. } => {
+                let sum: f64 = observed_qbers.iter().sum();
+                let mean_qber = sum / observed_qbers.len() as f64;
+                assert!(
+                    (mean_qber - mean).abs() < 0.05,
+                    "Gaussian mean QBER should be near {} (got {:.3})",
+                    mean,
+                    mean_qber
+                );
+                let max_qber = observed_qbers.iter().cloned().fold(0. / 0., f64::max);
+                let min_qber = observed_qbers.iter().cloned().fold(0. / 0., f64::min);
+                assert!(
+                    max_qber - min_qber > 0.05,
+                    "Gaussian QBER should show some variance (range: {:.3})",
+                    max_qber - min_qber
+                );
+            }
+        }
+    }
 }
