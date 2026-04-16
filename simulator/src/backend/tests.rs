@@ -524,3 +524,64 @@ fn test_qber_oscillation_distributions() {
         }
     }
 }
+
+#[test]
+fn test_qkd_attack_signal_flow() {
+    // This test verifies the end-to-end flow of the attack mode:
+    // Actor receives StartAttack -> Simulator forces QBER to 50% -> StopAttack restores it.
+    
+    let hw = HardwareBuilder::new().with_pulse_distance(1e-9).build();
+    let seed = 42;
+    let config_angles = vec![0, 32, 64, 96];
+
+    let sim = SimulatorBuilder::new()
+        .with_hardware(hw)
+        .with_rng(Pcg64Mcg::seed_from_u64(seed))
+        .with_seed(seed)
+        .with_mode(SimulatorMode::Detector)
+        .with_qb_err(QberConfig::Fixed { value: 0.0 }) // Normal QBER is 0%
+        .with_angles(config_angles)
+        .with_modulator_state(ModulatorState::Random)
+        .with_gcr_padding(false)
+        .build();
+
+    let sim_handle = crate::backend::actor::ActorHandle::new(sim);
+
+    // 1. Reference Batch (Normal mode)
+    sim_handle.start_session().unwrap();
+    let gcr_normal = sim_handle.generate_gcr_and_angles_batch().unwrap();
+    let results_normal: Vec<u8> = gcr_normal.iter().map(|gcr| (gcr[6] >> 1) & 1).collect();
+    sim_handle.stop_session().unwrap();
+
+    // 2. Attack Batch (Reset session to get same RNG sequence, then start attack)
+    sim_handle.start_session().unwrap();
+    sim_handle.start_attack().unwrap(); // Simulate SIGUSR1
+    let gcr_attack = sim_handle.generate_gcr_and_angles_batch().unwrap();
+    let results_attack: Vec<u8> = gcr_attack.iter().map(|gcr| (gcr[6] >> 1) & 1).collect();
+    
+    // Calculate QBER
+    let mut diffs = 0;
+    for i in 0..BATCH_SIZE {
+        if results_normal[i] != results_attack[i] {
+            diffs += 1;
+        }
+    }
+    let qber_attack = diffs as f64 / BATCH_SIZE as f64;
+    println!("Measured QBER during simulated attack: {:.4}", qber_attack);
+    
+    assert!(qber_attack > 0.4 && qber_attack < 0.6, 
+        "Attack QBER should be around 0.5, got {:.4}", qber_attack);
+
+    // 3. Restore Batch (Reset session, stop attack)
+    sim_handle.stop_attack().unwrap(); // Simulate SIGUSR2
+    sim_handle.stop_session().unwrap();
+    
+    sim_handle.start_session().unwrap();
+    let gcr_restored = sim_handle.generate_gcr_and_angles_batch().unwrap();
+    let results_restored: Vec<u8> = gcr_restored.iter().map(|gcr| (gcr[6] >> 1) & 1).collect();
+    
+    assert_eq!(results_normal, results_restored, 
+        "Restored session results should be identical to original normal session");
+    
+    sim_handle.stop_session().unwrap();
+}
