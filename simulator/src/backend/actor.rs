@@ -61,6 +61,18 @@ impl Actor {
                 let _ = reply_to.send(result);
                 Ok(())
             }
+            ActorMessage::StartAttack { reply_to } => {
+                tracing::debug!("SimulatorActor: Processing StartAttack");
+                self.simulator.start_attack();
+                let _ = reply_to.send(Ok(()));
+                Ok(())
+            }
+            ActorMessage::StopAttack { reply_to } => {
+                tracing::debug!("SimulatorActor: Processing StopAttack");
+                self.simulator.stop_attack();
+                let _ = reply_to.send(Ok(()));
+                Ok(())
+            }
         }
     }
 }
@@ -88,6 +100,12 @@ pub enum ActorMessage {
     GenerateAnglesForGcs {
         received_gcs: Vec<u64>,
         reply_to: Sender<Result<Vec<u8>, SimulationError>>, // Returns Angles data
+    },
+    StartAttack {
+        reply_to: Sender<Result<(), SimulationError>>,
+    },
+    StopAttack {
+        reply_to: Sender<Result<(), SimulationError>>,
     },
     // SetRole was removed
     // Old messages like ReadAngles, GetGlobalCounter, SeedAndStartGeneration, Start, Stop might be obsolete
@@ -242,6 +260,36 @@ impl ActorHandle {
             Err(e) => {
                 return Err(Error::ActorDied { source: e });
             }
+        }
+    }
+
+    pub fn start_attack(&self) -> Result<(), Error> {
+        let (send, recv) = mpsc::channel();
+        let message = ActorMessage::StartAttack { reply_to: send };
+        self.sender
+            .send(message)
+            .map_err(|e| errors::Error::ActorSend { e: e.to_string() })?;
+        match recv.recv() {
+            Ok(v) => match v {
+                Ok(_) => Ok(()),
+                Err(e) => Err(Error::Simulation { source: e }),
+            },
+            Err(e) => Err(Error::ActorDied { source: e }),
+        }
+    }
+
+    pub fn stop_attack(&self) -> Result<(), Error> {
+        let (send, recv) = mpsc::channel();
+        let message = ActorMessage::StopAttack { reply_to: send };
+        self.sender
+            .send(message)
+            .map_err(|e| errors::Error::ActorSend { e: e.to_string() })?;
+        match recv.recv() {
+            Ok(v) => match v {
+                Ok(_) => Ok(()),
+                Err(e) => Err(Error::Simulation { source: e }),
+            },
+            Err(e) => Err(Error::ActorDied { source: e }),
         }
     }
 }
