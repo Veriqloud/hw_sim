@@ -64,6 +64,7 @@ impl SimulatorBuilder {
             use_gcr_padding: self.use_gcr_padding,
             rate_limiting_enabled: self.use_rate_limiter,
             last_event_count: 0,
+            is_under_attack: false,
         }
     }
 
@@ -202,6 +203,7 @@ pub mod tests {
                 use_gcr_padding: false,
                 rate_limiting_enabled: false,
                 last_event_count: 0,
+                is_under_attack: false,
             },
             sim
         )
