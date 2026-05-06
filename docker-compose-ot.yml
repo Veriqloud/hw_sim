@@ -1,0 +1,102 @@
+version: '3.8'
+volumes:
+  tmp_data_alice:
+  tmp_data_bob:
+
+services:
+  hw_sim_alice:
+    build:
+      context: .
+      dockerfile: Dockerfile.simulator
+    command: simulator --config-path /data/hw_sim_config.json
+    network_mode: "host"
+    volumes:
+      - ./config_files/alice:/data
+      - tmp_data_alice:/tmp
+
+  hw_sim_bob:
+    build:
+      context: .
+      dockerfile: Dockerfile.simulator
+    command: simulator --config-path /data/hw_sim_config.json
+    network_mode: "host"
+    volumes:
+      - ./config_files/bob:/data
+      - tmp_data_bob:/tmp
+
+  gc_alice:
+    build:
+      context: .
+      dockerfile: Dockerfile.simulator
+    command: gc_alice -c /data/gc_config.json
+    network_mode: "host"
+    volumes:
+      - ./config_files/alice:/data
+      - tmp_data_alice:/tmp
+    depends_on:
+      - hw_sim_alice
+
+  gc_bob:
+    build:
+      context: .
+      dockerfile: Dockerfile.simulator
+    command: gc_bob -c /data/gc_config.json
+    network_mode: "host"
+    volumes:
+      - ./config_files/bob:/data
+      - tmp_data_bob:/tmp
+    depends_on:
+      - hw_sim_bob
+
+  # qber_bob:
+  #   build:
+  #     context: .
+  #     dockerfile: Dockerfile.qber
+  #   command: bob -c /data/qber_config.json
+  #   network_mode: "host"
+  #   volumes:
+  #     - ./config_files/bob:/data
+  #     - tmp_data_bob:/tmp
+  #   depends_on:
+  #     - gc_bob
+
+  # qber_alice:
+  #   build:
+  #     context: .
+  #     dockerfile: Dockerfile.qber
+  #   command: alice -c /data/qber_config.json 6400
+  #   network_mode: "host"
+  #   volumes:
+  #     - ./config_files/alice:/data
+  #     - tmp_data_alice:/tmp
+  #   depends_on:
+  #     - gc_alice
+  #     - qber_bob
+
+
+  ot_bob:
+    build:
+      context: .
+      dockerfile: Dockerfile.ot
+    command: python server_run.py -m hwsim -n 125 -b 32768 -p /app_config/ot_config.json -c /network/ot_network.json --loglive
+    network_mode: "host"
+    volumes:
+      - ./config_files/bob:/app_config
+      - ./config_files/ot_network.json:/network/ot_network.json
+      - tmp_data_bob:/tmp
+    depends_on:
+      - gc_bob
+
+  ot_alice:
+    build:
+      context: .
+      dockerfile: Dockerfile.ot
+    command: python client_run.py -m hwsim -n 125 -b 32768 -p /app_config/ot_config.json -c /network/ot_network.json --loglive
+    network_mode: "host"
+    volumes:
+      - ./config_files/alice:/app_config
+      - ./config_files/ot_network.json:/network/ot_network.json
+      - tmp_data_alice:/tmp
+    depends_on:
+      - gc_alice
+      - ot_bob

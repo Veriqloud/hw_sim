@@ -1,0 +1,11 @@
+{
+    "angle": {
+        "hwsim": "/tmp/gc_bob_angle.fifo",
+        "real": "/dev/xdma0_c2h_3"
+    },
+    "result": {
+        "hwsim": "/tmp/gc_bob_click_result.fifo",
+        "real": "/tmp/result.fifo"
+        }
+
+}

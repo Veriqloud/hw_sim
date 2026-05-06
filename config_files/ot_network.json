@@ -1,0 +1,15 @@
+{
+    "ip": {
+        "alice": "192.168.1.14",
+        "bob": "192.168.1.77",
+        "alice_hwsim": "localhost",
+        "bob_hwsim": "localhost",
+        "bob2": "192.168.1.117",
+        "alice2": "192.168.1.124"
+    },
+    "port": {
+        "hwsim": 7100,
+        "ot": 14000
+
+    }
+}

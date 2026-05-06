@@ -1,0 +1,24 @@
+FROM python:3.10-slim
+
+# Install system dependencies
+# git is required for cloning, build-essential for compiling ldpc/numpy/scipy if needed
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Clone the repository and navigate to the OT application directory
+RUN git clone --branch master https://github.com/Veriqloud/applications_on_qline.git .
+
+WORKDIR /app/Q_oblivious_transfer
+
+# Install Python dependencies required by the OT protocol
+RUN pip install --no-cache-dir numpy scipy pandas ldpc
+
+# Create a log directory as the utils.py script expects to write CSV logs there
+RUN mkdir -p log
+
+# Default entry point (overridden by docker-compose commands)
+CMD ["python3"]
