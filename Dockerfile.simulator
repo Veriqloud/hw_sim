@@ -8,14 +8,14 @@ RUN git config --global url."https://github.com/".insteadOf "ssh://git@github.co
 
 RUN git clone --branch master https://github.com/Veriqloud/hw_sim.git
 WORKDIR /build/hw_sim
-RUN git reset --hard 9a7a455
+RUN git reset --hard forumquantiquedefense
 RUN cargo fetch
 RUN cargo build --release --bin simulator
 
 WORKDIR /build
 RUN git clone --branch master https://github.com/Veriqloud/kiwi_hw_control.git
 WORKDIR /build/kiwi_hw_control/gc
-RUN git reset --hard 45088cc
+RUN git reset --hard forumquantiquedefense
 RUN cargo fetch
 RUN cargo build --release --bin alice --bin bob
 
