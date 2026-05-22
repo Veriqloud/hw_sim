@@ -25,7 +25,7 @@ mod tests {
             let mut sim_a = SimulatorBuilder::new()
                 .with_rng(Pcg64Mcg::seed_from_u64(seed))
                 .with_mode(SimulatorMode::Source)
-                .with_qb_err(qber)
+                .with_qb_err(configs::backend::QberConfig::Fixed { value: qber })
                 .with_angles(test_angles.clone())
                 .with_modulator_state(ModulatorState::Random)
                 .build();
@@ -33,7 +33,7 @@ mod tests {
             let mut sim_b = SimulatorBuilder::new()
                 .with_rng(Pcg64Mcg::seed_from_u64(seed))
                 .with_mode(SimulatorMode::Detector)
-                .with_qb_err(qber)
+                .with_qb_err(configs::backend::QberConfig::Fixed { value: qber })
                 .with_angles(test_angles.clone())
                 .with_modulator_state(ModulatorState::Random)
                 .build();

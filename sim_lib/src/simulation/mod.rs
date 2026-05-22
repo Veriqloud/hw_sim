@@ -1,4 +1,5 @@
-use rand::{Rng, SeedableRng};
+use configs::backend::QberConfig;
+use rand::{RngExt, SeedableRng};
 use rand_pcg::Pcg64Mcg;
 use std::time::{Duration, Instant};
 
@@ -22,17 +23,29 @@ pub struct Simulator {
     pub now: Instant,
     // Replaced by batch-oriented processing
     pub(crate) pending_angles_batch: Option<Vec<u8>>,
-    pub qb_err: f64,
+    pub qb_err: QberConfig,
     pub(crate) rng: Pcg64Mcg,
+    pub(crate) qber_oscillation_rng: Pcg64Mcg,
     pub(crate) seed: u64,
     pub simulator_mode: SimulatorMode,
     pub(crate) time_of_start: Option<Instant>,
     pub(crate) last_event_count: u64,
     pub(crate) use_gcr_padding: bool,
     pub rate_limiting_enabled: bool,
+    pub is_under_attack: bool,
 }
 
 impl Simulator {
+    pub fn start_attack(&mut self) {
+        self.is_under_attack = true;
+        tracing::warn!("QKD Attack started: QBER forced to 50%");
+    }
+
+    pub fn stop_attack(&mut self) {
+        self.is_under_attack = false;
+        tracing::info!("QKD Attack stopped: returning to configured QBER");
+    }
+
     /// The core logic for generating a single batch of correlated events.
     /// This private helper function simulates a two-party quantum communication protocol.
     /// For each event, both parties randomly choose a basis (angle). The sum of their angles
@@ -58,10 +71,32 @@ impl Simulator {
 
         // Pre-calculate the probability lookup table for measurement outcomes.
         let overlap_probabilities = &OVERLAP_PROBABILITIES;
-        // Convert the QBER (a float from 0.0 to 1.0) to a u16 threshold for random comparison.
-        let qber_threshold: u16 = (self.qb_err * (u16::MAX as f64)) as u16;
 
-        // --- Random Number Generation ---
+        // --- QBER Oscillation (using dedicated RNG) ---
+        // We use a separate RNG so that changing QBER parameters doesn't
+        // desynchronize the main RNG sequence used for angles and measurement results.
+        let current_qb_err = if self.is_under_attack {
+            0.5
+        } else {
+            match &self.qb_err {
+                QberConfig::Fixed { value } => *value,
+                QberConfig::Uniform { min, max } => {
+                    self.qber_oscillation_rng.random_range(*min..=*max)
+                }
+                QberConfig::Gaussian { mean, std_dev } => {
+                    // Box-Muller transform for normal distribution
+                    let u1: f64 = self.qber_oscillation_rng.random();
+                    let u2: f64 = self.qber_oscillation_rng.random();
+                    let z0 = (-2.0 * u1.ln()).sqrt() * (2.0 * std::f64::consts::PI * u2).cos();
+                    (mean + z0 * std_dev).clamp(0.0, 1.0)
+                }
+            }
+        };
+
+        // Convert the current QBER (a float from 0.0 to 1.0) to a u16 threshold for random comparison.
+        let qber_threshold: u16 = (current_qb_err * (u16::MAX as f64)) as u16;
+
+        // --- Random Number Generation (using main RNG) ---
         // These random numbers determine the choices and outcomes for the batch.
         // Since the RNG is seeded, both Alice's and Bob's simulators will generate
         // the identical streams of random numbers, ensuring their results are correlated.
@@ -149,6 +184,7 @@ impl Simulator {
         self.reset_time(); // Reset self.now for internal time calculations if any
         self.last_event_count = 0; // Reset event counter for the new session
         self.rng = Pcg64Mcg::seed_from_u64(self.seed); // Re-seed the RNG
+        self.qber_oscillation_rng = Pcg64Mcg::seed_from_u64(self.seed); // Re-seed the oscillation RNG
         Ok(())
     }
 
@@ -396,5 +432,47 @@ impl Simulator {
             angles_data.len()
         );
         Ok(angles_data)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::simulation::builder::SimulatorBuilder;
+    use configs::backend::QberConfig;
+
+    #[test]
+    fn test_under_attack_qber() {
+        let mut sim = SimulatorBuilder::new()
+            .with_angles(vec![0, 32, 64, 96])
+            .with_qb_err(QberConfig::Fixed { value: 0.0 }) // Normal QBER is 0%
+            .build();
+        
+        // 1. Normal session
+        sim.initialize_session().unwrap();
+        let (_, _, results_normal) = sim.generate_correlation_batch().unwrap();
+
+        // 2. Attack session (reset session to get the same RNG sequence)
+        sim.initialize_session().unwrap();
+        sim.start_attack();
+        let (_, _, results_attack) = sim.generate_correlation_batch().unwrap();
+        
+        // 3. Calculate actual QBER (fraction of flipped bits)
+        let mut diffs = 0;
+        for i in 0..1024 {
+            if results_normal[i] != results_attack[i] {
+                diffs += 1;
+            }
+        }
+        
+        let calculated_qber = diffs as f64 / 1024.0;
+        tracing::info!("Calculated attack QBER: {}", calculated_qber);
+
+        // With 1024 samples, QBER should be around 0.5.
+        assert!(calculated_qber > 0.4 && calculated_qber < 0.6, 
+            "Attack QBER should be around 0.5, got {}", calculated_qber);
+        
+        assert!(sim.is_under_attack);
+        sim.stop_attack();
+        assert!(!sim.is_under_attack);
     }
 }
