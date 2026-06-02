@@ -13,7 +13,7 @@ use super::writer::actor::IPCWriterActorHandle;
 
 // --- MMIO Constants ---
 const INIT_RESET_MMIO_MAP_OFFSET: u64 = 0x12000;
-const INIT_RESET_ADDR_BYTES: usize = 16;
+const COMMAND_TRIGGER_ADDR_BYTES: usize = 16;
 const GENERATION_START_MMIO_MAP_OFFSET: u64 = 0x1000;
 const MMIO_MAP_LEN: usize = 0x1000;
 const GENERATION_START_ADDR_BYTES: usize = 24;
@@ -142,13 +142,13 @@ impl IPCReader {
             tracing::info!(
                 "Init/reset detected via MMIO (0->1 transition at map offset {:#X}, addr {:#X}); generation is not started by this signal.",
                 INIT_RESET_MMIO_MAP_OFFSET,
-                INIT_RESET_ADDR_BYTES
+                COMMAND_TRIGGER_ADDR_BYTES
             );
         } else if current_value == 0 && self.last_known_init_reset_value == 1 {
             tracing::info!(
                 "Init/reset deasserted via MMIO (1->0 transition at map offset {:#X}, addr {:#X}).",
                 INIT_RESET_MMIO_MAP_OFFSET,
-                INIT_RESET_ADDR_BYTES
+                COMMAND_TRIGGER_ADDR_BYTES
             );
         }
 
@@ -158,7 +158,7 @@ impl IPCReader {
                 "Ignoring non-binary init/reset MMIO value {} at map offset {:#X}, addr {:#X}.",
                 current_value,
                 INIT_RESET_MMIO_MAP_OFFSET,
-                INIT_RESET_ADDR_BYTES
+                COMMAND_TRIGGER_ADDR_BYTES
             );
         }
     }
@@ -205,7 +205,7 @@ impl IPCReader {
                 &device_path_clone,
                 INIT_RESET_MMIO_MAP_OFFSET,
                 MMIO_MAP_LEN,
-                INIT_RESET_ADDR_BYTES,
+                COMMAND_TRIGGER_ADDR_BYTES,
             );
 
             match init_reset_read_result {
@@ -517,16 +517,15 @@ impl IPCReader {
 #[cfg(test)]
 mod tests {
     use super::{
-        classify_generation_start_transition, update_binary_mmio_state,
-        GENERATION_START_ADDR_BYTES, GENERATION_START_MMIO_MAP_OFFSET, INIT_RESET_ADDR_BYTES,
-        INIT_RESET_MMIO_MAP_OFFSET,
+        classify_generation_start_transition, update_binary_mmio_state, COMMAND_TRIGGER_ADDR_BYTES,
+        GENERATION_START_ADDR_BYTES, GENERATION_START_MMIO_MAP_OFFSET, INIT_RESET_MMIO_MAP_OFFSET,
     };
     use crate::ipc::Command;
 
     #[test]
     fn init_reset_transition_only_updates_reset_state() {
         assert_eq!(INIT_RESET_MMIO_MAP_OFFSET, 0x12000);
-        assert_eq!(INIT_RESET_ADDR_BYTES, 16);
+        assert_eq!(COMMAND_TRIGGER_ADDR_BYTES, 16);
 
         let mut init_reset_state = 0;
         let mut generation_state = 0;
