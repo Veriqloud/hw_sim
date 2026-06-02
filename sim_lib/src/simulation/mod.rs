@@ -446,7 +446,7 @@ mod tests {
             .with_angles(vec![0, 32, 64, 96])
             .with_qb_err(QberConfig::Fixed { value: 0.0 }) // Normal QBER is 0%
             .build();
-        
+
         // 1. Normal session
         sim.initialize_session().unwrap();
         let (_, _, results_normal) = sim.generate_correlation_batch().unwrap();
@@ -455,7 +455,7 @@ mod tests {
         sim.initialize_session().unwrap();
         sim.start_attack();
         let (_, _, results_attack) = sim.generate_correlation_batch().unwrap();
-        
+
         // 3. Calculate actual QBER (fraction of flipped bits)
         let mut diffs = 0;
         for i in 0..1024 {
@@ -463,14 +463,17 @@ mod tests {
                 diffs += 1;
             }
         }
-        
+
         let calculated_qber = diffs as f64 / 1024.0;
         tracing::info!("Calculated attack QBER: {}", calculated_qber);
 
         // With 1024 samples, QBER should be around 0.5.
-        assert!(calculated_qber > 0.4 && calculated_qber < 0.6, 
-            "Attack QBER should be around 0.5, got {}", calculated_qber);
-        
+        assert!(
+            calculated_qber > 0.4 && calculated_qber < 0.6,
+            "Attack QBER should be around 0.5, got {}",
+            calculated_qber
+        );
+
         assert!(sim.is_under_attack);
         sim.stop_attack();
         assert!(!sim.is_under_attack);

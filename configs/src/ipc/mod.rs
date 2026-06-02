@@ -8,7 +8,7 @@ use std::{
 };
 
 pub mod errors;
-use self::errors::{Error, FifoCreationSnafu, MockMmioFileSetupSnafu, HwParamsFileCreationSnafu};
+use self::errors::{Error, FifoCreationSnafu, HwParamsFileCreationSnafu, MockMmioFileSetupSnafu};
 
 // Mocked hardware status register read by gc before writing GC batches.
 // On the simulator, Unix FIFO backpressure replaces the real FPGA FIFO status.
@@ -82,10 +82,11 @@ impl Configuration {
                 }
                 // hw params file
                 let hw_params_file_path = &config.hw_params_file_path;
-                ensure_hw_params_file_exists(hw_params_file_path)
-                    .context(HwParamsFileCreationSnafu{
+                ensure_hw_params_file_exists(hw_params_file_path).context(
+                    HwParamsFileCreationSnafu {
                         path: hw_params_file_path.to_string(),
-                    })?;
+                    },
+                )?;
 
                 if config.command_path.starts_with("./files/")
                     || config.command_path.starts_with("/tmp/")
@@ -110,10 +111,11 @@ impl Configuration {
                 }
                 // hw params file
                 let hw_params_file_path = &config.hw_params_file_path;
-                ensure_hw_params_file_exists(hw_params_file_path)
-                    .context(HwParamsFileCreationSnafu{
+                ensure_hw_params_file_exists(hw_params_file_path).context(
+                    HwParamsFileCreationSnafu {
                         path: hw_params_file_path.to_string(),
-                    })?;
+                    },
+                )?;
 
                 // Also setup command path if it's a mock MMIO file for Bob
                 if config.command_path.starts_with("./files/")
@@ -160,11 +162,10 @@ impl Configuration {
     }
 }
 
-
 /// Ensure the hardware textfile exists
 pub fn ensure_hw_params_file_exists(path_str: &str) -> Result<(), std::io::Error> {
     let path = Path::new(path_str);
-    
+
     if let Some(parent_dir) = path.parent() {
         if !parent_dir.exists() {
             fs::create_dir_all(parent_dir)?;
@@ -180,19 +181,24 @@ pub fn ensure_hw_params_file_exists(path_str: &str) -> Result<(), std::io::Error
             );
         }
         Err(e) => {
-            tracing::error!("Error removing existing hw params file at {}: {}", path_str, e);
+            tracing::error!(
+                "Error removing existing hw params file at {}: {}",
+                path_str,
+                e
+            );
             return Err(e);
         }
     }
 
     tracing::info!("Creating hw params file at: {} with mode 0666", path_str);
     let mut file = std::fs::File::create(&path)?;
-    file.write_all(b"\
-        fiber_delay\t100\ndecoy_fiber_delay\t100")?;
+    file.write_all(
+        b"\
+        fiber_delay\t100\ndecoy_fiber_delay\t100",
+    )?;
 
     Ok(())
 }
-
 
 /// Ensures a regular file exists at the given path with at least the required size,
 /// typically for mock MMIO.

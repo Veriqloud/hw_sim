@@ -529,7 +529,7 @@ fn test_qber_oscillation_distributions() {
 fn test_qkd_attack_signal_flow() {
     // This test verifies the end-to-end flow of the attack mode:
     // Actor receives StartAttack -> Simulator forces QBER to 50% -> StopAttack restores it.
-    
+
     let hw = HardwareBuilder::new().with_pulse_distance(1e-9).build();
     let seed = 42;
     let config_angles = vec![0, 32, 64, 96];
@@ -558,7 +558,7 @@ fn test_qkd_attack_signal_flow() {
     sim_handle.start_attack().unwrap(); // Simulate SIGUSR1
     let gcr_attack = sim_handle.generate_gcr_and_angles_batch().unwrap();
     let results_attack: Vec<u8> = gcr_attack.iter().map(|gcr| (gcr[6] >> 1) & 1).collect();
-    
+
     // Calculate QBER
     let mut diffs = 0;
     for i in 0..BATCH_SIZE {
@@ -568,20 +568,25 @@ fn test_qkd_attack_signal_flow() {
     }
     let qber_attack = diffs as f64 / BATCH_SIZE as f64;
     println!("Measured QBER during simulated attack: {:.4}", qber_attack);
-    
-    assert!(qber_attack > 0.4 && qber_attack < 0.6, 
-        "Attack QBER should be around 0.5, got {:.4}", qber_attack);
+
+    assert!(
+        qber_attack > 0.4 && qber_attack < 0.6,
+        "Attack QBER should be around 0.5, got {:.4}",
+        qber_attack
+    );
 
     // 3. Restore Batch (Reset session, stop attack)
     sim_handle.stop_attack().unwrap(); // Simulate SIGUSR2
     sim_handle.stop_session().unwrap();
-    
+
     sim_handle.start_session().unwrap();
     let gcr_restored = sim_handle.generate_gcr_and_angles_batch().unwrap();
     let results_restored: Vec<u8> = gcr_restored.iter().map(|gcr| (gcr[6] >> 1) & 1).collect();
-    
-    assert_eq!(results_normal, results_restored, 
-        "Restored session results should be identical to original normal session");
-    
+
+    assert_eq!(
+        results_normal, results_restored,
+        "Restored session results should be identical to original normal session"
+    );
+
     sim_handle.stop_session().unwrap();
 }
