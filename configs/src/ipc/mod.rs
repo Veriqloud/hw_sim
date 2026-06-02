@@ -10,6 +10,12 @@ use std::{
 pub mod errors;
 use self::errors::{Error, FifoCreationSnafu, MockMmioFileSetupSnafu, HwParamsFileCreationSnafu};
 
+// Mocked hardware status register read by gc before writing GC batches.
+// On the simulator, Unix FIFO backpressure replaces the real FPGA FIFO status.
+const GC_FIFO_STATUS_ABS_OFFSET: u64 = 0x1000 + 52;
+// Bit 1 means the GC input FIFO is empty/ready to accept a new batch.
+const GC_IN_EMPTY_BIT: u32 = 0b10;
+
 #[derive(Debug, Deserialize, Serialize, PartialEq, Clone)]
 pub struct AliceIpcConfig {
     pub command_path: String,
@@ -182,7 +188,7 @@ pub fn ensure_hw_params_file_exists(path_str: &str) -> Result<(), std::io::Error
     tracing::info!("Creating hw params file at: {} with mode 0666", path_str);
     let mut file = std::fs::File::create(&path)?;
     file.write_all(b"\
-        fiber_delay\t100\ndecoy_delay\t100")?;
+        fiber_delay\t100\ndecoy_fiber_delay\t100")?;
 
     Ok(())
 }
@@ -266,6 +272,22 @@ pub fn ensure_mock_mmio_file_exists(
 
     let mut file_to_write = fs::OpenOptions::new().write(true).open(path)?;
 
+    if GC_FIFO_STATUS_ABS_OFFSET + 4 <= required_size as u64 {
+        file_to_write.seek(SeekFrom::Start(GC_FIFO_STATUS_ABS_OFFSET))?;
+        file_to_write.write_all(&GC_IN_EMPTY_BIT.to_le_bytes())?;
+        tracing::info!(
+            "Initialized GC FIFO status at offset {:#X} in mock MMIO file {} with gc_in_empty=1.",
+            GC_FIFO_STATUS_ABS_OFFSET,
+            path_str
+        );
+    } else {
+        tracing::warn!(
+            "GC FIFO status offset {:#X} is beyond mock MMIO file size {}. Cannot initialize.",
+            GC_FIFO_STATUS_ABS_OFFSET,
+            required_size
+        );
+    }
+
     if command_trigger_abs_offset + 4 <= required_size as u64 {
         file_to_write.seek(SeekFrom::Start(command_trigger_abs_offset))?;
         file_to_write.write_all(&zero_value_bytes)?;
@@ -320,7 +342,14 @@ pub fn ensure_fifo_exists(path_str: &str) -> Result<(), std::io::Error> {
 
 #[cfg(test)]
 mod tests {
-    use super::{AliceIpcConfig, BobIpcConfig, Configuration};
+    use super::{
+        ensure_hw_params_file_exists, ensure_mock_mmio_file_exists, AliceIpcConfig, BobIpcConfig,
+        Configuration, GC_FIFO_STATUS_ABS_OFFSET, GC_IN_EMPTY_BIT,
+    };
+    use std::{
+        fs,
+        io::{Read, Seek, SeekFrom},
+    };
 
     #[test]
     fn valid_bob_config() {
@@ -366,5 +395,34 @@ mod tests {
         };
 
         assert_eq!(Configuration::Alice(expected_alice_config), config_input);
+    }
+
+    #[test]
+    fn mock_mmio_exposes_gc_fifo_ready_status() {
+        let path = format!("/tmp/hw_sim_mock_mmio_status_test_{}", std::process::id());
+        let required_file_size = 0x12000 + 0x1000;
+
+        ensure_mock_mmio_file_exists(&path, required_file_size).unwrap();
+
+        let mut file = fs::File::open(&path).unwrap();
+        file.seek(SeekFrom::Start(GC_FIFO_STATUS_ABS_OFFSET))
+            .unwrap();
+        let mut value = [0u8; 4];
+        file.read_exact(&mut value).unwrap();
+
+        let _ = fs::remove_file(&path);
+        assert_eq!(u32::from_le_bytes(value) & GC_IN_EMPTY_BIT, GC_IN_EMPTY_BIT);
+    }
+
+    #[test]
+    fn hw_params_use_decoy_fiber_delay() {
+        let path = format!("/tmp/hw_sim_hw_params_test_{}", std::process::id());
+
+        ensure_hw_params_file_exists(&path).unwrap();
+
+        let contents = fs::read_to_string(&path).unwrap();
+        let _ = fs::remove_file(&path);
+        assert!(contents.contains("decoy_fiber_delay"));
+        assert!(!contents.contains("decoy_delay"));
     }
 }
