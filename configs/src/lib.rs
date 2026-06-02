@@ -117,12 +117,14 @@ mod tests {
     #[test]
     #[ignore]
     fn validate_generated_configs() {
-        for path in [
-            "../../stack_config/generated/alice_hw_sim.json",
-            "../../stack_config/generated/bob_hw_sim.json",
-        ] {
-            Configuration::new(path.to_string())
-                .unwrap_or_else(|error| panic!("failed to load {}: {}", path, error));
+        let stack_config_dir =
+            std::env::var("STACK_CONFIG_DIR").unwrap_or_else(|_| "../../stack_config".to_string());
+        let generated_dir = std::path::Path::new(&stack_config_dir).join("generated");
+
+        for file_name in ["alice_hw_sim.json", "bob_hw_sim.json"] {
+            let path = generated_dir.join(file_name);
+            Configuration::new(path.to_string_lossy().into_owned())
+                .unwrap_or_else(|error| panic!("failed to load {}: {}", path.display(), error));
         }
     }
 }
