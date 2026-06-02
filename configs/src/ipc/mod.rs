@@ -1,4 +1,5 @@
 use nix::{sys::stat::Mode, unistd::mkfifo};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use snafu::ResultExt;
 use std::{
@@ -16,7 +17,7 @@ const GC_FIFO_STATUS_ABS_OFFSET: u64 = 0x1000 + 52;
 // Bit 1 means the GC input FIFO is empty/ready to accept a new batch.
 const GC_IN_EMPTY_BIT: u32 = 0b10;
 
-#[derive(Debug, Deserialize, Serialize, PartialEq, Clone)]
+#[derive(Debug, Deserialize, Serialize, PartialEq, Clone, JsonSchema)]
 pub struct AliceIpcConfig {
     pub command_path: String,
     pub angle_file_path: String,
@@ -24,7 +25,7 @@ pub struct AliceIpcConfig {
     pub hw_params_file_path: String,
 }
 
-#[derive(Debug, Deserialize, Serialize, PartialEq, Clone)]
+#[derive(Debug, Deserialize, Serialize, PartialEq, Clone, JsonSchema)]
 pub struct BobIpcConfig {
     pub command_path: String,
     pub angle_file_path: String,
@@ -56,7 +57,7 @@ impl Default for BobIpcConfig {
     }
 }
 
-#[derive(Debug, Deserialize, Serialize, PartialEq, Clone)]
+#[derive(Debug, Deserialize, Serialize, PartialEq, Clone, JsonSchema)]
 #[serde(untagged)]
 pub enum Configuration {
     Bob(BobIpcConfig),

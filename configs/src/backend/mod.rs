@@ -1,6 +1,7 @@
+use schemars::JsonSchema;
 use serde::{Deserialize, Deserializer, Serialize};
 
-#[derive(Debug, Deserialize, Serialize, PartialEq, Clone)]
+#[derive(Debug, Deserialize, Serialize, PartialEq, Clone, JsonSchema)]
 #[serde(tag = "type")]
 pub enum QberConfig {
     Fixed {
@@ -41,7 +42,7 @@ where
     }
 }
 
-#[derive(Debug, Deserialize, Serialize, PartialEq, Clone)]
+#[derive(Debug, Deserialize, Serialize, PartialEq, Clone, JsonSchema)]
 pub struct Configuration {
     pub angles: Vec<u8>,
     pub seed: u64,
