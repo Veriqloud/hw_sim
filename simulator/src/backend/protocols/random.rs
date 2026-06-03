@@ -1,146 +1,10 @@
-use crate::backend::protocols::errors::ProtocolError;
-use crate::backend::simulation::hardware::modulator_state::ModulatorState;
-use crate::backend::simulation::Simulator;
-use rand::Rng;
-use once_cell::sync::Lazy;
-use std::f64::consts::PI;
-
-mod cr_constants {
-    // We work on batches of const size that are appended to v. It's faster that way.
-    pub const BATCH: usize = 1 << 10;
-}
-
-pub trait CorrelationsRandom {
-    fn correlations_random(&mut self, l: usize) -> Result<Vec<u8>, ProtocolError>;
-}
-
-impl CorrelationsRandom for Simulator {
-    /// Simulates a two-party quantum communication protocol to generate correlated random data.
-    ///
-    /// This function simulates an exchange between two parties (Alice/Source and Bob/Detector).
-    /// For each event, both parties randomly choose a basis (angle). The sum of their angles
-    /// determines the probability of the measurement outcome (0 or 1). Because both parties'
-    /// simulators use the same seeded Random Number Generator (RNG), they generate the exact
-    /// same sequence of random choices, resulting in a shared, correlated outcome for every event.
-    ///
-    /// The final output byte for this party encodes:
-    /// - bit 0: The common measurement result (potentially flipped by QBER).
-    /// - bits 1-2: The 2-bit index of the basis *this party* chose for the event.
-    /// - bits 3-7: Zero.
-    fn correlations_random(&mut self, l: usize) -> Result<Vec<u8>, ProtocolError> {
-        // The output vector to store the encoded results.
-        let mut output_bytes: Vec<u8> = Vec::with_capacity(l);
-
-        // Ensure the simulator is in the correct state for this protocol.
-        let (angles_vec, num_angles) = match &self.modulator_state {
-            ModulatorState::Random => {
-                let angles = &self.angles;
-                (angles.as_slice(), angles.len() as u16)
-            }
-            _ => {
-                return Err(ProtocolError::Role {
-                    reason: "Modulator state must be Random for correlations_random.".to_string(),
-                });
-            }
-        };
-
-        // Pre-calculate the probability lookup table for measurement outcomes.
-        let overlap_probabilities = &OVERLAP_PROBABILITIES;
-        // Convert the QBER (a float from 0.0 to 1.0) to a u16 threshold for random comparison.
-        let qber_threshold: u16 = (self.qb_err * (u16::MAX as f64)) as u16;
-
-        // Process in batches for efficiency.
-        for _ in 0..(l.div_ceil(cr_constants::BATCH)) {
-            // --- Random Number Generation ---
-            // These random numbers determine the choices and outcomes for the batch.
-            // Since the RNG is seeded, both Alice's and Bob's simulators will generate
-            // the identical streams of random numbers, ensuring their results are correlated.
-
-            // Random numbers to select Alice's basis for each event.
-            let mut alice_basis_rand = [0u16; cr_constants::BATCH];
-            self.rng.fill(&mut alice_basis_rand);
-
-            // Random numbers to select Bob's basis for each event.
-            let mut bob_basis_rand = [0u16; cr_constants::BATCH];
-            self.rng.fill(&mut bob_basis_rand);
-
-            // Random numbers to determine the measurement outcome based on probability.
-            let mut result_rand = [0u16; cr_constants::BATCH];
-            self.rng.fill(&mut result_rand);
-
-            // Random numbers to simulate the Quantum Bit Error Rate (QBER).
-            let mut qber_rand = [0u16; cr_constants::BATCH];
-            self.rng.fill(&mut qber_rand);
-
-            let mut batch_output = [0u8; cr_constants::BATCH];
-
-            for i in 0..cr_constants::BATCH {
-                // 1. Determine basis choices for both parties for this event.
-                let alice_basis_index = (alice_basis_rand[i] % num_angles) as usize;
-                let bob_basis_index = (bob_basis_rand[i] % num_angles) as usize;
-
-                // 2. Calculate the total angle. Angles are u8 offsets in a 128-step circle.
-                // The +32 simulates Alice sending a |+> state instead of |0>.
-                let total_angle_offset = (angles_vec[alice_basis_index] as u32
-                    + angles_vec[bob_basis_index] as u32
-                    + 32) as u8
-                    & 127;
-
-                // 3. Determine the measurement result based on the total angle.
-                // `overlap_probabilities` holds pre-calculated cos^2 values scaled to u16::MAX.
-                // This value represents the probability of a '0' outcome.
-                let probability_of_0 = overlap_probabilities[total_angle_offset as usize];
-                let mut result = (result_rand[i] > probability_of_0) as u8;
-
-                // 4. Simulate Quantum Bit Error Rate (QBER).
-                if qber_rand[i] < qber_threshold {
-                    result ^= 1; // Flip the result bit.
-                }
-
-                // 5. Encode the output byte for the *current* party.
-                // The output contains this party's basis choice and the common, shared result.
-                let my_basis_index = match self.simulator_mode {
-                    crate::backend::role::SimulatorMode::Source => alice_basis_index,
-                    crate::backend::role::SimulatorMode::Detector => bob_basis_index,
-                };
-
-                batch_output[i] = ((my_basis_index as u8) << 1) | result;
-            }
-            output_bytes.extend_from_slice(&batch_output);
-        }
-
-        // Trim the vector to the exact requested length `l`.
-        output_bytes.truncate(l);
-        output_bytes.shrink_to_fit();
-        Ok(output_bytes)
-    }
-}
-
-/// A lazily-initialized static lookup table for detection probabilities.
-/// The state is |psi> = cos(alpha)|0> + sin(alpha)|1>, where alpha is derived from the angle index.
-/// The probability of measuring the initial state is cos^2(alpha).
-///
-/// The angle index (0-127) maps to a physical angle from 0 to PI.
-///
-/// The table holds `cos^2(angle)` scaled to `u16::MAX` for each index.
-static OVERLAP_PROBABILITIES: Lazy<[u16; 128]> = Lazy::new(|| {
-    let mut buf = [0u16; 128];
-    for (i, elt) in buf.iter_mut().enumerate() {
-        let angle_rad = (i as f64 / 128.0) * PI;
-        *elt = (angle_rad.cos().powi(2) * (u16::MAX as f64)) as u16;
-    }
-    buf
-});
-
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::backend::{
-        role::SimulatorMode,
-        simulation::{builder::SimulatorBuilder, hardware::modulator_state::ModulatorState},
-    };
     use rand::SeedableRng;
     use rand_pcg::Pcg64Mcg;
+    use sim_lib::hardware::modes::SimulatorMode;
+    use sim_lib::hardware::modulator_state::ModulatorState;
+    use sim_lib::simulation::builder::SimulatorBuilder;
     use std::collections::HashMap;
     use std::f64::consts::PI;
 
@@ -161,7 +25,7 @@ mod tests {
             let mut sim_a = SimulatorBuilder::new()
                 .with_rng(Pcg64Mcg::seed_from_u64(seed))
                 .with_mode(SimulatorMode::Source)
-                .with_qb_err(qber)
+                .with_qb_err(configs::backend::QberConfig::Fixed { value: qber })
                 .with_angles(test_angles.clone())
                 .with_modulator_state(ModulatorState::Random)
                 .build();
@@ -169,14 +33,14 @@ mod tests {
             let mut sim_b = SimulatorBuilder::new()
                 .with_rng(Pcg64Mcg::seed_from_u64(seed))
                 .with_mode(SimulatorMode::Detector)
-                .with_qb_err(qber)
+                .with_qb_err(configs::backend::QberConfig::Fixed { value: qber })
                 .with_angles(test_angles.clone())
                 .with_modulator_state(ModulatorState::Random)
                 .build();
 
             // 2. EXECUTION
-            let output_a = sim_a.correlations_random(num_events).unwrap();
-            let output_b = sim_b.correlations_random(num_events).unwrap();
+            let output_a = sim_a.generate_encoded_party_data(num_events).unwrap();
+            let output_b = sim_b.generate_encoded_party_data(num_events).unwrap();
 
             // 3. DATA GATHERING
             let mut correlation_stats: HashMap<(u8, u8), (u32, u32)> = HashMap::new();

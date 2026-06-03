@@ -25,4 +25,5 @@ nix = { workspace = true }
 memmap2 = { workspace = true }
 gc = { workspace = true }
 configs = { path = "../configs" }
+sim_lib = { path = "../sim_lib" }
 once_cell = "1.21.3"

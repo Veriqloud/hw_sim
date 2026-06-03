@@ -3,14 +3,14 @@ pub mod cli_args;
 pub mod errors;
 pub mod ipc;
 
-use crate::backend::role::SimulatorMode;
-use backend::simulation::builder::SimulatorBuilder;
 use clap::Parser;
 use configs::{
     ipc::{AliceIpcConfig, BobIpcConfig},
     Configuration,
 };
 use ipc::writer::actor::IPCWriterActorHandle;
+use nix::sys::signal::{SigSet, Signal};
+use sim_lib::{hardware::modes::SimulatorMode, simulation::builder::SimulatorBuilder};
 use snafu::ResultExt;
 use std::{
     fs,
@@ -36,6 +36,12 @@ fn main() {
 fn app_main() -> Result<(), crate::errors::Error> {
     let span = trace_span!("app_main");
     let _guard = span.enter();
+
+    // Block SIGUSR1 and SIGUSR2 signals early so all threads inherit the mask.
+    let mut sigset = SigSet::empty();
+    sigset.add(Signal::SIGUSR1);
+    sigset.add(Signal::SIGUSR2);
+    sigset.thread_block().expect("Failed to block signals");
 
     let args = cli_args::CliArgs::parse();
 
@@ -106,6 +112,31 @@ fn app_main() -> Result<(), crate::errors::Error> {
         simulator_mode.clone(),
     );
     let simu_handle = backend::actor::ActorHandle::new(sim);
+
+    // Spawn the signal handling thread.
+    let signal_handle = simu_handle.clone();
+    thread::spawn(move || {
+        let mut sigset = SigSet::empty();
+        sigset.add(Signal::SIGUSR1);
+        sigset.add(Signal::SIGUSR2);
+        loop {
+            match sigset.wait() {
+                Ok(Signal::SIGUSR1) => {
+                    tracing::warn!("Signal SIGUSR1 received: Starting QKD Attack (QBER -> 50%)");
+                    if let Err(e) = signal_handle.start_attack() {
+                        tracing::error!("Failed to start attack via signal: {:?}", e);
+                    }
+                }
+                Ok(Signal::SIGUSR2) => {
+                    tracing::info!("Signal SIGUSR2 received: Stopping QKD Attack (Returning to configured QBER)");
+                    if let Err(e) = signal_handle.stop_attack() {
+                        tracing::error!("Failed to stop attack via signal: {:?}", e);
+                    }
+                }
+                _ => {}
+            }
+        }
+    });
 
     // The logic now diverges based on the IPC configuration type
     match &CONFIG.get().unwrap().ipc_config {
@@ -296,7 +327,7 @@ fn run_bob_workflow(
             let gc_read_handle = s.spawn(|| {
                 std::fs::OpenOptions::new()
                     .read(true) // <-- This must be opened for READING for the IPCReader
-                    .open(&config.gc_read_file_path) 
+                    .open(&config.gc_read_file_path)
             });
 
             (

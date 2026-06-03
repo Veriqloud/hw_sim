@@ -10,9 +10,10 @@ use std::time::{Duration, Instant};
 const BATCH_SIZE: usize = 1024; // Number of records in a batch
 const GC_RECORD_SIZE: usize = 16; // Size of a GC record in bytes
 const ANGLE_RECORD_SIZE: usize = 1; // Size of an angle record in bytes
-const MMIO_MAP_OFFSET: u64 = 0x12000;
+const MMIO_MAP_OFFSET: u64 = 0x1000;
 const MMIO_MAP_LEN: usize = 0x1000;
-const COMMAND_TRIGGER_ADDR_BYTES: usize = 16;
+const COMMAND_TRIGGER_ADDR_BYTES: usize = 24;
+const INIT_RESET_MMIO_MAP_OFFSET: u64 = 0x12000;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about = "Hardware simulator controller", long_about = None)]
@@ -85,11 +86,17 @@ fn trigger_mmio_command(
         .create(true) // Ensure file exists
         .open(device_path)?;
     // Ensure the file is large enough for the MMIO region
-    let required_len = map_offset + map_len as u64;
+    let required_len =
+        (map_offset + map_len as u64).max(INIT_RESET_MMIO_MAP_OFFSET + map_len as u64);
     if file.metadata()?.len() < required_len {
         file.set_len(required_len)?;
     }
-    let mut mmap = unsafe { MmapOptions::new().offset(map_offset).len(map_len).map_mut(&file)? };
+    let mut mmap = unsafe {
+        MmapOptions::new()
+            .offset(map_offset)
+            .len(map_len)
+            .map_mut(&file)?
+    };
 
     let ptr = unsafe { mmap.as_mut_ptr().add(value_addr_bytes) as *mut u32 };
     unsafe { ptr.write_volatile(value) };
@@ -100,8 +107,7 @@ fn trigger_mmio_command(
 fn main() -> io::Result<()> {
     let cli = Cli::parse();
 
-    let config_str =
-        fs::read_to_string(&cli.config_path).expect("Could not read config file");
+    let config_str = fs::read_to_string(&cli.config_path).expect("Could not read config file");
     let config: Config = serde_json::from_str(&config_str).expect("Could not parse config file");
 
     match cli.command {
@@ -178,7 +184,6 @@ fn run_alice(num_batches: u64, config: Config) -> io::Result<()> {
         COMMAND_TRIGGER_ADDR_BYTES,
         0,
     )?;
-
 
     Ok(())
 }
@@ -266,7 +271,6 @@ fn run_bob(num_batches: u64, config: Config) -> io::Result<()> {
         COMMAND_TRIGGER_ADDR_BYTES,
         0,
     )?;
-
 
     Ok(())
 }

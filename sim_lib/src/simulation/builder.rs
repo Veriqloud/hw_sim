@@ -2,31 +2,28 @@ use rand::SeedableRng;
 use rand_pcg::Pcg64Mcg;
 use std::time::Instant;
 
-use crate::backend::role::SimulatorMode;
-use configs::backend::Configuration; // Keep SimulatorMode
+use configs::backend::{Configuration, QberConfig};
 
-use super::hardware::builder::HardwareBuilder;
-use super::hardware::modulator_state::ModulatorState;
-use super::hardware::Hardware;
-use super::Simulator;
+use crate::{
+    hardware::{
+        Hardware, builder::HardwareBuilder, modes::SimulatorMode, modulator_state::ModulatorState,
+    },
+    simulation::Simulator,
+}; // Keep SimulatorMode
 
 pub struct SimulatorBuilder {
-    /// Total qubit detection efficiency
     pub eta: f64,
-    /// Offset is taken care of automatically.
-    /// Equivalent to Bob broadcasting his global counter in the real world.
-    /// Probably not required ...
     pub global_counter: u64,
     pub hw: Hardware,
     pub modulator_state: ModulatorState,
     pub angles: Vec<u8>,
     pub now: Instant,
-    /// Qubit error rate
-    pub qb_err: f64,
+    pub qb_err: QberConfig,
     pub rng: Pcg64Mcg,
     pub seed: u64,
-    pub mode: SimulatorMode, // Mode is still needed
+    pub mode: SimulatorMode,
     pub use_gcr_padding: bool,
+    pub use_rate_limiter: bool,
 }
 
 impl SimulatorBuilder {
@@ -41,30 +38,33 @@ impl SimulatorBuilder {
         SimulatorBuilder::default()
             .with_hardware(hw)
             .with_angles(conf.angles.to_owned())
-            .with_qb_err(conf.qberr)
+            .with_qb_err(conf.qberr.to_owned())
             .with_eta(conf.eta)
             .with_rng(Pcg64Mcg::seed_from_u64(conf.seed))
             .with_seed(conf.seed)
-            .with_mode(mode) // Set the mode from the passed argument
+            .with_mode(mode)
             .build()
     }
 
     pub fn build(&self) -> Simulator {
         Simulator {
             hw: self.hw.to_owned(),
-            simulator_mode: self.mode, // Ensure mode is assigned from builder's mode field
+            simulator_mode: self.mode,
             rng: self.rng.to_owned(),
+            qber_oscillation_rng: Pcg64Mcg::seed_from_u64(self.seed),
             eta: self.eta,
             seed: self.seed,
-            qb_err: self.qb_err,
+            qb_err: self.qb_err.to_owned(),
             now: self.now,
             global_counter: self.global_counter,
             modulator_state: self.modulator_state.to_owned(),
             angles: self.angles.to_owned(),
-            pending_angles_batch: None, // Initialize to None
-            time_of_start: None,        // Initialize to None
+            pending_angles_batch: None,
+            time_of_start: None,
             use_gcr_padding: self.use_gcr_padding,
-            last_event_count: 0, // Initialize to 0
+            rate_limiting_enabled: self.use_rate_limiter,
+            last_event_count: 0,
+            is_under_attack: false,
         }
     }
 
@@ -98,7 +98,7 @@ impl SimulatorBuilder {
         self
     }
 
-    pub fn with_qb_err(&mut self, qb_err: f64) -> &mut Self {
+    pub fn with_qb_err(&mut self, qb_err: QberConfig) -> &mut Self {
         self.qb_err = qb_err;
         self
     }
@@ -122,6 +122,11 @@ impl SimulatorBuilder {
         self.use_gcr_padding = use_padding;
         self
     }
+
+    pub fn with_rate_limiter(&mut self, use_limiter: bool) -> &mut Self {
+        self.use_rate_limiter = use_limiter;
+        self
+    }
 }
 
 impl Default for SimulatorBuilder {
@@ -138,20 +143,25 @@ impl Default for SimulatorBuilder {
             seed: 42,
             mode: SimulatorMode::default(), // Add mode default
             use_gcr_padding: true,
+            use_rate_limiter: true,
         }
     }
 }
 
 #[cfg(test)]
 pub mod tests {
-    use crate::backend::role::SimulatorMode; // Ensure SimulatorMode is imported
-    use crate::backend::simulation::builder::SimulatorBuilder;
-    use crate::backend::simulation::hardware::builder::HardwareBuilder;
-    use crate::backend::simulation::hardware::modulator_state::ModulatorState;
-    use crate::backend::simulation::Simulator;
     use rand::SeedableRng;
     use rand_pcg::Pcg64Mcg;
     use std::time::Instant;
+
+    use crate::{
+        hardware::{
+            builder::HardwareBuilder, modes::SimulatorMode, modulator_state::ModulatorState,
+        },
+        simulation::{Simulator, builder::SimulatorBuilder},
+    };
+
+    use configs::backend::QberConfig;
 
     #[test]
     fn test_builder() {
@@ -165,13 +175,14 @@ pub mod tests {
             .with_mode(SimulatorMode::Detector) // Add with_mode for testing
             .with_rng(Pcg64Mcg::seed_from_u64(5))
             .with_eta(13.)
-            .with_qb_err(42.)
+            .with_qb_err(QberConfig::Fixed { value: 42. })
             .with_now(now)
             .with_global_counter(99)
             .with_modulator_state(ModulatorState::Random)
             .with_seed(5)
             .with_angles(vec![0, 32, 34, 96])
             .with_gcr_padding(false)
+            .with_rate_limiter(false)
             .build();
 
         assert_eq!(
@@ -179,8 +190,9 @@ pub mod tests {
                 hw,
                 simulator_mode: SimulatorMode::Detector, // Add mode to assertion
                 rng: Pcg64Mcg::seed_from_u64(5),
+                qber_oscillation_rng: Pcg64Mcg::seed_from_u64(5),
                 eta: 13.,
-                qb_err: 42.,
+                qb_err: QberConfig::Fixed { value: 42. },
                 now,
                 seed: 5,
                 global_counter: 99,
@@ -189,7 +201,9 @@ pub mod tests {
                 pending_angles_batch: None,
                 time_of_start: None,
                 use_gcr_padding: false,
+                rate_limiting_enabled: false,
                 last_event_count: 0,
+                is_under_attack: false,
             },
             sim
         )

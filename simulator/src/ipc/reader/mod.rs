@@ -1,19 +1,22 @@
 pub mod errors;
 
 use memmap2::MmapOptions;
+use sim_lib::hardware::modes::SimulatorMode;
+use sim_lib::BATCH_SIZE;
 use std::fs::OpenOptions as StdOpenOptions;
 use std::time::Duration;
 use std::{fs::File, io::Read};
 
-use crate::backend::simulation::BATCH_SIZE;
 use crate::{backend::actor::ActorHandle as SimulatorHandle, ipc::Command};
 
 use super::writer::actor::IPCWriterActorHandle;
 
 // --- MMIO Constants ---
-const MMIO_MAP_OFFSET: u64 = 0x12000;
-const MMIO_MAP_LEN: usize = 0x1000;
+const INIT_RESET_MMIO_MAP_OFFSET: u64 = 0x12000;
 const COMMAND_TRIGGER_ADDR_BYTES: usize = 16;
+const GENERATION_START_MMIO_MAP_OFFSET: u64 = 0x1000;
+const MMIO_MAP_LEN: usize = 0x1000;
+const GENERATION_START_ADDR_BYTES: usize = 24;
 const POLLING_INTERVAL_MS: u64 = 50;
 
 pub struct IPCReader {
@@ -22,7 +25,8 @@ pub struct IPCReader {
     writer_handle: IPCWriterActorHandle,
     simulator_handle: SimulatorHandle,
     last_known_command_trigger_value: u32,
-    simulator_mode: crate::backend::role::SimulatorMode,
+    last_known_init_reset_value: u32,
+    simulator_mode: SimulatorMode,
 }
 
 /// Synchronously reads a u32 value from a memory-mapped device.
@@ -53,6 +57,29 @@ fn read_u32_from_mmio(
             .map(&file)?;
         let ptr = mmap.as_ptr().add(value_addr_bytes) as *const u32;
         Ok(ptr.read_volatile())
+    }
+}
+
+fn update_binary_mmio_state(last_known_value: &mut u32, current_value: u32) -> (u32, u32) {
+    let previous_value = *last_known_value;
+    if current_value == 0 || current_value == 1 {
+        *last_known_value = current_value;
+    }
+    (previous_value, current_value)
+}
+
+fn classify_generation_start_transition(
+    last_known_value: &mut u32,
+    current_value: u32,
+) -> Option<Command> {
+    let (previous_value, current_value) = update_binary_mmio_state(last_known_value, current_value);
+
+    if current_value == 1 && previous_value == 0 {
+        Some(Command::Start)
+    } else if current_value == 0 && previous_value == 1 {
+        Some(Command::Stop)
+    } else {
+        None
     }
 }
 
@@ -96,7 +123,7 @@ impl IPCReader {
         gc_read_file: File,
         simulator_handle: SimulatorHandle,
         writer_handle: IPCWriterActorHandle,
-        simulator_mode: crate::backend::role::SimulatorMode,
+        simulator_mode: SimulatorMode,
     ) -> Self {
         IPCReader {
             command_path,
@@ -104,49 +131,109 @@ impl IPCReader {
             writer_handle,
             simulator_handle,
             last_known_command_trigger_value: 0,
+            last_known_init_reset_value: 0,
             simulator_mode,
         }
+    }
+
+    fn observe_init_reset_transition(&mut self, current_value: u32) {
+        let previous_value = self.last_known_init_reset_value;
+        if current_value == 1 && self.last_known_init_reset_value == 0 {
+            tracing::info!(
+                "Init/reset detected via MMIO (0->1 transition at map offset {:#X}, addr {:#X}); generation is not started by this signal.",
+                INIT_RESET_MMIO_MAP_OFFSET,
+                COMMAND_TRIGGER_ADDR_BYTES
+            );
+        } else if current_value == 0 && self.last_known_init_reset_value == 1 {
+            tracing::info!(
+                "Init/reset deasserted via MMIO (1->0 transition at map offset {:#X}, addr {:#X}).",
+                INIT_RESET_MMIO_MAP_OFFSET,
+                COMMAND_TRIGGER_ADDR_BYTES
+            );
+        }
+
+        update_binary_mmio_state(&mut self.last_known_init_reset_value, current_value);
+        if current_value != previous_value && current_value != 0 && current_value != 1 {
+            tracing::debug!(
+                "Ignoring non-binary init/reset MMIO value {} at map offset {:#X}, addr {:#X}.",
+                current_value,
+                INIT_RESET_MMIO_MAP_OFFSET,
+                COMMAND_TRIGGER_ADDR_BYTES
+            );
+        }
+    }
+
+    fn observe_generation_start_transition(&mut self, current_value: u32) -> Option<Command> {
+        let previous_value = self.last_known_command_trigger_value;
+        let command = classify_generation_start_transition(
+            &mut self.last_known_command_trigger_value,
+            current_value,
+        );
+
+        match command {
+            Some(Command::Start) => {
+                tracing::info!(
+                    "Generation start detected via MMIO (0->1 transition at map offset {:#X}, addr {:#X}).",
+                    GENERATION_START_MMIO_MAP_OFFSET,
+                    GENERATION_START_ADDR_BYTES
+                );
+            }
+            Some(Command::Stop) => {
+                tracing::info!(
+                    "Generation stop detected via MMIO (1->0 transition at map offset {:#X}, addr {:#X}).",
+                    GENERATION_START_MMIO_MAP_OFFSET,
+                    GENERATION_START_ADDR_BYTES
+                );
+            }
+            None if current_value != previous_value && current_value != 0 && current_value != 1 => {
+                tracing::debug!(
+                    "Ignoring non-binary generation start MMIO value {} at map offset {:#X}, addr {:#X}.",
+                    current_value,
+                    GENERATION_START_MMIO_MAP_OFFSET,
+                    GENERATION_START_ADDR_BYTES
+                );
+            }
+            None => {}
+        }
+        command
     }
 
     fn await_next_command(&mut self) -> Result<Command, errors::Error> {
         loop {
             let device_path_clone = self.command_path.clone();
-            let read_result = read_u32_from_mmio(
+            let init_reset_read_result = read_u32_from_mmio(
                 &device_path_clone,
-                MMIO_MAP_OFFSET,
+                INIT_RESET_MMIO_MAP_OFFSET,
                 MMIO_MAP_LEN,
                 COMMAND_TRIGGER_ADDR_BYTES,
             );
 
-            match read_result {
+            match init_reset_read_result {
+                Ok(current_value) => self.observe_init_reset_transition(current_value),
+                Err(join_err) => {
+                    tracing::warn!(
+                        "Task join error for MMIO init/reset read: {}. Continuing.",
+                        join_err
+                    );
+                }
+            }
+
+            let generation_start_read_result = read_u32_from_mmio(
+                &device_path_clone,
+                GENERATION_START_MMIO_MAP_OFFSET,
+                MMIO_MAP_LEN,
+                GENERATION_START_ADDR_BYTES,
+            );
+
+            match generation_start_read_result {
                 Ok(current_value) => {
-                    if current_value == 1 && self.last_known_command_trigger_value == 0 {
-                        tracing::info!(
-                            "Start command detected via MMIO (0->1 transition at addr {:#X}).",
-                            COMMAND_TRIGGER_ADDR_BYTES
-                        );
-                        self.last_known_command_trigger_value = 1;
-                        return Ok(Command::Start);
-                    } else if current_value == 0 && self.last_known_command_trigger_value == 1 {
-                        tracing::info!(
-                            "Stop command detected via MMIO (1->0 transition at addr {:#X}).",
-                            COMMAND_TRIGGER_ADDR_BYTES
-                        );
-                        self.last_known_command_trigger_value = 0;
-                        return Ok(Command::Stop);
-                    } else if current_value != self.last_known_command_trigger_value
-                        && (current_value == 0 || current_value == 1)
-                    {
-                        tracing::debug!(
-                            "MMIO command trigger changed to {} without a processed edge from {}. Updating last known value.",
-                            current_value, self.last_known_command_trigger_value
-                        );
-                        self.last_known_command_trigger_value = current_value;
+                    if let Some(command) = self.observe_generation_start_transition(current_value) {
+                        return Ok(command);
                     }
                 }
                 Err(join_err) => {
                     tracing::warn!(
-                        "Task join error for MMIO command trigger read: {}. Continuing.",
+                        "Task join error for MMIO generation start read: {}. Continuing.",
                         join_err
                     );
                 }
@@ -158,6 +245,7 @@ impl IPCReader {
     /// Runs the Detector (Bob) workflow.
     fn run_detector_workflow(&mut self) -> Result<(), errors::Error> {
         self.last_known_command_trigger_value = 0; // Initialize for command polling
+        self.last_known_init_reset_value = 0;
 
         loop {
             tracing::info!(
@@ -302,6 +390,7 @@ impl IPCReader {
     /// Runs the Source (Alice) workflow.
     fn run_source_workflow(&mut self) -> Result<(), errors::Error> {
         self.last_known_command_trigger_value = 0;
+        self.last_known_init_reset_value = 0;
 
         loop {
             tracing::info!(
@@ -413,14 +502,70 @@ impl IPCReader {
 
     pub fn start(mut self) -> Result<(), errors::Error> {
         match self.simulator_mode {
-            crate::backend::role::SimulatorMode::Detector => {
+            SimulatorMode::Detector => {
                 tracing::info!("IPCReader starting in Detector (Bob) mode. Awaiting commands.");
                 self.run_detector_workflow()
             }
-            crate::backend::role::SimulatorMode::Source => {
+            SimulatorMode::Source => {
                 tracing::info!("IPCReader starting in Source (Alice) mode. Awaiting commands.");
                 self.run_source_workflow()
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        classify_generation_start_transition, update_binary_mmio_state, COMMAND_TRIGGER_ADDR_BYTES,
+        GENERATION_START_ADDR_BYTES, GENERATION_START_MMIO_MAP_OFFSET, INIT_RESET_MMIO_MAP_OFFSET,
+    };
+    use crate::ipc::Command;
+
+    #[test]
+    fn init_reset_transition_only_updates_reset_state() {
+        assert_eq!(INIT_RESET_MMIO_MAP_OFFSET, 0x12000);
+        assert_eq!(COMMAND_TRIGGER_ADDR_BYTES, 16);
+
+        let mut init_reset_state = 0;
+        let mut generation_state = 0;
+
+        let init_transition = update_binary_mmio_state(&mut init_reset_state, 1);
+        let command = classify_generation_start_transition(&mut generation_state, 0);
+
+        assert_eq!(init_transition, (0, 1));
+        assert_eq!(init_reset_state, 1);
+        assert!(command.is_none());
+        assert_eq!(generation_state, 0);
+    }
+
+    #[test]
+    fn generation_start_uses_sync_at_pps_register() {
+        assert_eq!(GENERATION_START_MMIO_MAP_OFFSET, 0x1000);
+        assert_eq!(GENERATION_START_ADDR_BYTES, 24);
+
+        let mut generation_state = 0;
+        let command = classify_generation_start_transition(&mut generation_state, 1);
+
+        assert!(matches!(command, Some(Command::Start)));
+        assert_eq!(generation_state, 1);
+    }
+
+    #[test]
+    fn generation_stop_is_detected_on_generation_register_falling_edge() {
+        let mut generation_state = 1;
+        let command = classify_generation_start_transition(&mut generation_state, 0);
+
+        assert!(matches!(command, Some(Command::Stop)));
+        assert_eq!(generation_state, 0);
+    }
+
+    #[test]
+    fn non_binary_mmio_values_do_not_change_generation_state() {
+        let mut generation_state = 0;
+        let command = classify_generation_start_transition(&mut generation_state, 42);
+
+        assert!(command.is_none());
+        assert_eq!(generation_state, 0);
     }
 }

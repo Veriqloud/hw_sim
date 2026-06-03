@@ -10,3 +10,4 @@ snafu = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 nix = { workspace = true }
+schemars = { workspace = true }

@@ -1,15 +1,12 @@
 use std::{collections::HashMap, f64::consts::PI, time::Instant};
 
-use crate::backend::role::SimulatorMode;
-
-use configs::backend::Configuration;
+use configs::backend::{Configuration, QberConfig};
 use rand::SeedableRng;
 use rand_pcg::Pcg64Mcg;
-
-use crate::backend::simulation::{
-    builder::SimulatorBuilder,
-    hardware::{builder::HardwareBuilder, modulator_state::ModulatorState},
-    Simulator, VqSim,
+use sim_lib::{
+    hardware::{builder::HardwareBuilder, modes::SimulatorMode, modulator_state::ModulatorState},
+    simulation::{builder::SimulatorBuilder, Simulator},
+    BATCH_SIZE,
 };
 
 #[test]
@@ -31,7 +28,7 @@ fn valid_config() {
             angles: vec![0, 10, 11, 12],
             seed: 33,
             eta: 0.1,
-            qberr: 0.02,
+            qberr: QberConfig::Fixed { value: 0.02 },
             pulse_distance: 1e-8,
         },
         config_input
@@ -48,7 +45,7 @@ fn generate_bytes() {
         .with_rng(Pcg64Mcg::seed_from_u64(42))
         .with_mode(SimulatorMode::Source) // Added mode
         .with_eta(1e-2)
-        .with_qb_err(0 as f64)
+        .with_qb_err(QberConfig::Fixed { value: 0.0 })
         .with_angles(vec![0, 32, 64, 96])
         .with_modulator_state(ModulatorState::Random)
         .with_now(now)
@@ -59,15 +56,15 @@ fn generate_bytes() {
         .with_rng(Pcg64Mcg::seed_from_u64(42))
         .with_mode(SimulatorMode::Source) // Changed to Source for identical comparison
         .with_eta(1e-2)
-        .with_qb_err(0 as f64)
+        .with_qb_err(QberConfig::Fixed { value: 0.0 })
         .with_angles(vec![0, 32, 64, 96])
         .with_modulator_state(ModulatorState::Random)
         .with_now(now)
         .with_gcr_padding(false)
         .build();
 
-    sim_a.start_session().unwrap();
-    sim_b.start_session().unwrap();
+    sim_a.initialize_session().unwrap();
+    sim_b.initialize_session().unwrap();
 
     // Batch 1
     let gcr_a1_raw = sim_a.generate_gcr_and_angles_batch().unwrap();
@@ -111,8 +108,8 @@ fn generate_bytes() {
         "Result bits for batch 2 should be identical"
     );
 
-    sim_a.stop_session().unwrap();
-    sim_b.stop_session().unwrap();
+    sim_a.setup_session_end().unwrap();
+    sim_b.setup_session_end().unwrap();
 }
 
 #[test]
@@ -127,18 +124,18 @@ fn source_angle_generation_consistency() {
         .with_rng(Pcg64Mcg::seed_from_u64(seed))
         .with_mode(SimulatorMode::Source)
         .with_eta(1.0) // Eta doesn't affect angle generation itself
-        .with_qb_err(0.0) // QBER doesn't affect angle choice
+        .with_qb_err(QberConfig::Fixed { value: 0.0 }) // QBER doesn't affect angle choice
         .with_angles(common_angles.clone())
         .with_modulator_state(ModulatorState::Random)
         .with_gcr_padding(false)
         .build();
 
-    sim_gcr_source.start_session().unwrap();
+    sim_gcr_source.initialize_session().unwrap();
     let _gcr_data = sim_gcr_source.generate_gcr_and_angles_batch().unwrap();
     let angles_from_gcr_flow = sim_gcr_source
         .retrieve_pending_angles_batch(vec![]) // Dummy GCs, not used by retrieve
         .unwrap();
-    sim_gcr_source.stop_session().unwrap();
+    sim_gcr_source.setup_session_end().unwrap();
 
     // Simulator 2: Using generate_angles_for_gcs flow
     let mut sim_direct_angles_source = SimulatorBuilder::new()
@@ -146,19 +143,19 @@ fn source_angle_generation_consistency() {
         .with_rng(Pcg64Mcg::seed_from_u64(seed)) // Same seed
         .with_mode(SimulatorMode::Source) // Same mode
         .with_eta(1.0)
-        .with_qb_err(0.0)
+        .with_qb_err(QberConfig::Fixed { value: 0.0 })
         .with_angles(common_angles.clone())
         .with_modulator_state(ModulatorState::Random)
         .build();
 
-    sim_direct_angles_source.start_session().unwrap();
+    sim_direct_angles_source.initialize_session().unwrap();
     // Create a dummy vector of GCs with the expected batch size.
     // The actual GC values don't influence random angle generation in generate_angles_for_gcs.
     let dummy_gcs: Vec<u64> = (0..angles_from_gcr_flow.len() as u64).collect();
     let angles_from_direct_flow = sim_direct_angles_source
         .generate_angles_for_gcs(dummy_gcs)
         .unwrap();
-    sim_direct_angles_source.stop_session().unwrap();
+    sim_direct_angles_source.setup_session_end().unwrap();
 
     assert_eq!(
         angles_from_gcr_flow.len(),
@@ -187,7 +184,7 @@ fn qkd_statistics_asymmetric_workflow_ok() {
         .with_rng(Pcg64Mcg::seed_from_u64(seed))
         .with_mode(SimulatorMode::Source)
         .with_eta(1e-2)
-        .with_qb_err(qb_err)
+        .with_qb_err(QberConfig::Fixed { value: qb_err })
         .with_angles(test_config_angles.clone())
         .with_gcr_padding(false)
         .build();
@@ -197,13 +194,13 @@ fn qkd_statistics_asymmetric_workflow_ok() {
         .with_rng(Pcg64Mcg::seed_from_u64(seed))
         .with_mode(SimulatorMode::Detector)
         .with_eta(1e-2)
-        .with_qb_err(qb_err)
+        .with_qb_err(QberConfig::Fixed { value: qb_err })
         .with_angles(test_config_angles.clone())
         .with_gcr_padding(false)
         .build();
 
-    sim_a.start_session().unwrap();
-    sim_b.start_session().unwrap();
+    sim_a.initialize_session().unwrap();
+    sim_b.initialize_session().unwrap();
 
     let split_gcr = |buf_gcr: &[u8; 8]| -> (u64, u8) {
         let mut temp_buf = *buf_gcr;
@@ -240,8 +237,8 @@ fn qkd_statistics_asymmetric_workflow_ok() {
         results_b_all.extend(current_results_b);
     }
 
-    sim_a.stop_session().unwrap();
-    sim_b.stop_session().unwrap();
+    sim_a.setup_session_end().unwrap();
+    sim_b.setup_session_end().unwrap();
 
     // --- Data Gathering ---
     let l = results_b_all.len();
@@ -329,7 +326,7 @@ fn test_rate_limiting_slow_rate() {
     let eta = 1.0; // 100% efficiency for simpler calculation
     let seed = 123;
     let num_batches = 20; // Use more batches for a better average
-    let batch_size = crate::backend::simulation::BATCH_SIZE; // 1024 events per batch
+    let batch_size = BATCH_SIZE; // 1024 events per batch
     let total_events = num_batches * batch_size;
 
     let mut sim = SimulatorBuilder::new()
@@ -345,7 +342,7 @@ fn test_rate_limiting_slow_rate() {
         .with_modulator_state(ModulatorState::Random)
         .build();
 
-    sim.start_session().unwrap();
+    sim.initialize_session().unwrap();
     let start_time = Instant::now();
 
     for _ in 0..num_batches {
@@ -354,7 +351,7 @@ fn test_rate_limiting_slow_rate() {
     }
 
     let elapsed_time = start_time.elapsed();
-    sim.stop_session().unwrap();
+    sim.setup_session_end().unwrap();
 
     // Expected time calculation based on the simulator's rate limiting logic:
     // time_in_secs = (target_event_count * pulse_distance) / eta
@@ -383,7 +380,7 @@ fn test_rate_limiting_high_speed() {
     let eta = 1.0; // 100% efficiency for simpler calculation
     let seed = 456;
     let num_batches = 50; // Generate a lot more batches to ensure CPU work is significant
-    let batch_size = crate::backend::simulation::BATCH_SIZE; // 1024 events per batch
+    let batch_size = BATCH_SIZE; // 1024 events per batch
     let total_events = num_batches * batch_size;
 
     let mut sim = SimulatorBuilder::new()
@@ -399,7 +396,7 @@ fn test_rate_limiting_high_speed() {
         .with_modulator_state(ModulatorState::Random)
         .build();
 
-    sim.start_session().unwrap();
+    sim.initialize_session().unwrap();
     let start_time = Instant::now();
 
     for _ in 0..num_batches {
@@ -408,7 +405,7 @@ fn test_rate_limiting_high_speed() {
     }
 
     let elapsed_time = start_time.elapsed();
-    sim.stop_session().unwrap();
+    sim.setup_session_end().unwrap();
 
     // The theoretical time is extremely short (microseconds).
     // The actual execution time will be dominated by CPU work, not sleeping.
@@ -417,10 +414,179 @@ fn test_rate_limiting_high_speed() {
 
     // We assert that the elapsed time is much larger than the theoretical sleep time,
     // but still reasonably fast (e.g., under 200ms), proving no significant sleep occurred.
-    let max_expected_runtime = Duration::from_millis(500);
+    let max_expected_runtime = std::time::Duration::from_millis(500);
     assert!(
         elapsed_time < max_expected_runtime,
         "High-speed rate test failed: Elapsed time ({:?}) was too long, suggesting an artificial delay.",
         elapsed_time
     );
+}
+
+#[test]
+fn test_qber_oscillation_distributions() {
+    let hw = HardwareBuilder::new().with_pulse_distance(1e-8).build();
+    let seed = 12345;
+
+    // Helper to run simulation for 15 batches and return result bits
+    let run_sim = |qber_config: QberConfig| -> Vec<Vec<u8>> {
+        let mut sim = SimulatorBuilder::new()
+            .with_hardware(hw.clone())
+            .with_rng(Pcg64Mcg::seed_from_u64(seed))
+            .with_seed(seed)
+            .with_mode(SimulatorMode::Detector)
+            .with_qb_err(qber_config)
+            .with_angles(vec![0, 32, 64, 96])
+            .with_modulator_state(ModulatorState::Random)
+            .with_gcr_padding(false)
+            .build();
+
+        sim.initialize_session().unwrap();
+
+        let mut batches = Vec::new();
+        for _ in 0..15 {
+            let gcr_raw = sim.generate_gcr_and_angles_batch().unwrap();
+            let result_bits: Vec<u8> = gcr_raw.iter().map(|gcr| (gcr[6] >> 1) & 1).collect();
+            batches.push(result_bits);
+        }
+        sim.setup_session_end().unwrap();
+        batches
+    };
+
+    // Reference (Zero Error)
+    let batches_zero = run_sim(QberConfig::Fixed { value: 0.0 });
+
+    // Define the variants we want to test
+    let test_cases = vec![
+        QberConfig::Fixed { value: 0.2 },
+        QberConfig::Uniform { min: 0.0, max: 0.5 },
+        QberConfig::Gaussian {
+            mean: 0.25,
+            std_dev: 0.1,
+        },
+    ];
+
+    for config in test_cases {
+        let batches_test = run_sim(config.clone());
+        let mut observed_qbers = Vec::new();
+
+        for i in 0..batches_test.len() {
+            let mut diffs = 0;
+            for j in 0..batches_test[i].len() {
+                if batches_zero[i][j] != batches_test[i][j] {
+                    diffs += 1;
+                }
+            }
+            observed_qbers.push(diffs as f64 / batches_zero[i].len() as f64);
+        }
+
+        // The exhaustive match here ensures that any new variant added to QberConfig
+        // will cause a compilation error in this test, forcing an update.
+        match config {
+            QberConfig::Fixed { value } => {
+                for (i, &qber) in observed_qbers.iter().enumerate() {
+                    assert!(
+                        (qber - value).abs() < 0.05,
+                        "Fixed QBER unstable at batch {} (got {})",
+                        i,
+                        qber
+                    );
+                }
+            }
+            QberConfig::Uniform { .. } => {
+                // The reason this finds the max and min values is that f64 can be NaN, but f64::max or f64::min ignores NaN in coparisons and returns the other number.
+                // On first pass, we get 0./0. which is NaN, and compare it to the first value of the vec. We cannot use .min() directly on the collection because f64 does not implement Ord because of NaN.
+                // Note that if both arguments are NaN, we just return NaN (and not an error) so tests won't crash if we use this.
+                let max_qber = observed_qbers.iter().cloned().fold(0. / 0., f64::max);
+                let min_qber = observed_qbers.iter().cloned().fold(0. / 0., f64::min);
+                assert!(
+                    max_qber - min_qber > 0.1,
+                    "Uniform QBER should vary across batches (range: {:.3})",
+                    max_qber - min_qber
+                );
+            }
+            QberConfig::Gaussian { mean, .. } => {
+                let sum: f64 = observed_qbers.iter().sum();
+                let mean_qber = sum / observed_qbers.len() as f64;
+                assert!(
+                    (mean_qber - mean).abs() < 0.05,
+                    "Gaussian mean QBER should be near {} (got {:.3})",
+                    mean,
+                    mean_qber
+                );
+                let max_qber = observed_qbers.iter().cloned().fold(0. / 0., f64::max);
+                let min_qber = observed_qbers.iter().cloned().fold(0. / 0., f64::min);
+                assert!(
+                    max_qber - min_qber > 0.05,
+                    "Gaussian QBER should show some variance (range: {:.3})",
+                    max_qber - min_qber
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn test_qkd_attack_signal_flow() {
+    // This test verifies the end-to-end flow of the attack mode:
+    // Actor receives StartAttack -> Simulator forces QBER to 50% -> StopAttack restores it.
+
+    let hw = HardwareBuilder::new().with_pulse_distance(1e-9).build();
+    let seed = 42;
+    let config_angles = vec![0, 32, 64, 96];
+
+    let sim = SimulatorBuilder::new()
+        .with_hardware(hw)
+        .with_rng(Pcg64Mcg::seed_from_u64(seed))
+        .with_seed(seed)
+        .with_mode(SimulatorMode::Detector)
+        .with_qb_err(QberConfig::Fixed { value: 0.0 }) // Normal QBER is 0%
+        .with_angles(config_angles)
+        .with_modulator_state(ModulatorState::Random)
+        .with_gcr_padding(false)
+        .build();
+
+    let sim_handle = crate::backend::actor::ActorHandle::new(sim);
+
+    // 1. Reference Batch (Normal mode)
+    sim_handle.start_session().unwrap();
+    let gcr_normal = sim_handle.generate_gcr_and_angles_batch().unwrap();
+    let results_normal: Vec<u8> = gcr_normal.iter().map(|gcr| (gcr[6] >> 1) & 1).collect();
+    sim_handle.stop_session().unwrap();
+
+    // 2. Attack Batch (Reset session to get same RNG sequence, then start attack)
+    sim_handle.start_session().unwrap();
+    sim_handle.start_attack().unwrap(); // Simulate SIGUSR1
+    let gcr_attack = sim_handle.generate_gcr_and_angles_batch().unwrap();
+    let results_attack: Vec<u8> = gcr_attack.iter().map(|gcr| (gcr[6] >> 1) & 1).collect();
+
+    // Calculate QBER
+    let mut diffs = 0;
+    for i in 0..BATCH_SIZE {
+        if results_normal[i] != results_attack[i] {
+            diffs += 1;
+        }
+    }
+    let qber_attack = diffs as f64 / BATCH_SIZE as f64;
+    println!("Measured QBER during simulated attack: {:.4}", qber_attack);
+
+    assert!(
+        qber_attack > 0.4 && qber_attack < 0.6,
+        "Attack QBER should be around 0.5, got {:.4}",
+        qber_attack
+    );
+
+    // 3. Restore Batch (Reset session, stop attack)
+    sim_handle.stop_attack().unwrap(); // Simulate SIGUSR2
+    sim_handle.stop_session().unwrap();
+
+    sim_handle.start_session().unwrap();
+    let gcr_restored = sim_handle.generate_gcr_and_angles_batch().unwrap();
+    let results_restored: Vec<u8> = gcr_restored.iter().map(|gcr| (gcr[6] >> 1) & 1).collect();
+
+    assert_eq!(
+        results_normal, results_restored,
+        "Restored session results should be identical to original normal session"
+    );
+
+    sim_handle.stop_session().unwrap();
 }

@@ -4,3 +4,5 @@ justfile
 CLAUDE.md
 perf.data*
 Cargo.lock
+default_config.json
+schema.json
