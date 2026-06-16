@@ -33,19 +33,19 @@ pub struct Simulator {
     pub(crate) use_gcr_padding: bool,
     pub rate_limiting_enabled: bool,
     pub is_under_attack: bool,
-    /// Mean photon number for signal pulses. Zero disables decoy-state mode.
+    /// Mean photon number for signal pulses.
     pub mu1: f64,
-    /// Mean photon number for decoy pulses.
+    /// Mean photon number for decoy pulses. Set to zero to disable decoy states.
     pub mu2: f64,
     /// Probability of choosing signal intensity mu1 over decoy mu2.
     pub p1: f64,
 }
 
 impl Simulator {
-    /// Returns true when decoy-state mode is active (mu1 and mu2 are both positive
+    /// Returns true when decoy-state mode is active (mu2 is positive
     /// and the channel efficiency eta is positive so click probabilities are meaningful).
     fn is_decoy_mode(&self) -> bool {
-        self.mu1 > 0.0 && self.mu2 > 0.0 && self.eta > 0.0
+        self.mu2 > 0.0 && self.eta > 0.0
     }
 
     /// Average click probability across both intensities, used as the effective
@@ -67,9 +67,24 @@ impl Simulator {
         tracing::info!("QKD Attack stopped: returning to configured QBER");
     }
 
+    /// The core logic for generating a single batch of correlated events.
+    /// This private helper function simulates a two-party quantum communication protocol.
+    /// For each event, both parties randomly choose a basis (angle). The sum of their angles
+    /// determines the probability of the measurement outcome (0 or 1). Because both parties'
+    /// It returns the raw data for a full batch: the chosen basis indices for both parties
+    /// and the shared measurement results.
     fn generate_correlation_batch(
         &mut self,
-    ) -> Result<([usize; BATCH], [usize; BATCH], [u8; BATCH], [u8; BATCH], [bool; BATCH]), ProtocolError> {
+    ) -> Result<
+        (
+            [usize; BATCH],
+            [usize; BATCH],
+            [u8; BATCH],
+            [u8; BATCH],
+            [bool; BATCH],
+        ),
+        ProtocolError,
+    > {
         // Ensure the simulator is in the correct state for this protocol.
         let (angles_vec, num_angles) = match &self.modulator_state {
             ModulatorState::Random => {
@@ -179,17 +194,31 @@ impl Simulator {
             click_results[i] = result;
 
             if decoy_mode {
-                // d=0 → signal (mu1), d=1 → decoy (mu2).
-                let d = if decoy_rand[i] < p1_threshold { 0u8 } else { 1u8 };
+                // d=0 : signal (mu1), d=1 : decoy (mu2).
+                let d = if decoy_rand[i] < p1_threshold {
+                    0u8
+                } else {
+                    1u8
+                };
                 decoy_states[i] = d;
-                let threshold = if d == 0 { click_threshold_mu1 } else { click_threshold_mu2 };
+                let threshold = if d == 0 {
+                    click_threshold_mu1
+                } else {
+                    click_threshold_mu2
+                };
                 // Event clicks when the Poisson draw produces at least one photon.
                 click_mask[i] = click_rand[i] < threshold;
             }
             // In non-decoy mode decoy_states[i]=0 and click_mask[i]=true (defaults).
         }
 
-        Ok((alice_indices, bob_indices, click_results, decoy_states, click_mask))
+        Ok((
+            alice_indices,
+            bob_indices,
+            click_results,
+            decoy_states,
+            click_mask,
+        ))
     }
 
     /// Encodes a Global Counter (GC) and a single result bit into an 8-byte GCR format.
@@ -253,7 +282,7 @@ impl Simulator {
         let mut output_bytes: Vec<u8> = Vec::with_capacity(l);
         let decoy_mode = self.is_decoy_mode();
 
-        while output_bytes.len() < l {
+        for _ in 0..(l.div_ceil(BATCH)) {
             let (alice_indices, bob_indices, click_results, decoy_states, click_mask) =
                 self.generate_correlation_batch()?;
 
@@ -331,7 +360,7 @@ impl Simulator {
         let mut click_results_data = Vec::with_capacity(BATCH_SIZE);
 
         for byte_val in data {
-            // Format: byte_val = 0000_dbbr → angle byte = 0000_0dbb, result = bit 0
+            // Format: byte_val = 0000_dbbr : angle byte = 0000_0dbb, result = bit 0
             angles_data.push(byte_val >> 1);
             click_results_data.push(byte_val & 1);
         }
@@ -487,7 +516,7 @@ impl Simulator {
         }
 
         // Extract angles (including decoy bit). Result bit is not used in this flow.
-        // Format: byte_val = 0000_dbbr → byte_val >> 1 = 0000_0dbb
+        // Format: byte_val = 0000_dbbr : byte_val >> 1 = 0000_0dbb
         let angles_data: Vec<u8> = data.iter().map(|byte_val| byte_val >> 1).collect();
 
         self.last_event_count += current_batch_size as u64; // Increment total generated events
