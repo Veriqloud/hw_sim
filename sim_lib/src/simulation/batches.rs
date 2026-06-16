@@ -10,6 +10,14 @@ pub struct QkdBatch {
     pub alice_angles: [u8; 1024],
     #[serde(with = "serde_bytes")]
     pub bob_angles: [u8; 1024],
+    /// Decoy state label per event: 0 = signal (µ1), 1 = decoy (µ2).
+    /// All zeros in non-decoy mode.
+    #[serde(with = "serde_bytes")]
+    pub decoy_states: [u8; 1024],
+    /// Whether each candidate pulse produced a detected photon (Poisson click model).
+    /// 1 = clicked, 0 = no click. Always 1 in non-decoy mode.
+    #[serde(with = "serde_bytes")]
+    pub click_mask: [u8; 1024],
 }
 
 /// Handle to manage a running QKD session.
