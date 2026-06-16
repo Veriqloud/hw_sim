@@ -17,17 +17,15 @@ impl SimulatorService {
 impl ServiceCorrelationsRandom for SimulatorService {
     fn generate_qkd_batch(&mut self) -> Result<QkdBatch, SimulationError> {
         // Alice and bob produce indices of angles from the "angle table".
-        let (alice_indices, bob_indices, click_results, decoy_states, click_mask) =
+        let (alice_indices, bob_indices, click_results, decoy_states) =
             self.sim.generate_correlation_batch()?;
 
         let angles_vec = &self.sim.angles;
-        let click_mask_bytes: [u8; 1024] = std::array::from_fn(|i| click_mask[i] as u8);
         let mut batch = QkdBatch {
             click_results,
             alice_angles: [0; 1024],
             bob_angles: [0; 1024],
             decoy_states,
-            click_mask: click_mask_bytes,
         };
 
         for i in 0..BATCH {

@@ -81,7 +81,6 @@ impl Simulator {
             [usize; BATCH],
             [u8; BATCH],
             [u8; BATCH],
-            [bool; BATCH],
         ),
         ProtocolError,
     > {
@@ -150,22 +149,16 @@ impl Simulator {
         let decoy_mode = self.is_decoy_mode();
 
         let mut decoy_rand = [0u16; BATCH];
-        let mut click_rand = [0u16; BATCH];
         if decoy_mode {
             self.rng.fill(&mut decoy_rand);
-            self.rng.fill(&mut click_rand);
         }
         // P(choose mu1) threshold scaled to u16::MAX.
         let p1_threshold = (self.p1 * u16::MAX as f64) as u16;
-        // Pre-compute per-intensity click thresholds (scaled to u16::MAX).
-        let click_threshold_mu1 = ((1.0 - (-self.mu1 * self.eta).exp()) * u16::MAX as f64) as u16;
-        let click_threshold_mu2 = ((1.0 - (-self.mu2 * self.eta).exp()) * u16::MAX as f64) as u16;
 
         let mut alice_indices = [0usize; BATCH];
         let mut bob_indices = [0usize; BATCH];
         let mut click_results = [0u8; BATCH];
         let mut decoy_states = [0u8; BATCH];
-        let mut click_mask = [true; BATCH];
 
         for i in 0..BATCH {
             let alice_basis_index = (alice_basis_rand[i] % num_angles) as usize;
@@ -195,21 +188,9 @@ impl Simulator {
 
             if decoy_mode {
                 // d=0 : signal (mu1), d=1 : decoy (mu2).
-                let d = if decoy_rand[i] < p1_threshold {
-                    0u8
-                } else {
-                    1u8
-                };
-                decoy_states[i] = d;
-                let threshold = if d == 0 {
-                    click_threshold_mu1
-                } else {
-                    click_threshold_mu2
-                };
-                // Event clicks when the Poisson draw produces at least one photon.
-                click_mask[i] = click_rand[i] < threshold;
+                decoy_states[i] = if decoy_rand[i] < p1_threshold { 0u8 } else { 1u8 };
             }
-            // In non-decoy mode decoy_states[i]=0 and click_mask[i]=true (defaults).
+            // In non-decoy mode decoy_states[i]=0 (default).
         }
 
         Ok((
@@ -217,7 +198,6 @@ impl Simulator {
             bob_indices,
             click_results,
             decoy_states,
-            click_mask,
         ))
     }
 
@@ -274,16 +254,11 @@ impl Simulator {
     ///   - bit 3: decoy state (0 = signal mu1, 1 = decoy mu2)
     ///   - bits 2-1: 2-bit basis index
     ///   - bit 0: quantum measurement result
-    ///
-    /// In decoy-state mode only pulses that produce at least one detected photon
-    /// (Poisson click probability `1 - exp(-mu * eta)`) are included, so the
-    /// output count rates naturally reflect the configured intensities.
     pub fn generate_encoded_party_data(&mut self, l: usize) -> Result<Vec<u8>, ProtocolError> {
         let mut output_bytes: Vec<u8> = Vec::with_capacity(l);
-        let decoy_mode = self.is_decoy_mode();
 
         for _ in 0..(l.div_ceil(BATCH)) {
-            let (alice_indices, bob_indices, click_results, decoy_states, click_mask) =
+            let (alice_indices, bob_indices, click_results, decoy_states) =
                 self.generate_correlation_batch()?;
 
             let my_indices = match self.simulator_mode {
@@ -294,9 +269,6 @@ impl Simulator {
             for i in 0..BATCH {
                 if output_bytes.len() >= l {
                     break;
-                }
-                if decoy_mode && !click_mask[i] {
-                    continue; // this pulse did not produce a photon detection
                 }
                 let my_basis_index = my_indices[i];
                 let decoy = decoy_states[i];
@@ -543,12 +515,12 @@ mod tests {
 
         // 1. Normal session
         sim.initialize_session().unwrap();
-        let (_, _, results_normal, _, _) = sim.generate_correlation_batch().unwrap();
+        let (_, _, results_normal, _) = sim.generate_correlation_batch().unwrap();
 
         // 2. Attack session (reset session to get the same RNG sequence)
         sim.initialize_session().unwrap();
         sim.start_attack();
-        let (_, _, results_attack, _, _) = sim.generate_correlation_batch().unwrap();
+        let (_, _, results_attack, _) = sim.generate_correlation_batch().unwrap();
 
         // 3. Calculate actual QBER (fraction of flipped bits)
         let mut diffs = 0;

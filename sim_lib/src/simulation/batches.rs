@@ -14,10 +14,6 @@ pub struct QkdBatch {
     /// All zeros in non-decoy mode.
     #[serde(with = "serde_bytes")]
     pub decoy_states: [u8; 1024],
-    /// Whether each candidate pulse produced a detected photon (Poisson click model).
-    /// 1 = clicked, 0 = no click. Always 1 in non-decoy mode.
-    #[serde(with = "serde_bytes")]
-    pub click_mask: [u8; 1024],
 }
 
 /// Handle to manage a running QKD session.
