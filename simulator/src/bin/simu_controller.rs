@@ -83,7 +83,8 @@ fn trigger_mmio_command(
     let file = OpenOptions::new()
         .read(true)
         .write(true)
-        .create(true) // Ensure file exists
+        .truncate(true)
+        .create(true)
         .open(device_path)?;
     // Ensure the file is large enough for the MMIO region
     let required_len =

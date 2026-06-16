@@ -24,6 +24,9 @@ pub struct SimulatorBuilder {
     pub mode: SimulatorMode,
     pub use_gcr_padding: bool,
     pub use_rate_limiter: bool,
+    pub mu1: f64,
+    pub mu2: f64,
+    pub p1: f64,
 }
 
 impl SimulatorBuilder {
@@ -43,6 +46,9 @@ impl SimulatorBuilder {
             .with_rng(Pcg64Mcg::seed_from_u64(conf.seed))
             .with_seed(conf.seed)
             .with_mode(mode)
+            .with_mu1(conf.mu1)
+            .with_mu2(conf.mu2)
+            .with_p1(conf.p1)
             .build()
     }
 
@@ -65,6 +71,9 @@ impl SimulatorBuilder {
             rate_limiting_enabled: self.use_rate_limiter,
             last_event_count: 0,
             is_under_attack: false,
+            mu1: self.mu1,
+            mu2: self.mu2,
+            p1: self.p1,
         }
     }
 
@@ -127,6 +136,21 @@ impl SimulatorBuilder {
         self.use_rate_limiter = use_limiter;
         self
     }
+
+    pub fn with_mu1(&mut self, mu1: f64) -> &mut Self {
+        self.mu1 = mu1;
+        self
+    }
+
+    pub fn with_mu2(&mut self, mu2: f64) -> &mut Self {
+        self.mu2 = mu2;
+        self
+    }
+
+    pub fn with_p1(&mut self, p1: f64) -> &mut Self {
+        self.p1 = p1;
+        self
+    }
 }
 
 impl Default for SimulatorBuilder {
@@ -141,9 +165,12 @@ impl Default for SimulatorBuilder {
             qb_err: Default::default(),
             rng: Pcg64Mcg::seed_from_u64(42),
             seed: 42,
-            mode: SimulatorMode::default(), // Add mode default
+            mode: SimulatorMode::default(),
             use_gcr_padding: true,
             use_rate_limiter: true,
+            mu1: 0.5,
+            mu2: 0.0,
+            p1: 0.5,
         }
     }
 }
@@ -188,7 +215,7 @@ pub mod tests {
         assert_eq!(
             Simulator {
                 hw,
-                simulator_mode: SimulatorMode::Detector, // Add mode to assertion
+                simulator_mode: SimulatorMode::Detector,
                 rng: Pcg64Mcg::seed_from_u64(5),
                 qber_oscillation_rng: Pcg64Mcg::seed_from_u64(5),
                 eta: 13.,
@@ -204,6 +231,9 @@ pub mod tests {
                 rate_limiting_enabled: false,
                 last_event_count: 0,
                 is_under_attack: false,
+                mu1: 0.5,
+                mu2: 0.0,
+                p1: 0.5,
             },
             sim
         )

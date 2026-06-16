@@ -52,20 +52,25 @@ impl IPCWriterActor {
                     angles_batch.len()
                 );
 
-                // Pack angle indices. The raw data from the simulator has the 2-bit index
-                // in bits 1 and 2 of each byte. We take two such bytes and pack their
-                // indices into a single byte.
-                // The format is 0b00xx00yy, where yy is the index from the first byte
-                // and xx is the index from the second byte.
+                // Pack angle bytes. Each raw angle byte from the simulator has the format
+                // 0000_0dbb where d=decoy bit (bit 2) and bb=2-bit basis index (bits 1-0).
+                // Two consecutive angle bytes are packed into one output byte with the
+                // hardware format 0dyy0dxx:
+                //   bit 7    = 0
+                //   bit 6    = d for the second byte (yy)
+                //   bits 5-4 = yy: basis index of second byte  (same position as old 00xx00yy)
+                //   bit 3    = 0
+                //   bit 2    = d for the first byte  (xx)
+                //   bits 1-0 = xx: basis index of first byte   (same position as old 00xx00yy)
                 let packed_angles: Vec<u8> = angles_batch
                     .chunks_exact(2)
                     .map(|chunk| {
-                        let index1 = chunk[0] & 0b0000_0011;
-                        let index2 = chunk[1] & 0b0000_0011;
-                        // Combine into a single byte: 0b00xx00yy
-                        // index1 goes into the lower bits (yy)
-                        // index2 goes into bits 4 and 5 (xx)
-                        index1 | (index2 << 4)
+                        let basis_xx = chunk[0] & 0b0000_0011; // bits 1-0 (unchanged)
+                        let d_xx = (chunk[0] >> 2) & 1;         // decoy for xx → bit 2
+                        let basis_yy = chunk[1] & 0b0000_0011; // bits 5-4 (unchanged)
+                        let d_yy = (chunk[1] >> 2) & 1;         // decoy for yy → bit 6
+                        // 0dyy0dxx
+                        (d_yy << 6) | (basis_yy << 4) | (d_xx << 2) | basis_xx
                     })
                     .collect();
 

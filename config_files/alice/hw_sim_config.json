@@ -7,9 +7,12 @@
       64
     ],
     "seed": 42,
-    "eta": 0.0,
+    "eta": 0.1,
     "qberr": 0.05,
-    "pulse_distance": 1e-8
+    "pulse_distance": 1e-8,
+    "mu1": 0.5,
+    "mu2": 0.1,
+    "p1": 0.5
   },
   "ipc_config": {
     "command_path": "/tmp/fpga_alice",

@@ -33,9 +33,30 @@ pub struct Simulator {
     pub(crate) use_gcr_padding: bool,
     pub rate_limiting_enabled: bool,
     pub is_under_attack: bool,
+    /// Mean photon number for signal pulses. Zero disables decoy-state mode.
+    pub mu1: f64,
+    /// Mean photon number for decoy pulses.
+    pub mu2: f64,
+    /// Probability of choosing signal intensity mu1 over decoy mu2.
+    pub p1: f64,
 }
 
 impl Simulator {
+    /// Returns true when decoy-state mode is active (mu1 and mu2 are both positive
+    /// and the channel efficiency eta is positive so click probabilities are meaningful).
+    fn is_decoy_mode(&self) -> bool {
+        self.mu1 > 0.0 && self.mu2 > 0.0 && self.eta > 0.0
+    }
+
+    /// Average click probability across both intensities, used as the effective
+    /// detection efficiency for rate limiting in decoy-state mode.
+    ///
+    /// p_avg = p1·(1 − e^{−µ1·η}) + (1−p1)·(1 − e^{−µ2·η})
+    fn decoy_effective_eta(&self) -> f64 {
+        self.p1 * (1.0 - (-self.mu1 * self.eta).exp())
+            + (1.0 - self.p1) * (1.0 - (-self.mu2 * self.eta).exp())
+    }
+
     pub fn start_attack(&mut self) {
         self.is_under_attack = true;
         tracing::warn!("QKD Attack started: QBER forced to 50%");
@@ -46,15 +67,9 @@ impl Simulator {
         tracing::info!("QKD Attack stopped: returning to configured QBER");
     }
 
-    /// The core logic for generating a single batch of correlated events.
-    /// This private helper function simulates a two-party quantum communication protocol.
-    /// For each event, both parties randomly choose a basis (angle). The sum of their angles
-    /// determines the probability of the measurement outcome (0 or 1). Because both parties'
-    /// It returns the raw data for a full batch: the chosen basis indices for both parties
-    /// and the shared measurement results.
     fn generate_correlation_batch(
         &mut self,
-    ) -> Result<([usize; 1024], [usize; 1024], [u8; 1024]), ProtocolError> {
+    ) -> Result<([usize; BATCH], [usize; BATCH], [u8; BATCH], [u8; BATCH], [bool; BATCH]), ProtocolError> {
         // Ensure the simulator is in the correct state for this protocol.
         let (angles_vec, num_angles) = match &self.modulator_state {
             ModulatorState::Random => {
@@ -117,9 +132,25 @@ impl Simulator {
         let mut qber_rand = [0u16; BATCH];
         self.rng.fill(&mut qber_rand);
 
-        let mut alice_indices = [0; BATCH];
-        let mut bob_indices = [0; BATCH];
-        let mut click_results = [0; BATCH];
+        let decoy_mode = self.is_decoy_mode();
+
+        let mut decoy_rand = [0u16; BATCH];
+        let mut click_rand = [0u16; BATCH];
+        if decoy_mode {
+            self.rng.fill(&mut decoy_rand);
+            self.rng.fill(&mut click_rand);
+        }
+        // P(choose mu1) threshold scaled to u16::MAX.
+        let p1_threshold = (self.p1 * u16::MAX as f64) as u16;
+        // Pre-compute per-intensity click thresholds (scaled to u16::MAX).
+        let click_threshold_mu1 = ((1.0 - (-self.mu1 * self.eta).exp()) * u16::MAX as f64) as u16;
+        let click_threshold_mu2 = ((1.0 - (-self.mu2 * self.eta).exp()) * u16::MAX as f64) as u16;
+
+        let mut alice_indices = [0usize; BATCH];
+        let mut bob_indices = [0usize; BATCH];
+        let mut click_results = [0u8; BATCH];
+        let mut decoy_states = [0u8; BATCH];
+        let mut click_mask = [true; BATCH];
 
         for i in 0..BATCH {
             let alice_basis_index = (alice_basis_rand[i] % num_angles) as usize;
@@ -146,9 +177,19 @@ impl Simulator {
             alice_indices[i] = alice_basis_index;
             bob_indices[i] = bob_basis_index;
             click_results[i] = result;
+
+            if decoy_mode {
+                // d=0 → signal (mu1), d=1 → decoy (mu2).
+                let d = if decoy_rand[i] < p1_threshold { 0u8 } else { 1u8 };
+                decoy_states[i] = d;
+                let threshold = if d == 0 { click_threshold_mu1 } else { click_threshold_mu2 };
+                // Event clicks when the Poisson draw produces at least one photon.
+                click_mask[i] = click_rand[i] < threshold;
+            }
+            // In non-decoy mode decoy_states[i]=0 and click_mask[i]=true (defaults).
         }
 
-        Ok((alice_indices, bob_indices, click_results))
+        Ok((alice_indices, bob_indices, click_results, decoy_states, click_mask))
     }
 
     /// Encodes a Global Counter (GC) and a single result bit into an 8-byte GCR format.
@@ -198,13 +239,23 @@ impl Simulator {
         Ok(())
     }
 
+    /// Generates `l` encoded event bytes.
+    ///
+    /// Each output byte encodes `0000_dbbr` where:
+    ///   - bit 3: decoy state (0 = signal mu1, 1 = decoy mu2)
+    ///   - bits 2-1: 2-bit basis index
+    ///   - bit 0: quantum measurement result
+    ///
+    /// In decoy-state mode only pulses that produce at least one detected photon
+    /// (Poisson click probability `1 - exp(-mu * eta)`) are included, so the
+    /// output count rates naturally reflect the configured intensities.
     pub fn generate_encoded_party_data(&mut self, l: usize) -> Result<Vec<u8>, ProtocolError> {
-        // The output vector to store the encoded results.
         let mut output_bytes: Vec<u8> = Vec::with_capacity(l);
+        let decoy_mode = self.is_decoy_mode();
 
-        // Process in batches for efficiency.
-        for _ in 0..(l.div_ceil(BATCH)) {
-            let (alice_indices, bob_indices, click_results) = self.generate_correlation_batch()?;
+        while output_bytes.len() < l {
+            let (alice_indices, bob_indices, click_results, decoy_states, click_mask) =
+                self.generate_correlation_batch()?;
 
             let my_indices = match self.simulator_mode {
                 SimulatorMode::Source => &alice_indices,
@@ -212,14 +263,20 @@ impl Simulator {
             };
 
             for i in 0..BATCH {
+                if output_bytes.len() >= l {
+                    break;
+                }
+                if decoy_mode && !click_mask[i] {
+                    continue; // this pulse did not produce a photon detection
+                }
                 let my_basis_index = my_indices[i];
+                let decoy = decoy_states[i];
                 let result = click_results[i];
-                output_bytes.push(((my_basis_index as u8) << 1) | result);
+                // Encoding: bit3=decoy, bits2:1=basis, bit0=result
+                output_bytes.push((decoy << 3) | ((my_basis_index as u8) << 1) | result);
             }
         }
 
-        // Trim the vector to the exact requested length `l`.
-        output_bytes.truncate(l);
         output_bytes.shrink_to_fit();
         Ok(output_bytes)
     }
@@ -274,7 +331,7 @@ impl Simulator {
         let mut click_results_data = Vec::with_capacity(BATCH_SIZE);
 
         for byte_val in data {
-            // Angle is in bits 7-1, result is in bit 0, as per correlations_random encoding: res | (angle << 1)
+            // Format: byte_val = 0000_dbbr → angle byte = 0000_0dbb, result = bit 0
             angles_data.push(byte_val >> 1);
             click_results_data.push(byte_val & 1);
         }
@@ -314,12 +371,19 @@ impl Simulator {
             self.pending_angles_batch.as_ref().map_or(0, |v| v.len())
         );
 
-        // This logic is now placed *after* all CPU-intensive work for the batch.
-        // Calculate the theoretical time at which this batch should be finished.
-        let target_event_count = self.last_event_count; // Use the count *after* this batch
-        let target_duration_from_start = if self.eta > 0.0 {
-            // Time = (Number of events * pulse_distance) / eta
-            let time_in_secs = (target_event_count as f64 * self.hw.pulse_distance) / self.eta;
+        // Rate limiting: target_time = clicks × pulse_distance / effective_eta
+        //
+        // effective_eta is eta in standard mode.  In decoy-state mode it is the
+        // theoretical average click probability across both intensities:
+        //   p_avg = p1·(1−e^{−µ1η}) + (1−p1)·(1−e^{−µ2η})
+        let effective_eta = if self.is_decoy_mode() {
+            self.decoy_effective_eta()
+        } else {
+            self.eta
+        };
+        let target_duration_from_start = if effective_eta > 0.0 {
+            let time_in_secs =
+                (self.last_event_count as f64 * self.hw.pulse_distance) / effective_eta;
             Duration::from_secs_f64(time_in_secs)
         } else {
             Duration::ZERO
@@ -422,7 +486,8 @@ impl Simulator {
             });
         }
 
-        // Extract angles directly. Result bits are not used in this flow by the caller.
+        // Extract angles (including decoy bit). Result bit is not used in this flow.
+        // Format: byte_val = 0000_dbbr → byte_val >> 1 = 0000_0dbb
         let angles_data: Vec<u8> = data.iter().map(|byte_val| byte_val >> 1).collect();
 
         self.last_event_count += current_batch_size as u64; // Increment total generated events
@@ -449,12 +514,12 @@ mod tests {
 
         // 1. Normal session
         sim.initialize_session().unwrap();
-        let (_, _, results_normal) = sim.generate_correlation_batch().unwrap();
+        let (_, _, results_normal, _, _) = sim.generate_correlation_batch().unwrap();
 
         // 2. Attack session (reset session to get the same RNG sequence)
         sim.initialize_session().unwrap();
         sim.start_attack();
-        let (_, _, results_attack) = sim.generate_correlation_batch().unwrap();
+        let (_, _, results_attack, _, _) = sim.generate_correlation_batch().unwrap();
 
         // 3. Calculate actual QBER (fraction of flipped bits)
         let mut diffs = 0;

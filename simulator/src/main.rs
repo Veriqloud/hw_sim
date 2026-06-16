@@ -107,10 +107,7 @@ fn app_main() -> Result<(), crate::errors::Error> {
         configs::ipc::Configuration::Bob(_) => SimulatorMode::Detector,
     };
 
-    let sim = SimulatorBuilder::from_config(
-        &CONFIG.get().unwrap().backend_config,
-        simulator_mode.clone(),
-    );
+    let sim = SimulatorBuilder::from_config(&CONFIG.get().unwrap().backend_config, simulator_mode);
     let simu_handle = backend::actor::ActorHandle::new(sim);
 
     // Spawn the signal handling thread.
@@ -150,7 +147,7 @@ fn app_main() -> Result<(), crate::errors::Error> {
             } else {
                 tracing::info!("Initial PPS for Alice triggered successfully.");
             }
-            run_alice_workflow(&alice_config, simu_handle, simulator_mode);
+            run_alice_workflow(alice_config, simu_handle, simulator_mode);
             tracing::error!("Alice's workflow function returned unexpectedly.");
         }
         configs::ipc::Configuration::Bob(bob_config) => {
@@ -163,7 +160,7 @@ fn app_main() -> Result<(), crate::errors::Error> {
             } else {
                 tracing::info!("Initial PPS for Bob triggered successfully.");
             }
-            run_bob_workflow(&bob_config, simu_handle, simulator_mode);
+            run_bob_workflow(bob_config, simu_handle, simulator_mode);
             tracing::error!("Bob's workflow function returned unexpectedly.");
         }
     }
@@ -276,7 +273,7 @@ fn run_alice_workflow(
             gc_read_file_handle,
             simu_handle.clone(),
             writer_handle.clone(),
-            simulator_mode.clone(),
+            simulator_mode,
         );
 
         tracing::info!("Starting IPC command processing loop for Alice.");
@@ -384,7 +381,7 @@ fn run_bob_workflow(
             gc_read_file_handle,
             simu_handle.clone(),
             writer_handle.clone(),
-            simulator_mode.clone(),
+            simulator_mode,
         );
 
         tracing::info!("Starting IPC command processing loop for Bob.");

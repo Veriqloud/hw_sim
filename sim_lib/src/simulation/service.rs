@@ -16,8 +16,9 @@ impl SimulatorService {
 
 impl ServiceCorrelationsRandom for SimulatorService {
     fn generate_qkd_batch(&mut self) -> Result<QkdBatch, SimulationError> {
-        // Alice and bob produce indices of angles from the "angle table"
-        let (alice_indices, bob_indices, click_results) = self.sim.generate_correlation_batch()?;
+        // Alice and bob produce indices of angles from the "angle table".
+        let (alice_indices, bob_indices, click_results, _decoy_states, _click_mask) =
+            self.sim.generate_correlation_batch()?;
 
         let angles_vec = &self.sim.angles;
         let mut batch = QkdBatch {
