@@ -36,7 +36,7 @@ fn read_u32_from_mmio(
     map_len: usize,
     value_addr_bytes: usize,
 ) -> Result<u32, std::io::Error> {
-    if value_addr_bytes % 4 != 0 {
+    if !value_addr_bytes.is_multiple_of(4) {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
             "MMIO address must be u32-aligned",

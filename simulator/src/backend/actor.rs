@@ -160,7 +160,7 @@ impl ActorHandle {
                 Err(e) => Err(Error::Simulation { source: e }),
             },
             Err(e) => {
-                return Err(Error::ActorDied { source: e });
+                Err(Error::ActorDied { source: e })
             }
         }
     }
@@ -180,7 +180,7 @@ impl ActorHandle {
                 Err(e) => Err(Error::Simulation { source: e }),
             },
             Err(e) => {
-                return Err(Error::ActorDied { source: e });
+                Err(Error::ActorDied { source: e })
             }
         }
     }
@@ -200,7 +200,7 @@ impl ActorHandle {
                 Err(e) => Err(Error::Simulation { source: e }),
             },
             Err(e) => {
-                return Err(Error::ActorDied { source: e });
+                Err(Error::ActorDied { source: e })
             }
         }
     }
@@ -223,7 +223,7 @@ impl ActorHandle {
                 Err(e) => Err(Error::Simulation { source: e }),
             },
             Err(e) => {
-                return Err(Error::ActorDied { source: e });
+                Err(Error::ActorDied { source: e })
             }
         }
     }
@@ -244,7 +244,7 @@ impl ActorHandle {
                 Err(e) => Err(Error::Simulation { source: e }),
             },
             Err(e) => {
-                return Err(Error::ActorDied { source: e });
+                Err(Error::ActorDied { source: e })
             }
         }
     }
@@ -267,7 +267,7 @@ impl ActorHandle {
                 Err(e) => Err(Error::Simulation { source: e }),
             },
             Err(e) => {
-                return Err(Error::ActorDied { source: e });
+                Err(Error::ActorDied { source: e })
             }
         }
     }

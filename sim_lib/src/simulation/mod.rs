@@ -265,10 +265,13 @@ impl Simulator {
         let mut angles_data = Vec::with_capacity(BATCH_SIZE);
         let mut click_results_data = Vec::with_capacity(BATCH_SIZE);
 
-        for i in 0..BATCH_SIZE {
+        for (&state_idx, (&decoy, &result)) in my_state_index
+            .iter()
+            .zip(batch.decoy_states.iter().zip(batch.results.iter()))
+        {
             // Angle byte: 0000_0dbb (decoy bit + 2-bit state index)
-            angles_data.push((batch.decoy_states[i] as u8) << 2 | my_state_index[i]);
-            click_results_data.push(batch.results[i] as u8);
+            angles_data.push((decoy as u8) << 2 | state_idx);
+            click_results_data.push(result as u8);
         }
 
         let capacity = if self.use_gcr_padding {
@@ -277,10 +280,8 @@ impl Simulator {
             BATCH_SIZE
         };
         let mut gcr_batch = Vec::with_capacity(capacity);
-        for i in 0..BATCH_SIZE {
+        for (i, &result_bit_for_gcr) in click_results_data.iter().enumerate() {
             let gc_value = base_gc_for_batch + i as u64;
-            // click_results_data[i] is now a single bit (0 or 1).
-            let result_bit_for_gcr = click_results_data[i];
             tracing::debug!(
                 "Simulator: Encoding GC={}, ResultBit={} for GCR item #{}",
                 gc_value,
