@@ -116,12 +116,6 @@ pub enum ActorMessage {
     StopAttack {
         reply_to: Sender<Result<(), SimulationError>>,
     },
-    // SetRole was removed
-    // Old messages like ReadAngles, GetGlobalCounter, SeedAndStartGeneration, Start, Stop might be obsolete
-    // depending on whether the VqSim trait still needs them directly or if all interaction is through new messages.
-    // For now, keeping them if they are still part of VqSim trait used by other parts,
-    // but the primary flow uses the new messages.
-    // Based on the VqSim changes, the old messages are indeed obsolete for the new flow.
 }
 
 pub fn run_simulator_actor(mut actor: Actor) {
