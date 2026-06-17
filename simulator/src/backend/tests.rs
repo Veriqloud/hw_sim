@@ -1,6 +1,6 @@
 use std::{collections::HashMap, f64::consts::PI, time::Instant};
 
-use configs::backend::{Configuration, QberConfig};
+use configs::backend::{Configuration, DecoyStatesConfig, QberConfig};
 use rand::SeedableRng;
 use rand_pcg::Pcg64Mcg;
 use sim_lib::{
@@ -23,8 +23,7 @@ fn valid_config() {
 
     println!("Backend Config {:?}", &config_input);
 
-    // mu1/mu2/p1 absent in JSON → filled with defaults.
-    // mu2=0 keeps decoy mode off; mu1=0.5 is the default signal intensity.
+    // decoy_states absent in JSON → decoy mode off.
     assert_eq!(
         Configuration {
             angles: vec![0, 10, 11, 12],
@@ -32,9 +31,7 @@ fn valid_config() {
             eta: 0.1,
             qberr: QberConfig::Fixed { value: 0.02 },
             pulse_distance: 1e-8,
-            mu1: 0.5,
-            mu2: 0.0,
-            p1: 0.5,
+            decoy_states: None,
         },
         config_input
     );
@@ -48,9 +45,11 @@ fn valid_config_with_decoy() {
     "eta": 0.1,
     "qberr": 0.05,
     "pulse_distance": 1e-8,
-    "mu1": 0.5,
-    "mu2": 0.1,
-    "p1": 0.5
+    "decoy_states": {
+        "mu1": 0.5,
+        "mu2": 0.1,
+        "p1": 0.5
+    }
 }"#;
 
     let config_input: Configuration = serde_json::from_str(&config_json).unwrap();
@@ -62,9 +61,7 @@ fn valid_config_with_decoy() {
             eta: 0.1,
             qberr: QberConfig::Fixed { value: 0.05 },
             pulse_distance: 1e-8,
-            mu1: 0.5,
-            mu2: 0.1,
-            p1: 0.5,
+            decoy_states: Some(DecoyStatesConfig { mu1: 0.5, mu2: 0.1, p1: 0.5 }),
         },
         config_input
     );

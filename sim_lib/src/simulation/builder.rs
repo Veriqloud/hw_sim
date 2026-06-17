@@ -2,7 +2,7 @@ use rand::SeedableRng;
 use rand_pcg::Pcg64Mcg;
 use std::time::Instant;
 
-use configs::backend::{Configuration, QberConfig};
+use configs::backend::{Configuration, DecoyStatesConfig, QberConfig};
 
 use crate::{
     hardware::{
@@ -24,9 +24,7 @@ pub struct SimulatorBuilder {
     pub mode: SimulatorMode,
     pub use_gcr_padding: bool,
     pub use_rate_limiter: bool,
-    pub mu1: f64,
-    pub mu2: f64,
-    pub p1: f64,
+    pub decoy_states: Option<DecoyStatesConfig>,
 }
 
 impl SimulatorBuilder {
@@ -46,9 +44,7 @@ impl SimulatorBuilder {
             .with_rng(Pcg64Mcg::seed_from_u64(conf.seed))
             .with_seed(conf.seed)
             .with_mode(mode)
-            .with_mu1(conf.mu1)
-            .with_mu2(conf.mu2)
-            .with_p1(conf.p1)
+            .with_decoy_states(conf.decoy_states.clone())
             .build()
     }
 
@@ -71,9 +67,7 @@ impl SimulatorBuilder {
             rate_limiting_enabled: self.use_rate_limiter,
             last_event_count: 0,
             is_under_attack: false,
-            mu1: self.mu1,
-            mu2: self.mu2,
-            p1: self.p1,
+            decoy_states: self.decoy_states.clone(),
         }
     }
 
@@ -137,18 +131,8 @@ impl SimulatorBuilder {
         self
     }
 
-    pub fn with_mu1(&mut self, mu1: f64) -> &mut Self {
-        self.mu1 = mu1;
-        self
-    }
-
-    pub fn with_mu2(&mut self, mu2: f64) -> &mut Self {
-        self.mu2 = mu2;
-        self
-    }
-
-    pub fn with_p1(&mut self, p1: f64) -> &mut Self {
-        self.p1 = p1;
+    pub fn with_decoy_states(&mut self, config: Option<DecoyStatesConfig>) -> &mut Self {
+        self.decoy_states = config;
         self
     }
 }
@@ -168,9 +152,7 @@ impl Default for SimulatorBuilder {
             mode: SimulatorMode::default(),
             use_gcr_padding: true,
             use_rate_limiter: true,
-            mu1: 0.5,
-            mu2: 0.0,
-            p1: 0.5,
+            decoy_states: None,
         }
     }
 }
@@ -231,9 +213,7 @@ pub mod tests {
                 rate_limiting_enabled: false,
                 last_event_count: 0,
                 is_under_attack: false,
-                mu1: 0.5,
-                mu2: 0.0,
-                p1: 0.5,
+                decoy_states: None,
             },
             sim
         )

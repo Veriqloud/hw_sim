@@ -1,4 +1,4 @@
-use configs::backend::QberConfig;
+use configs::backend::{DecoyStatesConfig, QberConfig};
 use rand::{RngExt, SeedableRng};
 use rand_pcg::Pcg64Mcg;
 use std::time::{Duration, Instant};
@@ -33,28 +33,22 @@ pub struct Simulator {
     pub(crate) use_gcr_padding: bool,
     pub rate_limiting_enabled: bool,
     pub is_under_attack: bool,
-    /// Mean photon number for signal pulses.
-    pub mu1: f64,
-    /// Mean photon number for decoy pulses. Set to zero to disable decoy states.
-    pub mu2: f64,
-    /// Probability of choosing signal intensity mu1 over decoy mu2.
-    pub p1: f64,
+    /// Decoy-state parameters. None means decoy mode is disabled.
+    pub decoy_states: Option<DecoyStatesConfig>,
 }
 
 impl Simulator {
-    /// Returns true when decoy-state mode is active (mu2 is positive
-    /// and the channel efficiency eta is positive so click probabilities are meaningful).
-    fn is_decoy_mode(&self) -> bool {
-        self.mu2 > 0.0 && self.eta > 0.0
-    }
-
     /// Average click probability across both intensities, used as the effective
     /// detection efficiency for rate limiting in decoy-state mode.
     ///
     /// p_avg = p1·(1 − e^{−µ1·η}) + (1−p1)·(1 − e^{−µ2·η})
-    fn decoy_effective_eta(&self) -> f64 {
-        self.p1 * (1.0 - (-self.mu1 * self.eta).exp())
-            + (1.0 - self.p1) * (1.0 - (-self.mu2 * self.eta).exp())
+    ///
+    /// Returns None when decoy mode is disabled.
+    fn decoy_effective_eta(&self) -> Option<f64> {
+        self.decoy_states.as_ref().map(|ds| {
+            ds.p1 * (1.0 - (-ds.mu1 * self.eta).exp())
+                + (1.0 - ds.p1) * (1.0 - (-ds.mu2 * self.eta).exp())
+        })
     }
 
     pub fn start_attack(&mut self) {
@@ -146,14 +140,12 @@ impl Simulator {
         let mut qber_rand = [0u16; BATCH];
         self.rng.fill(&mut qber_rand);
 
-        let decoy_mode = self.is_decoy_mode();
-
         let mut decoy_rand = [0u16; BATCH];
-        if decoy_mode {
+        // P(choose mu1) threshold scaled to u16::MAX — Some only when decoy mode is active.
+        let p1_threshold: Option<u16> = self.decoy_states.as_ref().map(|ds| {
             self.rng.fill(&mut decoy_rand);
-        }
-        // P(choose mu1) threshold scaled to u16::MAX.
-        let p1_threshold = (self.p1 * u16::MAX as f64) as u16;
+            (ds.p1 * u16::MAX as f64) as u16
+        });
 
         let mut alice_indices = [0usize; BATCH];
         let mut bob_indices = [0usize; BATCH];
@@ -186,9 +178,9 @@ impl Simulator {
             bob_indices[i] = bob_basis_index;
             click_results[i] = result;
 
-            if decoy_mode {
+            if let Some(threshold) = p1_threshold {
                 // d=0 : signal (mu1), d=1 : decoy (mu2).
-                decoy_states[i] = if decoy_rand[i] < p1_threshold { 0u8 } else { 1u8 };
+                decoy_states[i] = if decoy_rand[i] < threshold { 0u8 } else { 1u8 };
             }
             // In non-decoy mode decoy_states[i]=0 (default).
         }
@@ -377,11 +369,7 @@ impl Simulator {
         // effective_eta is eta in standard mode.  In decoy-state mode it is the
         // theoretical average click probability across both intensities:
         //   p_avg = p1·(1−e^{−µ1η}) + (1−p1)·(1−e^{−µ2η})
-        let effective_eta = if self.is_decoy_mode() {
-            self.decoy_effective_eta()
-        } else {
-            self.eta
-        };
+        let effective_eta = self.decoy_effective_eta().unwrap_or(self.eta);
         let target_duration_from_start = if effective_eta > 0.0 {
             let time_in_secs =
                 (self.last_event_count as f64 * self.hw.pulse_distance) / effective_eta;
