@@ -263,20 +263,25 @@ fn qkd_statistics_asymmetric_workflow_ok() {
     sim_b.setup_session_end().unwrap();
 
     // --- Data Gathering ---
+    // Unpack FIFO-format bytes (2 events per byte: 0[d][b1][b0]_0[d][b1][b0]) into per-event indices.
+    let unpack = |packed: &[u8]| -> Vec<u8> {
+        packed.iter().flat_map(|&b| [(b & 0x03), ((b >> 4) & 0x03)]).collect()
+    };
+    let angle_indices_a = unpack(&angles_a_all);
+    let angle_indices_b = unpack(&angles_b_all);
+
     let l = results_b_all.len();
     let mut correlation_stats: HashMap<(u8, u8), (u32, u32)> = HashMap::new();
     let angle_map = &test_config_angles;
 
     println!("SIZE:ANGLES_A_ALL ALICE {}", &angles_a_all.len());
-
     println!("SIZE:ANGLES_B_ALL BOB {}", &angles_b_all.len());
-
     println!("SIZE:RESULTS BOB {}", &results_b_all.len());
 
     for i in 0..l {
         let result = results_b_all[i];
-        let angle_idx_a = angles_a_all[i];
-        let angle_idx_b = angles_b_all[i];
+        let angle_idx_a = angle_indices_a[i];
+        let angle_idx_b = angle_indices_b[i];
         let angle_a = angle_map[angle_idx_a as usize];
         let angle_b = angle_map[angle_idx_b as usize];
 

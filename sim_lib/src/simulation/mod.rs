@@ -257,22 +257,10 @@ impl Simulator {
             }
         })?;
 
-        let my_state_index = match self.simulator_mode {
-            SimulatorMode::Source => &batch.alice_state_index,
-            SimulatorMode::Detector => &batch.bob_state_index,
+        let angles_data = match self.simulator_mode {
+            SimulatorMode::Source => batch.to_alice_fifo(),
+            SimulatorMode::Detector => batch.to_bob_angle_fifo(),
         };
-
-        let mut angles_data = Vec::with_capacity(BATCH_SIZE);
-        let mut click_results_data = Vec::with_capacity(BATCH_SIZE);
-
-        for (&state_idx, (&decoy, &result)) in my_state_index
-            .iter()
-            .zip(batch.decoy_states.iter().zip(batch.results.iter()))
-        {
-            // Angle byte: 0000_0dbb (decoy bit + 2-bit state index)
-            angles_data.push((decoy as u8) << 2 | state_idx);
-            click_results_data.push(result as u8);
-        }
 
         let capacity = if self.use_gcr_padding {
             2 * BATCH_SIZE
@@ -280,15 +268,15 @@ impl Simulator {
             BATCH_SIZE
         };
         let mut gcr_batch = Vec::with_capacity(capacity);
-        for (i, &result_bit_for_gcr) in click_results_data.iter().enumerate() {
+        for (i, &result) in batch.results.iter().enumerate() {
             let gc_value = base_gc_for_batch + i as u64;
             tracing::debug!(
                 "Simulator: Encoding GC={}, ResultBit={} for GCR item #{}",
                 gc_value,
-                result_bit_for_gcr,
+                result as u8,
                 i
             );
-            let gcr_item = self.encode_gcr(gc_value, result_bit_for_gcr);
+            let gcr_item = self.encode_gcr(gc_value, result as u8);
 
             gcr_batch.push(gcr_item);
             if self.use_gcr_padding {
@@ -371,15 +359,10 @@ impl Simulator {
             }
         })?;
 
-        let my_state_index = match self.simulator_mode {
-            SimulatorMode::Source => &batch.alice_state_index,
-            SimulatorMode::Detector => &batch.bob_state_index,
+        let angles_data = match self.simulator_mode {
+            SimulatorMode::Source => batch.to_alice_fifo(),
+            SimulatorMode::Detector => batch.to_bob_angle_fifo(),
         };
-
-        // Angle byte: 0000_0dbb (decoy bit + 2-bit state index). Result is not used in this flow.
-        let angles_data: Vec<u8> = (0..current_batch_size)
-            .map(|i| (batch.decoy_states[i] as u8) << 2 | my_state_index[i])
-            .collect();
 
         self.last_event_count += current_batch_size as u64; // Increment total generated events
 

@@ -53,8 +53,8 @@ impl QkdBatch {
             .collect()
     }
 
-    /// Serialize Bob's basis data for the FIFO: 2 events per byte.
-    /// Nibble layout: `00 [b1][b0]` — bits 1-0 of each nibble.
+    /// Serialize Bob's angle data for the FIFO: 2 events per byte.
+    /// Nibble layout: `00[b1][b0]`.
     pub fn to_bob_angle_fifo(&self) -> Vec<u8> {
         (0..BATCH / 2)
             .map(|k| {
