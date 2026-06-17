@@ -7,6 +7,7 @@ use crate::{
     BATCH, BATCH_SIZE, OVERLAP_PROBABILITIES,
     errors::{HardwareError, ProtocolError, SimulationError},
     hardware::{Hardware, modes::SimulatorMode, modulator_state::ModulatorState},
+    simulation::batches::QkdBatch,
 };
 
 pub mod batches;
@@ -67,17 +68,7 @@ impl Simulator {
     /// determines the probability of the measurement outcome (0 or 1). Because both parties'
     /// It returns the raw data for a full batch: the chosen basis indices for both parties
     /// and the shared measurement results.
-    fn generate_correlation_batch(
-        &mut self,
-    ) -> Result<
-        (
-            [usize; BATCH],
-            [usize; BATCH],
-            [u8; BATCH],
-            [u8; BATCH],
-        ),
-        ProtocolError,
-    > {
+    fn generate_correlation_batch(&mut self) -> Result<QkdBatch, ProtocolError> {
         // Ensure the simulator is in the correct state for this protocol.
         let (angles_vec, num_angles) = match &self.modulator_state {
             ModulatorState::Random => {
@@ -147,10 +138,10 @@ impl Simulator {
             (ds.p1 * u16::MAX as f64) as u16
         });
 
-        let mut alice_indices = [0usize; BATCH];
-        let mut bob_indices = [0usize; BATCH];
-        let mut click_results = [0u8; BATCH];
-        let mut decoy_states = [0u8; BATCH];
+        let mut alice_state_index = [0u8; BATCH];
+        let mut bob_state_index = [0u8; BATCH];
+        let mut results = [false; BATCH];
+        let mut decoy_states = [false; BATCH];
 
         for i in 0..BATCH {
             let alice_basis_index = (alice_basis_rand[i] % num_angles) as usize;
@@ -167,30 +158,30 @@ impl Simulator {
             // `overlap_probabilities` holds pre-calculated cos^2 values scaled to u16::MAX.
             // This value represents the probability of a '0' outcome.
             let probability_of_0 = overlap_probabilities[total_angle_offset as usize];
-            let mut result = (result_rand[i] > probability_of_0) as u8;
+            let mut result = result_rand[i] > probability_of_0;
 
             // Simulate Quantum Bit Error Rate (QBER).
             if qber_rand[i] < qber_threshold {
-                result ^= 1;
+                result = !result;
             }
 
-            alice_indices[i] = alice_basis_index;
-            bob_indices[i] = bob_basis_index;
-            click_results[i] = result;
+            alice_state_index[i] = alice_basis_index as u8;
+            bob_state_index[i] = bob_basis_index as u8;
+            results[i] = result;
 
             if let Some(threshold) = p1_threshold {
-                // d=0 : signal (mu1), d=1 : decoy (mu2).
-                decoy_states[i] = if decoy_rand[i] < threshold { 0u8 } else { 1u8 };
+                // false = signal (mu1), true = decoy (mu2).
+                decoy_states[i] = decoy_rand[i] >= threshold;
             }
-            // In non-decoy mode decoy_states[i]=0 (default).
+            // In non-decoy mode decoy_states[i] stays false.
         }
 
-        Ok((
-            alice_indices,
-            bob_indices,
-            click_results,
+        Ok(QkdBatch {
+            alice_state_index,
+            bob_state_index,
+            results,
             decoy_states,
-        ))
+        })
     }
 
     /// Encodes a Global Counter (GC) and a single result bit into an 8-byte GCR format.
@@ -250,23 +241,23 @@ impl Simulator {
         let mut output_bytes: Vec<u8> = Vec::with_capacity(l);
 
         for _ in 0..(l.div_ceil(BATCH)) {
-            let (alice_indices, bob_indices, click_results, decoy_states) =
-                self.generate_correlation_batch()?;
+            let batch = self.generate_correlation_batch()?;
 
-            let my_indices = match self.simulator_mode {
-                SimulatorMode::Source => &alice_indices,
-                SimulatorMode::Detector => &bob_indices,
+            let my_basis = match self.simulator_mode {
+                SimulatorMode::Source => &batch.alice_state_index,
+                SimulatorMode::Detector => &batch.bob_state_index,
             };
 
             for i in 0..BATCH {
                 if output_bytes.len() >= l {
                     break;
                 }
-                let my_basis_index = my_indices[i];
-                let decoy = decoy_states[i];
-                let result = click_results[i];
                 // Encoding: bit3=decoy, bits2:1=basis, bit0=result
-                output_bytes.push((decoy << 3) | ((my_basis_index as u8) << 1) | result);
+                output_bytes.push(
+                    ((batch.decoy_states[i] as u8) << 3)
+                        | (my_basis[i] << 1)
+                        | batch.results[i] as u8,
+                );
             }
         }
 
@@ -503,12 +494,12 @@ mod tests {
 
         // 1. Normal session
         sim.initialize_session().unwrap();
-        let (_, _, results_normal, _) = sim.generate_correlation_batch().unwrap();
+        let results_normal = sim.generate_correlation_batch().unwrap().results;
 
         // 2. Attack session (reset session to get the same RNG sequence)
         sim.initialize_session().unwrap();
         sim.start_attack();
-        let (_, _, results_attack, _) = sim.generate_correlation_batch().unwrap();
+        let results_attack = sim.generate_correlation_batch().unwrap().results;
 
         // 3. Calculate actual QBER (fraction of flipped bits)
         let mut diffs = 0;
