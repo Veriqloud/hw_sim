@@ -95,7 +95,7 @@ pub enum ActorMessage {
         reply_to: Sender<Result<(), SimulationError>>,
     },
     GenerateGcrAndAnglesBatch {
-        reply_to: Sender<Result<Vec<[u8; 8]>, SimulationError>>, // Returns GCR data
+        reply_to: Sender<Result<Vec<[u8; 8]>, SimulationError>>,
     },
     RetrievePendingAnglesBatch {
         received_gcs: Vec<u64>,
@@ -187,10 +187,7 @@ impl ActorHandle {
             .map_err(|e| errors::Error::ActorSend { e: e.to_string() })?;
         match recv.recv() {
             Ok(v) => match v {
-                Ok(b) => {
-                    // Nothing to do
-                    Ok(b)
-                }
+                Ok(b) => Ok(b),
                 Err(e) => Err(Error::Simulation { source: e }),
             },
             Err(e) => {

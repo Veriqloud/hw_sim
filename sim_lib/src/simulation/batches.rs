@@ -63,10 +63,6 @@ impl QkdBatch {
             .collect()
     }
 
-    /// Serialize Bob's click results for the FIFO: one byte per event (0 or 1).
-    pub fn to_bob_click_fifo(&self) -> Vec<u8> {
-        self.results.iter().map(|&r| r as u8).collect()
-    }
 }
 
 /// Handle to manage a running QKD session.

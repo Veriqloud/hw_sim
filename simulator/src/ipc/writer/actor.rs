@@ -12,8 +12,8 @@ pub struct IPCWriterActor {
 
 impl IPCWriterActor {
     pub fn new(
-        gcr_file: File,    // For GCR data (GC + result bit)
-        angles_file: File, // For angles data
+        gcr_file: File,
+        angles_file: File,
         receiver: mpsc::Receiver<WriterMessage>,
     ) -> Self {
         IPCWriterActor {
