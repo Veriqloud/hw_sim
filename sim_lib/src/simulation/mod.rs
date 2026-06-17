@@ -22,8 +22,6 @@ pub struct Simulator {
     pub(crate) hw: Hardware,
     pub(crate) modulator_state: ModulatorState,
     pub now: Instant,
-    // Replaced by batch-oriented processing
-    pub(crate) pending_angles_batch: Option<Vec<u8>>,
     pub qb_err: QberConfig,
     pub(crate) rng: Pcg64Mcg,
     pub(crate) qber_oscillation_rng: Pcg64Mcg,
@@ -68,7 +66,7 @@ impl Simulator {
     /// determines the probability of the measurement outcome (0 or 1). Because both parties'
     /// It returns the raw data for a full batch: the chosen basis indices for both parties
     /// and the shared measurement results.
-    fn generate_correlation_batch(&mut self) -> Result<QkdBatch, ProtocolError> {
+    pub fn generate_correlation_batch(&mut self) -> Result<QkdBatch, ProtocolError> {
         // Ensure the simulator is in the correct state for this protocol.
         let (angles_vec, num_angles) = match &self.modulator_state {
             ModulatorState::Random => {
@@ -213,7 +211,6 @@ impl Simulator {
         self.global_counter = 0; // Reset GC for the new session
         self.time_of_start = Some(Instant::now());
         self.modulator_state = ModulatorState::Random; // Ready to generate
-        self.pending_angles_batch = None;
         self.reset_time(); // Reset self.now for internal time calculations if any
         self.last_event_count = 0; // Reset event counter for the new session
         self.rng = Pcg64Mcg::seed_from_u64(self.seed); // Re-seed the RNG
@@ -226,49 +223,14 @@ impl Simulator {
         tracing::info!("Simulator: Stop session command received. Halting generation.");
         self.modulator_state = ModulatorState::Idle;
         self.time_of_start = None;
-        self.pending_angles_batch = None;
         tracing::info!("Simulator modulator state changed to IDLE.");
         Ok(())
     }
 
-    /// Generates `l` encoded event bytes.
-    ///
-    /// Each output byte encodes `0000_dbbr` where:
-    ///   - bit 3: decoy state (0 = signal mu1, 1 = decoy mu2)
-    ///   - bits 2-1: 2-bit basis index
-    ///   - bit 0: quantum measurement result
-    pub fn generate_encoded_party_data(&mut self, l: usize) -> Result<Vec<u8>, ProtocolError> {
-        let mut output_bytes: Vec<u8> = Vec::with_capacity(l);
-
-        for _ in 0..(l.div_ceil(BATCH)) {
-            let batch = self.generate_correlation_batch()?;
-
-            let my_basis = match self.simulator_mode {
-                SimulatorMode::Source => &batch.alice_state_index,
-                SimulatorMode::Detector => &batch.bob_state_index,
-            };
-
-            for i in 0..BATCH {
-                if output_bytes.len() >= l {
-                    break;
-                }
-                // Encoding: bit3=decoy, bits2:1=basis, bit0=result
-                output_bytes.push(
-                    ((batch.decoy_states[i] as u8) << 3)
-                        | (my_basis[i] << 1)
-                        | batch.results[i] as u8,
-                );
-            }
-        }
-
-        output_bytes.shrink_to_fit();
-        Ok(output_bytes)
-    }
-
     /// Generates a batch of GCR (Global Counter + Result) data and corresponding angles.
-    /// The GCR data is returned, and angles are stored internally.
+    /// Returns `(gcr_batch, angles_data)` together.
     /// GCs are deterministic (incrementing sequence). Clicks and angles are random.
-    pub fn generate_gcr_and_angles_batch(&mut self) -> Result<Vec<[u8; 8]>, SimulationError> {
+    pub fn generate_gcr_and_angles_batch(&mut self) -> Result<(Vec<[u8; 8]>, Vec<u8>), SimulationError> {
         if self.modulator_state != ModulatorState::Random {
             return Err(SimulationError::HardwareError {
                 source: HardwareError::ModulatorStateNotSupported,
@@ -288,39 +250,26 @@ impl Simulator {
             base_gc_for_batch
         );
 
-        // Obtain raw random bytes for events. Each byte from correlations_random is one event (angle + result).
-        let data = self.generate_encoded_party_data(BATCH_SIZE).map_err(|e| {
-            tracing::error!(
-                "Failed to get raw random bytes from generate_encoded_party_data: {:?}",
-                e
-            );
+        let batch = self.generate_correlation_batch().map_err(|e| {
+            tracing::error!("generate_correlation_batch failed: {:?}", e);
             HardwareError::Other {
-                reason: format!("generate_encoded_party_data failed: {}", e),
+                reason: format!("generate_correlation_batch failed: {}", e),
             }
         })?;
 
-        if data.len() < BATCH_SIZE {
-            return Err(SimulationError::HardwareError {
-                source: HardwareError::Other {
-                    reason: format!(
-                        "correlations_random returned insufficient data: got {}, expected {}",
-                        data.len(),
-                        BATCH_SIZE
-                    ),
-                },
-            });
-        }
+        let my_state_index = match self.simulator_mode {
+            SimulatorMode::Source => &batch.alice_state_index,
+            SimulatorMode::Detector => &batch.bob_state_index,
+        };
 
         let mut angles_data = Vec::with_capacity(BATCH_SIZE);
         let mut click_results_data = Vec::with_capacity(BATCH_SIZE);
 
-        for byte_val in data {
-            // Format: byte_val = 0000_dbbr : angle byte = 0000_0dbb, result = bit 0
-            angles_data.push(byte_val >> 1);
-            click_results_data.push(byte_val & 1);
+        for i in 0..BATCH_SIZE {
+            // Angle byte: 0000_0dbb (decoy bit + 2-bit state index)
+            angles_data.push((batch.decoy_states[i] as u8) << 2 | my_state_index[i]);
+            click_results_data.push(batch.results[i] as u8);
         }
-
-        self.pending_angles_batch = Some(angles_data);
 
         let capacity = if self.use_gcr_padding {
             2 * BATCH_SIZE
@@ -350,9 +299,9 @@ impl Simulator {
         self.last_event_count += BATCH_SIZE as u64; // Increment total generated events
 
         tracing::info!(
-            "Simulator: Generated batch. Total events generated: {}. Pending angles: {} bytes.",
+            "Simulator: Generated batch. Total events generated: {}. Angles: {} bytes.",
             self.last_event_count,
-            self.pending_angles_batch.as_ref().map_or(0, |v| v.len())
+            angles_data.len()
         );
 
         // Rate limiting: target_time = clicks × pulse_distance / effective_eta
@@ -378,34 +327,7 @@ impl Simulator {
             }
         }
 
-        Ok(gcr_batch)
-    }
-
-    /// Called after the reader has received GC values from the controller.
-    /// This method retrieves the internally stored batch of angles corresponding
-    /// to the previously generated GCR data.
-    pub fn retrieve_pending_angles_batch(
-        &mut self,
-        received_gc_values: Vec<u64>, // Used to determine BATCH_SIZE, actual values not used in random generation
-    ) -> Result<Vec<u8>, SimulationError> {
-        tracing::info!(
-            "Simulator: Received {} GC values from reader. Retrieving pending angles.",
-            received_gc_values.len()
-        );
-        // Validation of received_gc_values can be added here if necessary.
-        if let Some(angles) = self.pending_angles_batch.take() {
-            tracing::info!("Simulator: Returning {} pending angle bytes.", angles.len());
-            Ok(angles)
-        } else {
-            tracing::warn!(
-                "Simulator: retrieve_pending_angles_batch called but no pending angles found."
-            );
-            Err(SimulationError::HardwareError {
-                source: HardwareError::Other {
-                    reason: "No pending angles batch to retrieve.".to_string(),
-                },
-            })
-        }
+        Ok((gcr_batch, angles_data))
     }
 
     // set_angles remains for configuration purposes
@@ -441,34 +363,22 @@ impl Simulator {
             current_batch_size
         );
 
-        // Obtain raw random bytes for events. Each byte from correlations_random is one event (angle + result).
-        let data = self
-            .generate_encoded_party_data(current_batch_size)
-            .map_err(|e| {
-                tracing::error!(
-                    "Failed to get raw random bytes from generate_encoded_party_data: {:?}",
-                    e
-                );
-                HardwareError::Other {
-                    reason: format!("generate_encoded_party_data failed: {}", e),
-                }
-            })?;
+        let batch = self.generate_correlation_batch().map_err(|e| {
+            tracing::error!("generate_correlation_batch failed: {:?}", e);
+            HardwareError::Other {
+                reason: format!("generate_correlation_batch failed: {}", e),
+            }
+        })?;
 
-        if data.len() < current_batch_size {
-            return Err(SimulationError::HardwareError {
-                source: HardwareError::Other {
-                    reason: format!(
-                        "correlations_random returned insufficient data: got {}, expected {}",
-                        data.len(),
-                        current_batch_size
-                    ),
-                },
-            });
-        }
+        let my_state_index = match self.simulator_mode {
+            SimulatorMode::Source => &batch.alice_state_index,
+            SimulatorMode::Detector => &batch.bob_state_index,
+        };
 
-        // Extract angles (including decoy bit). Result bit is not used in this flow.
-        // Format: byte_val = 0000_dbbr : byte_val >> 1 = 0000_0dbb
-        let angles_data: Vec<u8> = data.iter().map(|byte_val| byte_val >> 1).collect();
+        // Angle byte: 0000_0dbb (decoy bit + 2-bit state index). Result is not used in this flow.
+        let angles_data: Vec<u8> = (0..current_batch_size)
+            .map(|i| (batch.decoy_states[i] as u8) << 2 | my_state_index[i])
+            .collect();
 
         self.last_event_count += current_batch_size as u64; // Increment total generated events
 

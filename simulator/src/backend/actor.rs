@@ -7,6 +7,7 @@ use super::errors::{self, Error};
 pub struct Actor {
     receiver: mpsc::Receiver<ActorMessage>,
     simulator: Simulator,
+    pending_angles: Option<Vec<u8>>,
 }
 
 impl Actor {
@@ -14,6 +15,7 @@ impl Actor {
         Actor {
             receiver,
             simulator,
+            pending_angles: None,
         }
     }
 
@@ -33,16 +35,23 @@ impl Actor {
             }
             ActorMessage::GenerateGcrAndAnglesBatch { reply_to } => {
                 tracing::debug!("SimulatorActor: Processing GenerateGcrAndAnglesBatch");
-                let result = self.simulator.generate_gcr_and_angles_batch();
+                let result = self.simulator.generate_gcr_and_angles_batch().map(|(gcr, angles)| {
+                    self.pending_angles = Some(angles);
+                    gcr
+                });
                 let _ = reply_to.send(result);
                 Ok(())
             }
             ActorMessage::RetrievePendingAnglesBatch {
-                received_gcs,
+                received_gcs: _,
                 reply_to,
             } => {
                 tracing::debug!("SimulatorActor: Processing RetrievePendingAnglesBatch");
-                let result = self.simulator.retrieve_pending_angles_batch(received_gcs);
+                let result = self.pending_angles.take().ok_or_else(|| SimulationError::HardwareError {
+                    source: sim_lib::errors::HardwareError::Other {
+                        reason: "No pending angles batch to retrieve.".to_string(),
+                    },
+                });
                 let _ = reply_to.send(result);
                 Ok(())
             }

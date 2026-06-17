@@ -99,11 +99,8 @@ fn generate_bytes() {
     sim_b.initialize_session().unwrap();
 
     // Batch 1
-    let gcr_a1_raw = sim_a.generate_gcr_and_angles_batch().unwrap();
-    let angles_a1 = sim_a.retrieve_pending_angles_batch(vec![]).unwrap();
-
-    let gcr_b1_raw = sim_b.generate_gcr_and_angles_batch().unwrap();
-    let angles_b1 = sim_b.retrieve_pending_angles_batch(vec![]).unwrap();
+    let (gcr_a1_raw, angles_a1) = sim_a.generate_gcr_and_angles_batch().unwrap();
+    let (gcr_b1_raw, angles_b1) = sim_b.generate_gcr_and_angles_batch().unwrap();
 
     // Helper to decode GCR into result bits.
     // (buf_gcr[6] >> 1) & 1 extracts the result bit encoded by Simulator::encode_gcr
@@ -122,11 +119,8 @@ fn generate_bytes() {
     );
 
     // Batch 2
-    let gcr_a2_raw = sim_a.generate_gcr_and_angles_batch().unwrap();
-    let angles_a2 = sim_a.retrieve_pending_angles_batch(vec![]).unwrap();
-
-    let gcr_b2_raw = sim_b.generate_gcr_and_angles_batch().unwrap();
-    let angles_b2 = sim_b.retrieve_pending_angles_batch(vec![]).unwrap();
+    let (gcr_a2_raw, angles_a2) = sim_a.generate_gcr_and_angles_batch().unwrap();
+    let (gcr_b2_raw, angles_b2) = sim_b.generate_gcr_and_angles_batch().unwrap();
 
     let results_a2: Vec<u8> = gcr_a2_raw.iter().map(|gcr| extract_result(gcr)).collect();
     let results_b2: Vec<u8> = gcr_b2_raw.iter().map(|gcr| extract_result(gcr)).collect();
@@ -163,10 +157,7 @@ fn source_angle_generation_consistency() {
         .build();
 
     sim_gcr_source.initialize_session().unwrap();
-    let _gcr_data = sim_gcr_source.generate_gcr_and_angles_batch().unwrap();
-    let angles_from_gcr_flow = sim_gcr_source
-        .retrieve_pending_angles_batch(vec![]) // Dummy GCs, not used by retrieve
-        .unwrap();
+    let (_gcr_data, angles_from_gcr_flow) = sim_gcr_source.generate_gcr_and_angles_batch().unwrap();
     sim_gcr_source.setup_session_end().unwrap();
 
     // Simulator 2: Using generate_angles_for_gcs flow
@@ -250,8 +241,7 @@ fn qkd_statistics_asymmetric_workflow_ok() {
 
     // Generate a larger number of batches for better statistical significance
     for _ in 0..32 {
-        let gcr_b_batch = sim_b.generate_gcr_and_angles_batch().unwrap();
-        let angles_b_batch = sim_b.retrieve_pending_angles_batch(vec![]).unwrap();
+        let (gcr_b_batch, angles_b_batch) = sim_b.generate_gcr_and_angles_batch().unwrap();
 
         let mut gcs_for_alice = Vec::with_capacity(gcr_b_batch.len());
         let mut current_results_b = Vec::with_capacity(gcr_b_batch.len());
@@ -379,7 +369,6 @@ fn test_rate_limiting_slow_rate() {
 
     for _ in 0..num_batches {
         sim.generate_gcr_and_angles_batch().unwrap();
-        sim.retrieve_pending_angles_batch(vec![]).unwrap();
     }
 
     let elapsed_time = start_time.elapsed();
@@ -433,7 +422,6 @@ fn test_rate_limiting_high_speed() {
 
     for _ in 0..num_batches {
         sim.generate_gcr_and_angles_batch().unwrap();
-        sim.retrieve_pending_angles_batch(vec![]).unwrap();
     }
 
     let elapsed_time = start_time.elapsed();
@@ -476,7 +464,7 @@ fn test_qber_oscillation_distributions() {
 
         let mut batches = Vec::new();
         for _ in 0..15 {
-            let gcr_raw = sim.generate_gcr_and_angles_batch().unwrap();
+            let (gcr_raw, _) = sim.generate_gcr_and_angles_batch().unwrap();
             let result_bits: Vec<u8> = gcr_raw.iter().map(|gcr| (gcr[6] >> 1) & 1).collect();
             batches.push(result_bits);
         }
