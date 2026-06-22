@@ -13,7 +13,6 @@ use crate::{
 
 pub struct SimulatorBuilder {
     pub eta: f64,
-    pub global_counter: u64,
     pub hw: Hardware,
     pub modulator_state: ModulatorState,
     pub angles: Vec<u8>,
@@ -58,7 +57,6 @@ impl SimulatorBuilder {
             seed: self.seed,
             qb_err: self.qb_err.to_owned(),
             now: self.now,
-            global_counter: self.global_counter,
             modulator_state: self.modulator_state.to_owned(),
             angles: self.angles.to_owned(),
             time_of_start: None,
@@ -110,11 +108,6 @@ impl SimulatorBuilder {
         self
     }
 
-    pub fn with_global_counter(&mut self, global_counter: u64) -> &mut Self {
-        self.global_counter = global_counter;
-        self
-    }
-
     pub fn with_modulator_state(&mut self, state: ModulatorState) -> &mut Self {
         self.modulator_state = state;
         self
@@ -140,7 +133,6 @@ impl Default for SimulatorBuilder {
     fn default() -> Self {
         SimulatorBuilder {
             eta: Default::default(),
-            global_counter: Default::default(),
             hw: Default::default(),
             modulator_state: Default::default(),
             angles: Default::default(),
@@ -180,12 +172,11 @@ pub mod tests {
             .build();
         let sim = SimulatorBuilder::new()
             .with_hardware(hw.clone())
-            .with_mode(SimulatorMode::Detector) // Add with_mode for testing
+            .with_mode(SimulatorMode::Detector)
             .with_rng(Pcg64Mcg::seed_from_u64(5))
             .with_eta(13.)
             .with_qb_err(QberConfig::Fixed { value: 42. })
             .with_now(now)
-            .with_global_counter(99)
             .with_modulator_state(ModulatorState::Random)
             .with_seed(5)
             .with_angles(vec![0, 32, 34, 96])
@@ -203,7 +194,6 @@ pub mod tests {
                 qb_err: QberConfig::Fixed { value: 42. },
                 now,
                 seed: 5,
-                global_counter: 99,
                 modulator_state: ModulatorState::Random,
                 angles: vec![0, 32, 34, 96],
                 time_of_start: None,

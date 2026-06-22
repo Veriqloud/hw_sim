@@ -20,7 +20,6 @@ pub mod service;
 pub struct Simulator {
     pub(crate) angles: Vec<u8>,
     pub eta: f64,
-    pub(crate) global_counter: u64,
     pub(crate) hw: Hardware,
     pub(crate) modulator_state: ModulatorState,
     pub now: Instant,
@@ -62,12 +61,12 @@ impl Simulator {
         tracing::info!("QKD Attack stopped: returning to configured QBER");
     }
 
-    /// The core logic for generating a single batch of correlated events.
-    /// This private helper function simulates a two-party quantum communication protocol.
-    /// For each event, both parties randomly choose a basis (angle). The sum of their angles
-    /// determines the probability of the measurement outcome (0 or 1). Because both parties'
-    /// It returns the raw data for a full batch: the chosen basis indices for both parties
-    /// and the shared measurement results.
+    /// Generates a single batch of correlated QKD events (bases + results).
+    ///
+    /// Returns a `QkdBatch` with `base_gc = 0` and `gc_step = 1`. These are
+    /// placeholder values — callers that only need the correlation data (angles,
+    /// results, decoy states) can use this directly. For hardware-accurate GC
+    /// timestamps and rate limiting use `generate_batch()` instead.
     pub fn generate_correlation_batch(&mut self) -> Result<QkdBatch, ProtocolError> {
         // Ensure the simulator is in the correct state for this protocol.
         let (angles_vec, num_angles) = match &self.modulator_state {
@@ -177,6 +176,8 @@ impl Simulator {
         }
 
         Ok(QkdBatch {
+            base_gc: 0,
+            gc_step: 1,
             alice_state_index,
             bob_state_index,
             results,
@@ -184,23 +185,10 @@ impl Simulator {
         })
     }
 
-    /// Encodes a Global Counter (GC) and a single result bit into an 8-byte GCR format.
-    /// Inverse of the user-provided `split_gcr` function.
-    /// `split_gcr` implies:
-    ///   `gc_val = (original_gc / 2)` stored in most of the 8 bytes.
-    ///   `buf[6]` bit 0 stores `original_gc % 2`.
-    ///   `buf[6]` bit 1 stores `result_bit`.
-    fn encode_gcr(&self, gc: u64, result_bit: u8) -> [u8; 8] {
-        let shifted_gc = gc >> 1; // gc / 2
-        let gc_lsb = (gc & 1) as u8; // gc % 2
-
-        let mut buffer = shifted_gc.to_le_bytes();
-
-        // Clear bits 0 and 1 of buffer[6] then set them
-        buffer[6] = (buffer[6] & 0b1111_1100) | gc_lsb | ((result_bit & 1) << 1);
-
-        buffer
+    pub fn use_gcr_padding(&self) -> bool {
+        self.use_gcr_padding
     }
+
     /// Reset time to now
     pub fn reset_time(&mut self) {
         self.now = Instant::now();
@@ -210,7 +198,6 @@ impl Simulator {
     /// Resets counters and sets the modulator state.
     pub fn initialize_session(&mut self) -> Result<(), SimulationError> {
         tracing::info!("Simulator: Start session command received. Initializing for generation.");
-        self.global_counter = 0; // Reset GC for the new session
         self.time_of_start = Some(Instant::now());
         self.modulator_state = ModulatorState::Random; // Ready to generate
         self.reset_time(); // Reset self.now for internal time calculations if any
@@ -229,10 +216,9 @@ impl Simulator {
         Ok(())
     }
 
-    /// Generates a batch of GCR (Global Counter + Result) data and corresponding angles.
-    /// Returns `(gcr_batch, angles_data)` together.
-    /// GCs are deterministic (incrementing sequence). Clicks and angles are random.
-    pub fn generate_gcr_and_angles_batch(&mut self) -> Result<(Vec<[u8; 8]>, Vec<u8>), SimulationError> {
+    /// Generates one batch of correlated QKD events, applies rate limiting, and
+    /// advances the internal event counter. This is the primitive the actor calls.
+    pub fn generate_batch(&mut self) -> Result<QkdBatch, SimulationError> {
         if self.modulator_state != ModulatorState::Random {
             return Err(SimulationError::HardwareError {
                 source: HardwareError::ModulatorStateNotSupported,
@@ -243,71 +229,38 @@ impl Simulator {
             reason: "Simulator session not started (time_of_start is None).".to_string(),
         })?;
 
-        // The base global counter for this batch is simply the number of events
-        // generated before this batch.
-        let base_gc_for_batch = self.last_event_count;
-        tracing::info!(
-            "Simulator: Generating GCR and angles batch ({} items). Base GC for this batch: {}",
-            BATCH_SIZE,
-            base_gc_for_batch
-        );
+        // How many laser pulses does one batch of BATCH_SIZE clicks consume?
+        // On average: BATCH_SIZE / effective_eta pulses.
+        // last_event_count tracks the total pulse count (= the running GC offset from
+        // session start), so it grows at the laser repetition rate, not the click rate.
+        let effective_eta = self.decoy_effective_eta().unwrap_or(self.eta);
+        let batch_pulse_count = if effective_eta > 0.0 {
+            (BATCH_SIZE as f64 / effective_eta).round() as u64
+        } else {
+            BATCH_SIZE as u64
+        };
+        // Average pulse-counter gap between two consecutive detection events.
+        let gc_step = (batch_pulse_count / BATCH_SIZE as u64).max(1);
 
-        let batch = self.generate_correlation_batch().map_err(|e| {
+        tracing::info!("Simulator: Generating batch ({} items, {} pulses).", BATCH_SIZE, batch_pulse_count);
+
+        let base_gc = self.hw.gc_offset + self.last_event_count;
+        let inner = self.generate_correlation_batch().map_err(|e| {
             tracing::error!("generate_correlation_batch failed: {:?}", e);
             HardwareError::Other {
                 reason: format!("generate_correlation_batch failed: {}", e),
             }
         })?;
+        let batch = QkdBatch { base_gc, gc_step, ..inner };
 
-        let angles_data = match self.simulator_mode {
-            SimulatorMode::Source => batch.to_alice_fifo(),
-            SimulatorMode::Detector => batch.to_bob_angle_fifo(),
-        };
+        // Advance pulse counter: next batch starts batch_pulse_count laser pulses later.
+        self.last_event_count += batch_pulse_count;
 
-        let capacity = if self.use_gcr_padding {
-            2 * BATCH_SIZE
-        } else {
-            BATCH_SIZE
-        };
-        let mut gcr_batch = Vec::with_capacity(capacity);
-        for (i, result) in batch.results.iter().enumerate() {
-            let gc_value = base_gc_for_batch + i as u64;
-            tracing::debug!(
-                "Simulator: Encoding GC={}, ResultBit={} for GCR item #{}",
-                gc_value,
-                *result as u8,
-                i
-            );
-            let gcr_item = self.encode_gcr(gc_value, *result as u8);
-
-            gcr_batch.push(gcr_item);
-            if self.use_gcr_padding {
-                // The external `gc` program expects a 16-byte record per GCR.
-                // The first 8 bytes are the GCR, the next 8 are padding.
-                gcr_batch.push([0u8; 8]);
-            }
-        }
-        self.last_event_count += BATCH_SIZE as u64; // Increment total generated events
-
-        tracing::info!(
-            "Simulator: Generated batch. Total events generated: {}. Angles: {} bytes.",
-            self.last_event_count,
-            angles_data.len()
-        );
-
-        // Rate limiting: target_time = clicks × pulse_distance / effective_eta
-        //
-        // effective_eta is eta in standard mode.  In decoy-state mode it is the
-        // theoretical average click probability across both intensities:
-        //   p_avg = p1·(1−e^{−µ1η}) + (1−p1)·(1−e^{−µ2η})
-        let effective_eta = self.decoy_effective_eta().unwrap_or(self.eta);
-        let target_duration_from_start = if effective_eta > 0.0 {
-            let time_in_secs =
-                (self.last_event_count as f64 * self.hw.pulse_distance) / effective_eta;
-            Duration::from_secs_f64(time_in_secs)
-        } else {
-            Duration::ZERO
-        };
+        // Rate limiting: target_time = pulse_count × pulse_distance
+        // (equivalent to the old clicks × pulse_distance / eta, but expressed directly
+        // in pulse units now that last_event_count tracks pulses).
+        let target_duration_from_start =
+            Duration::from_secs_f64(self.last_event_count as f64 * self.hw.pulse_distance);
 
         if self.rate_limiting_enabled && target_duration_from_start > Duration::ZERO {
             let elapsed_since_start = time_of_start.elapsed();
@@ -318,8 +271,9 @@ impl Simulator {
             }
         }
 
-        Ok((gcr_batch, angles_data))
+        Ok(batch)
     }
+
 
     // set_angles remains for configuration purposes
     pub fn set_angles(&mut self, angles_config: [u8; 4]) -> Result<(), SimulationError> {
@@ -327,53 +281,6 @@ impl Simulator {
         Ok(())
     }
 
-    /// Generates a batch of angles based on received GCs (primarily for Source mode).
-    /// This method does not generate GCRs or affect the internal global_counter.
-    pub fn generate_angles_for_gcs(
-        &mut self,
-        received_gcs: Vec<u64>,
-    ) -> Result<Vec<u8>, SimulationError> {
-        if self.modulator_state != ModulatorState::Random {
-            return Err(SimulationError::HardwareError {
-                source: HardwareError::ModulatorStateNotSupported,
-            });
-        }
-        let current_batch_size = received_gcs.len();
-
-        if current_batch_size == 0 {
-            // Or handle as appropriate, e.g., return empty Vec or specific error
-            return Err(SimulationError::HardwareError {
-                source: HardwareError::Other {
-                    reason: "Received empty GC batch for angle generation.".to_string(),
-                },
-            });
-        }
-
-        tracing::info!(
-            "Simulator (Source Mode Flow): Generating angles batch ({} items) based on received GCs.",
-            current_batch_size
-        );
-
-        let batch = self.generate_correlation_batch().map_err(|e| {
-            tracing::error!("generate_correlation_batch failed: {:?}", e);
-            HardwareError::Other {
-                reason: format!("generate_correlation_batch failed: {}", e),
-            }
-        })?;
-
-        let angles_data = match self.simulator_mode {
-            SimulatorMode::Source => batch.to_alice_fifo(),
-            SimulatorMode::Detector => batch.to_bob_angle_fifo(),
-        };
-
-        self.last_event_count += current_batch_size as u64; // Increment total generated events
-
-        tracing::info!(
-            "Simulator (Source Mode Flow): Generated {} angle bytes.",
-            angles_data.len()
-        );
-        Ok(angles_data)
-    }
 }
 
 #[cfg(test)]

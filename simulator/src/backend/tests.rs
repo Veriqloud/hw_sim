@@ -98,39 +98,35 @@ fn generate_bytes() {
     sim_a.initialize_session().unwrap();
     sim_b.initialize_session().unwrap();
 
-    // Batch 1
-    let (gcr_a1_raw, angles_a1) = sim_a.generate_gcr_and_angles_batch().unwrap();
-    let (gcr_b1_raw, angles_b1) = sim_b.generate_gcr_and_angles_batch().unwrap();
-
-    // Helper to decode GCR into result bits.
-    // (buf_gcr[6] >> 1) & 1 extracts the result bit encoded by Simulator::encode_gcr
     let extract_result = |gcr_item: &[u8; 8]| (gcr_item[6] >> 1) & 1;
 
-    let results_a1: Vec<u8> = gcr_a1_raw.iter().map(|gcr| extract_result(gcr)).collect();
-    let results_b1: Vec<u8> = gcr_b1_raw.iter().map(|gcr| extract_result(gcr)).collect();
+    // Batch 1
+    let batch_a1 = sim_a.generate_batch().unwrap();
+    let batch_b1 = sim_b.generate_batch().unwrap();
+    let gcr_a1_raw = batch_a1.to_gcr_batch(sim_a.use_gcr_padding());
+    let gcr_b1_raw = batch_b1.to_gcr_batch(sim_b.use_gcr_padding());
+    let angles_a1 = batch_a1.to_alice_fifo();
+    let angles_b1 = batch_b1.to_alice_fifo();
 
+    assert_eq!(angles_a1, angles_b1, "Angle data for batch 1 should be identical");
     assert_eq!(
-        angles_a1, angles_b1,
-        "Angle data for batch 1 should be identical"
-    );
-    assert_eq!(
-        results_a1, results_b1,
+        gcr_a1_raw.iter().map(extract_result).collect::<Vec<_>>(),
+        gcr_b1_raw.iter().map(extract_result).collect::<Vec<_>>(),
         "Result bits for batch 1 should be identical"
     );
 
     // Batch 2
-    let (gcr_a2_raw, angles_a2) = sim_a.generate_gcr_and_angles_batch().unwrap();
-    let (gcr_b2_raw, angles_b2) = sim_b.generate_gcr_and_angles_batch().unwrap();
+    let batch_a2 = sim_a.generate_batch().unwrap();
+    let batch_b2 = sim_b.generate_batch().unwrap();
+    let gcr_a2_raw = batch_a2.to_gcr_batch(sim_a.use_gcr_padding());
+    let gcr_b2_raw = batch_b2.to_gcr_batch(sim_b.use_gcr_padding());
+    let angles_a2 = batch_a2.to_alice_fifo();
+    let angles_b2 = batch_b2.to_alice_fifo();
 
-    let results_a2: Vec<u8> = gcr_a2_raw.iter().map(|gcr| extract_result(gcr)).collect();
-    let results_b2: Vec<u8> = gcr_b2_raw.iter().map(|gcr| extract_result(gcr)).collect();
-
+    assert_eq!(angles_a2, angles_b2, "Angle data for batch 2 should be identical");
     assert_eq!(
-        angles_a2, angles_b2,
-        "Angle data for batch 2 should be identical"
-    );
-    assert_eq!(
-        results_a2, results_b2,
+        gcr_a2_raw.iter().map(extract_result).collect::<Vec<_>>(),
+        gcr_b2_raw.iter().map(extract_result).collect::<Vec<_>>(),
         "Result bits for batch 2 should be identical"
     );
 
@@ -144,51 +140,33 @@ fn source_angle_generation_consistency() {
     let common_angles = vec![0, 32, 64, 96];
     let hw_config = HardwareBuilder::new().with_pulse_distance(1e-9).build();
 
-    // Simulator 1: Using generate_gcr_and_angles_batch flow
-    let mut sim_gcr_source = SimulatorBuilder::new()
-        .with_hardware(hw_config.clone())
-        .with_rng(Pcg64Mcg::seed_from_u64(seed))
-        .with_mode(SimulatorMode::Source)
-        .with_eta(1.0) // Eta doesn't affect angle generation itself
-        .with_qb_err(QberConfig::Fixed { value: 0.0 }) // QBER doesn't affect angle choice
-        .with_angles(common_angles.clone())
-        .with_modulator_state(ModulatorState::Random)
-        .with_gcr_padding(false)
-        .build();
+    let make_sim = || {
+        SimulatorBuilder::new()
+            .with_hardware(hw_config.clone())
+            .with_rng(Pcg64Mcg::seed_from_u64(seed))
+            .with_mode(SimulatorMode::Source)
+            .with_eta(1.0)
+            .with_qb_err(QberConfig::Fixed { value: 0.0 })
+            .with_angles(common_angles.clone())
+            .with_modulator_state(ModulatorState::Random)
+            .build()
+    };
 
-    sim_gcr_source.initialize_session().unwrap();
-    let (_gcr_data, angles_from_gcr_flow) = sim_gcr_source.generate_gcr_and_angles_batch().unwrap();
-    sim_gcr_source.setup_session_end().unwrap();
+    let mut sim_a = make_sim();
+    let mut sim_b = make_sim();
+    sim_a.initialize_session().unwrap();
+    sim_b.initialize_session().unwrap();
 
-    // Simulator 2: Using generate_angles_for_gcs flow
-    let mut sim_direct_angles_source = SimulatorBuilder::new()
-        .with_hardware(hw_config.clone())
-        .with_rng(Pcg64Mcg::seed_from_u64(seed)) // Same seed
-        .with_mode(SimulatorMode::Source) // Same mode
-        .with_eta(1.0)
-        .with_qb_err(QberConfig::Fixed { value: 0.0 })
-        .with_angles(common_angles.clone())
-        .with_modulator_state(ModulatorState::Random)
-        .build();
-
-    sim_direct_angles_source.initialize_session().unwrap();
-    // Create a dummy vector of GCs with the expected batch size.
-    // The actual GC values don't influence random angle generation in generate_angles_for_gcs.
-    let dummy_gcs: Vec<u64> = (0..angles_from_gcr_flow.len() as u64).collect();
-    let angles_from_direct_flow = sim_direct_angles_source
-        .generate_angles_for_gcs(dummy_gcs)
-        .unwrap();
-    sim_direct_angles_source.setup_session_end().unwrap();
+    let angles_a = sim_a.generate_batch().unwrap().to_alice_fifo();
+    let angles_b = sim_b.generate_batch().unwrap().to_alice_fifo();
 
     assert_eq!(
-        angles_from_gcr_flow.len(),
-        angles_from_direct_flow.len(),
-        "Angle batches should have the same length"
+        angles_a, angles_b,
+        "Two Source simulators with the same seed must produce identical angles"
     );
-    assert_eq!(
-        angles_from_gcr_flow, angles_from_direct_flow,
-        "Angles generated by both flows for a Source simulator should be identical given the same seed and config"
-    );
+
+    sim_a.setup_session_end().unwrap();
+    sim_b.setup_session_end().unwrap();
 }
 
 #[test]
@@ -241,18 +219,12 @@ fn qkd_statistics_asymmetric_workflow_ok() {
 
     // Generate a larger number of batches for better statistical significance
     for _ in 0..32 {
-        let (gcr_b_batch, angles_b_batch) = sim_b.generate_gcr_and_angles_batch().unwrap();
+        let batch_b = sim_b.generate_batch().unwrap();
+        let gcr_b_batch = batch_b.to_gcr_batch(sim_b.use_gcr_padding());
+        let angles_b_batch = batch_b.to_bob_angle_fifo();
+        let current_results_b: Vec<u8> = gcr_b_batch.iter().map(|gcr| split_gcr(gcr).1).collect();
 
-        let mut gcs_for_alice = Vec::with_capacity(gcr_b_batch.len());
-        let mut current_results_b = Vec::with_capacity(gcr_b_batch.len());
-
-        for gcr in gcr_b_batch.iter() {
-            let (gc, result) = split_gcr(gcr);
-            gcs_for_alice.push(gc);
-            current_results_b.push(result);
-        }
-
-        let angles_a_batch = sim_a.generate_angles_for_gcs(gcs_for_alice).unwrap();
+        let angles_a_batch = sim_a.generate_batch().unwrap().to_alice_fifo();
 
         angles_a_all.extend(angles_a_batch);
         angles_b_all.extend(angles_b_batch);
@@ -373,7 +345,7 @@ fn test_rate_limiting_slow_rate() {
     let start_time = Instant::now();
 
     for _ in 0..num_batches {
-        sim.generate_gcr_and_angles_batch().unwrap();
+        sim.generate_batch().unwrap();
     }
 
     let elapsed_time = start_time.elapsed();
@@ -426,7 +398,7 @@ fn test_rate_limiting_high_speed() {
     let start_time = Instant::now();
 
     for _ in 0..num_batches {
-        sim.generate_gcr_and_angles_batch().unwrap();
+        sim.generate_batch().unwrap();
     }
 
     let elapsed_time = start_time.elapsed();
@@ -469,7 +441,8 @@ fn test_qber_oscillation_distributions() {
 
         let mut batches = Vec::new();
         for _ in 0..15 {
-            let (gcr_raw, _) = sim.generate_gcr_and_angles_batch().unwrap();
+            let batch = sim.generate_batch().unwrap();
+            let gcr_raw = batch.to_gcr_batch(sim.use_gcr_padding());
             let result_bits: Vec<u8> = gcr_raw.iter().map(|gcr| (gcr[6] >> 1) & 1).collect();
             batches.push(result_bits);
         }
@@ -574,14 +547,17 @@ fn test_qkd_attack_signal_flow() {
 
     // 1. Reference Batch (Normal mode)
     sim_handle.start_session().unwrap();
-    let gcr_normal = sim_handle.generate_gcr_and_angles_batch().unwrap();
+    let batch_normal = sim_handle.generate_qkd_batch().unwrap();
+    // The test sim has use_gcr_padding=false; base_gc=0 after start_session.
+    let gcr_normal = batch_normal.to_gcr_batch(sim_handle.use_gcr_padding);
     let results_normal: Vec<u8> = gcr_normal.iter().map(|gcr| (gcr[6] >> 1) & 1).collect();
     sim_handle.stop_session().unwrap();
 
     // 2. Attack Batch (Reset session to get same RNG sequence, then start attack)
     sim_handle.start_session().unwrap();
     sim_handle.start_attack().unwrap(); // Simulate SIGUSR1
-    let gcr_attack = sim_handle.generate_gcr_and_angles_batch().unwrap();
+    let batch_attack = sim_handle.generate_qkd_batch().unwrap();
+    let gcr_attack = batch_attack.to_gcr_batch(sim_handle.use_gcr_padding);
     let results_attack: Vec<u8> = gcr_attack.iter().map(|gcr| (gcr[6] >> 1) & 1).collect();
 
     // Calculate QBER
@@ -605,7 +581,8 @@ fn test_qkd_attack_signal_flow() {
     sim_handle.stop_session().unwrap();
 
     sim_handle.start_session().unwrap();
-    let gcr_restored = sim_handle.generate_gcr_and_angles_batch().unwrap();
+    let batch_restored = sim_handle.generate_qkd_batch().unwrap();
+    let gcr_restored = batch_restored.to_gcr_batch(sim_handle.use_gcr_padding);
     let results_restored: Vec<u8> = gcr_restored.iter().map(|gcr| (gcr[6] >> 1) & 1).collect();
 
     assert_eq!(
