@@ -1,6 +1,9 @@
 use std::sync::mpsc::{self, Sender};
 
-use sim_lib::{errors::SimulationError, simulation::{Simulator, batches::QkdBatch}};
+use sim_lib::{
+    errors::SimulationError,
+    simulation::{batches::QkdBatch, Simulator},
+};
 
 use super::errors::{self, Error};
 
@@ -11,42 +14,51 @@ pub struct Actor {
 
 impl Actor {
     pub fn new(simulator: Simulator, receiver: mpsc::Receiver<ActorMessage>) -> Self {
-        Actor { receiver, simulator }
+        Actor {
+            receiver,
+            simulator,
+        }
     }
 
-    fn handle_message(&mut self, msg: ActorMessage) -> Result<(), SimulationError> {
+    fn handle_message(&mut self, msg: ActorMessage) {
         match msg {
             ActorMessage::StartSession { reply_to } => {
                 tracing::debug!("SimulatorActor: Processing StartSession");
-                let _ = reply_to.send(self.simulator.initialize_session());
-                Ok(())
+                if let Err(e) = reply_to.send(self.simulator.initialize_session()) {
+                    tracing::error!("SimulatorActor: Failed to send StartSession reply: {}", e);
+                }
             }
             ActorMessage::StopSession { reply_to } => {
                 tracing::debug!("SimulatorActor: Processing StopSession");
-                let _ = reply_to.send(self.simulator.setup_session_end());
-                Ok(())
+                if let Err(e) = reply_to.send(self.simulator.setup_session_end()) {
+                    tracing::error!("SimulatorActor: Failed to send StopSession reply: {}", e);
+                }
             }
             ActorMessage::GenerateQkdBatch { reply_to } => {
                 tracing::debug!("SimulatorActor: Processing GenerateQkdBatch");
-                let _ = reply_to.send(self.simulator.generate_batch());
-                Ok(())
+                if let Err(e) = reply_to.send(self.simulator.generate_batch()) {
+                    tracing::error!("SimulatorActor: Failed to send GenerateQkdBatch reply: {}", e);
+                }
             }
             ActorMessage::SetAngles { angles, reply_to } => {
                 tracing::debug!("SimulatorActor: Processing SetAngles");
-                let _ = reply_to.send(self.simulator.set_angles(angles));
-                Ok(())
+                if let Err(e) = reply_to.send(self.simulator.set_angles(angles)) {
+                    tracing::error!("SimulatorActor: Failed to send SetAngles reply: {}", e);
+                }
             }
             ActorMessage::StartAttack { reply_to } => {
                 tracing::debug!("SimulatorActor: Processing StartAttack");
                 self.simulator.start_attack();
-                let _ = reply_to.send(Ok(()));
-                Ok(())
+                if let Err(e) = reply_to.send(Ok(())) {
+                    tracing::error!("SimulatorActor: Failed to send StartAttack reply: {}", e);
+                }
             }
             ActorMessage::StopAttack { reply_to } => {
                 tracing::debug!("SimulatorActor: Processing StopAttack");
                 self.simulator.stop_attack();
-                let _ = reply_to.send(Ok(()));
-                Ok(())
+                if let Err(e) = reply_to.send(Ok(())) {
+                    tracing::error!("SimulatorActor: Failed to send StopAttack reply: {}", e);
+                }
             }
         }
     }
@@ -76,7 +88,7 @@ pub enum ActorMessage {
 
 pub fn run_simulator_actor(mut actor: Actor) {
     while let Ok(msg) = actor.receiver.recv() {
-        actor.handle_message(msg).unwrap();
+        actor.handle_message(msg);
     }
 }
 
@@ -92,7 +104,10 @@ impl ActorHandle {
         let (sender, receiver) = mpsc::channel();
         let actor = Actor::new(simulator, receiver);
         std::thread::spawn(move || run_simulator_actor(actor));
-        Self { sender, use_gcr_padding }
+        Self {
+            sender,
+            use_gcr_padding,
+        }
     }
 
     fn call<T>(&self, msg: ActorMessage, recv: mpsc::Receiver<T>) -> Result<T, Error> {
@@ -122,8 +137,14 @@ impl ActorHandle {
 
     pub fn set_angles(&self, angles: [u8; 4]) -> Result<(), Error> {
         let (send, recv) = mpsc::channel();
-        self.call(ActorMessage::SetAngles { angles, reply_to: send }, recv)?
-            .map_err(|e| Error::Simulation { source: e })
+        self.call(
+            ActorMessage::SetAngles {
+                angles,
+                reply_to: send,
+            },
+            recv,
+        )?
+        .map_err(|e| Error::Simulation { source: e })
     }
 
     pub fn start_attack(&self) -> Result<(), Error> {
