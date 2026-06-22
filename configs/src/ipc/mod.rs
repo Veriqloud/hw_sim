@@ -255,7 +255,7 @@ pub fn ensure_mock_mmio_file_exists(
             .read(true)
             .write(true)
             .create(true)
-            .truncate(false)
+            .truncate(true)
             .open(path)?;
 
         let metadata = file.metadata()?;

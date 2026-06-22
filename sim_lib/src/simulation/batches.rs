@@ -1,28 +1,9 @@
+use bitvec::prelude::*;
 use crossbeam_channel::Sender;
 use serde::{Deserialize, Serialize};
 use std::thread::JoinHandle;
 
-use crate::BATCH;
-
-/// Serde helper: serialize `[bool; BATCH]` as a compact byte array (one byte per bool).
-mod serde_bool_array {
-    use crate::BATCH;
-    use serde::{Deserializer, Serializer};
-
-    pub fn serialize<S: Serializer>(arr: &[bool; BATCH], ser: S) -> Result<S::Ok, S::Error> {
-        let bytes: Vec<u8> = arr.iter().map(|&b| b as u8).collect();
-        serde_bytes::serialize(bytes.as_slice(), ser)
-    }
-
-    pub fn deserialize<'de, D: Deserializer<'de>>(de: D) -> Result<[bool; BATCH], D::Error> {
-        let bytes: serde_bytes::ByteBuf = serde_bytes::deserialize(de)?;
-        let mut arr = [false; BATCH];
-        for (i, &b) in bytes.iter().enumerate().take(BATCH) {
-            arr[i] = b != 0;
-        }
-        Ok(arr)
-    }
-}
+use crate::{BATCH, BATCH_BYTES};
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct QkdBatch {
@@ -33,11 +14,9 @@ pub struct QkdBatch {
     #[serde(with = "serde_bytes")]
     pub bob_state_index: [u8; BATCH],
     /// Measurement result for each event.
-    #[serde(with = "serde_bool_array")]
-    pub results: [bool; BATCH],
+    pub results: BitArray<[u8; BATCH_BYTES], Lsb0>,
     /// true = decoy pulse (mu2), false = signal pulse (mu1). All false in non-decoy mode.
-    #[serde(with = "serde_bool_array")]
-    pub decoy_states: [bool; BATCH],
+    pub decoy_states: BitArray<[u8; BATCH_BYTES], Lsb0>,
 }
 
 impl QkdBatch {
@@ -62,7 +41,6 @@ impl QkdBatch {
             })
             .collect()
     }
-
 }
 
 /// Handle to manage a running QKD session.

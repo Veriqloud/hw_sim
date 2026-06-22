@@ -70,10 +70,10 @@ impl Default for Configuration {
         Self {
             angles: vec![0, 32, 64, 96],
             seed: 42,
-            eta: 0.,
+            eta: 1.,
             qberr: QberConfig::default(),
             pulse_distance: 1e-8,
-            decoy_states: None,
+            decoy_states: Default::default(),
         }
     }
 }

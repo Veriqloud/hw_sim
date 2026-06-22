@@ -11,6 +11,7 @@ pub const BATCH_SIZE: usize = 1024;
 
 // We work on batches of const size that are appended to v. It's faster that way.
 pub const BATCH: usize = 1 << 10;
+pub const BATCH_BYTES: usize = BATCH / 8;
 
 /// A lazily-initialized static lookup table for detection probabilities.
 /// The state is |psi> = cos(alpha)|0> + sin(alpha)|1>, where alpha is derived from the angle index.

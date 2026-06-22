@@ -3,8 +3,10 @@ use rand::{RngExt, SeedableRng};
 use rand_pcg::Pcg64Mcg;
 use std::time::{Duration, Instant};
 
+use bitvec::prelude::*;
+
 use crate::{
-    BATCH, BATCH_SIZE, OVERLAP_PROBABILITIES,
+    BATCH, BATCH_BYTES, BATCH_SIZE, OVERLAP_PROBABILITIES,
     errors::{HardwareError, ProtocolError, SimulationError},
     hardware::{Hardware, modes::SimulatorMode, modulator_state::ModulatorState},
     simulation::batches::QkdBatch,
@@ -138,8 +140,8 @@ impl Simulator {
 
         let mut alice_state_index = [0u8; BATCH];
         let mut bob_state_index = [0u8; BATCH];
-        let mut results = [false; BATCH];
-        let mut decoy_states = [false; BATCH];
+        let mut results = BitArray::<[u8; BATCH_BYTES], Lsb0>::ZERO;
+        let mut decoy_states = BitArray::<[u8; BATCH_BYTES], Lsb0>::ZERO;
 
         for i in 0..BATCH {
             let alice_basis_index = (alice_basis_rand[i] % num_angles) as usize;
@@ -165,11 +167,11 @@ impl Simulator {
 
             alice_state_index[i] = alice_basis_index as u8;
             bob_state_index[i] = bob_basis_index as u8;
-            results[i] = result;
+            results.set(i, result);
 
             if let Some(threshold) = p1_threshold {
                 // false = signal (mu1), true = decoy (mu2).
-                decoy_states[i] = decoy_rand[i] >= threshold;
+                decoy_states.set(i, decoy_rand[i] >= threshold);
             }
             // In non-decoy mode decoy_states[i] stays false.
         }
@@ -268,15 +270,15 @@ impl Simulator {
             BATCH_SIZE
         };
         let mut gcr_batch = Vec::with_capacity(capacity);
-        for (i, &result) in batch.results.iter().enumerate() {
+        for (i, result) in batch.results.iter().enumerate() {
             let gc_value = base_gc_for_batch + i as u64;
             tracing::debug!(
                 "Simulator: Encoding GC={}, ResultBit={} for GCR item #{}",
                 gc_value,
-                result as u8,
+                *result as u8,
                 i
             );
-            let gcr_item = self.encode_gcr(gc_value, result as u8);
+            let gcr_item = self.encode_gcr(gc_value, *result as u8);
 
             gcr_batch.push(gcr_item);
             if self.use_gcr_padding {
