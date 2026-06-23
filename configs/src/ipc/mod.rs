@@ -192,7 +192,7 @@ pub fn ensure_hw_params_file_exists(path_str: &str) -> Result<(), std::io::Error
     }
 
     tracing::info!("Creating hw params file at: {} with mode 0666", path_str);
-    let mut file = std::fs::File::create(&path)?;
+    let mut file = std::fs::File::create(path)?;
     file.write_all(
         b"\
         fiber_delay\t100\ndecoy_fiber_delay\t100",
@@ -255,6 +255,7 @@ pub fn ensure_mock_mmio_file_exists(
             .read(true)
             .write(true)
             .create(true)
+            .truncate(true)
             .open(path)?;
 
         let metadata = file.metadata()?;

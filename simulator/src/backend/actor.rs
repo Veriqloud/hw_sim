@@ -1,6 +1,9 @@
 use std::sync::mpsc::{self, Sender};
 
-use sim_lib::{errors::SimulationError, simulation::Simulator};
+use sim_lib::{
+    errors::SimulationError,
+    simulation::{batches::QkdBatch, Simulator},
+};
 
 use super::errors::{self, Error};
 
@@ -17,67 +20,50 @@ impl Actor {
         }
     }
 
-    fn handle_message(&mut self, msg: ActorMessage) -> Result<(), SimulationError> {
+    fn handle_message(&mut self, msg: ActorMessage) {
         match msg {
             ActorMessage::StartSession { reply_to } => {
                 tracing::debug!("SimulatorActor: Processing StartSession");
-                let result = self.simulator.initialize_session();
-                let _ = reply_to.send(result);
-                Ok(())
+                if let Err(e) = reply_to.send(self.simulator.initialize_session()) {
+                    tracing::error!("SimulatorActor: Failed to send StartSession reply: {}", e);
+                }
             }
             ActorMessage::StopSession { reply_to } => {
                 tracing::debug!("SimulatorActor: Processing StopSession");
-                let result = self.simulator.setup_session_end();
-                let _ = reply_to.send(result);
-                Ok(())
+                if let Err(e) = reply_to.send(self.simulator.setup_session_end()) {
+                    tracing::error!("SimulatorActor: Failed to send StopSession reply: {}", e);
+                }
             }
-            ActorMessage::GenerateGcrAndAnglesBatch { reply_to } => {
-                tracing::debug!("SimulatorActor: Processing GenerateGcrAndAnglesBatch");
-                let result = self.simulator.generate_gcr_and_angles_batch();
-                let _ = reply_to.send(result);
-                Ok(())
-            }
-            ActorMessage::RetrievePendingAnglesBatch {
-                received_gcs,
-                reply_to,
-            } => {
-                tracing::debug!("SimulatorActor: Processing RetrievePendingAnglesBatch");
-                let result = self.simulator.retrieve_pending_angles_batch(received_gcs);
-                let _ = reply_to.send(result);
-                Ok(())
+            ActorMessage::GenerateQkdBatch { reply_to } => {
+                tracing::debug!("SimulatorActor: Processing GenerateQkdBatch");
+                if let Err(e) = reply_to.send(self.simulator.generate_batch()) {
+                    tracing::error!("SimulatorActor: Failed to send GenerateQkdBatch reply: {}", e);
+                }
             }
             ActorMessage::SetAngles { angles, reply_to } => {
                 tracing::debug!("SimulatorActor: Processing SetAngles");
-                let result = self.simulator.set_angles(angles);
-                let _ = reply_to.send(result);
-                Ok(())
-            }
-            ActorMessage::GenerateAnglesForGcs {
-                received_gcs,
-                reply_to,
-            } => {
-                tracing::debug!("SimulatorActor: Processing GenerateAnglesForGcs");
-                let result = self.simulator.generate_angles_for_gcs(received_gcs);
-                let _ = reply_to.send(result);
-                Ok(())
+                if let Err(e) = reply_to.send(self.simulator.set_angles(angles)) {
+                    tracing::error!("SimulatorActor: Failed to send SetAngles reply: {}", e);
+                }
             }
             ActorMessage::StartAttack { reply_to } => {
                 tracing::debug!("SimulatorActor: Processing StartAttack");
                 self.simulator.start_attack();
-                let _ = reply_to.send(Ok(()));
-                Ok(())
+                if let Err(e) = reply_to.send(Ok(())) {
+                    tracing::error!("SimulatorActor: Failed to send StartAttack reply: {}", e);
+                }
             }
             ActorMessage::StopAttack { reply_to } => {
                 tracing::debug!("SimulatorActor: Processing StopAttack");
                 self.simulator.stop_attack();
-                let _ = reply_to.send(Ok(()));
-                Ok(())
+                if let Err(e) = reply_to.send(Ok(())) {
+                    tracing::error!("SimulatorActor: Failed to send StopAttack reply: {}", e);
+                }
             }
         }
     }
 }
 
-// #[derive(Debug)]
 pub enum ActorMessage {
     StartSession {
         reply_to: Sender<Result<(), SimulationError>>,
@@ -85,21 +71,12 @@ pub enum ActorMessage {
     StopSession {
         reply_to: Sender<Result<(), SimulationError>>,
     },
-    GenerateGcrAndAnglesBatch {
-        reply_to: Sender<Result<Vec<[u8; 8]>, SimulationError>>, // Returns GCR data
-    },
-    RetrievePendingAnglesBatch {
-        received_gcs: Vec<u64>,
-        reply_to: Sender<Result<Vec<u8>, SimulationError>>, // Returns Angles data
+    GenerateQkdBatch {
+        reply_to: Sender<Result<QkdBatch, SimulationError>>,
     },
     SetAngles {
-        // For configuring bases
         angles: [u8; 4],
         reply_to: Sender<Result<(), SimulationError>>,
-    },
-    GenerateAnglesForGcs {
-        received_gcs: Vec<u64>,
-        reply_to: Sender<Result<Vec<u8>, SimulationError>>, // Returns Angles data
     },
     StartAttack {
         reply_to: Sender<Result<(), SimulationError>>,
@@ -107,189 +84,78 @@ pub enum ActorMessage {
     StopAttack {
         reply_to: Sender<Result<(), SimulationError>>,
     },
-    // SetRole was removed
-    // Old messages like ReadAngles, GetGlobalCounter, SeedAndStartGeneration, Start, Stop might be obsolete
-    // depending on whether the VqSim trait still needs them directly or if all interaction is through new messages.
-    // For now, keeping them if they are still part of VqSim trait used by other parts,
-    // but the primary flow uses the new messages.
-    // Based on the VqSim changes, the old messages are indeed obsolete for the new flow.
 }
 
 pub fn run_simulator_actor(mut actor: Actor) {
     while let Ok(msg) = actor.receiver.recv() {
-        actor.handle_message(msg).unwrap();
+        actor.handle_message(msg);
     }
 }
 
 #[derive(Clone)]
 pub struct ActorHandle {
     sender: mpsc::Sender<ActorMessage>,
+    pub use_gcr_padding: bool,
 }
 
 impl ActorHandle {
     pub fn new(simulator: Simulator) -> Self {
+        let use_gcr_padding = simulator.use_gcr_padding();
         let (sender, receiver) = mpsc::channel();
         let actor = Actor::new(simulator, receiver);
         std::thread::spawn(move || run_simulator_actor(actor));
+        Self {
+            sender,
+            use_gcr_padding,
+        }
+    }
 
-        Self { sender }
+    fn call<T>(&self, msg: ActorMessage, recv: mpsc::Receiver<T>) -> Result<T, Error> {
+        self.sender
+            .send(msg)
+            .map_err(|e| errors::Error::ActorSend { e: e.to_string() })?;
+        recv.recv().map_err(|e| Error::ActorDied { source: e })
     }
 
     pub fn start_session(&self) -> Result<(), Error> {
         let (send, recv) = mpsc::channel();
-        let message = ActorMessage::StartSession { reply_to: send };
-        self.sender
-            .send(message)
-            .map_err(|e| errors::Error::ActorSend { e: e.to_string() })?;
-
-        match recv.recv() {
-            Ok(v) => match v {
-                Ok(_) => {
-                    // Nothing to do
-                    Ok(())
-                }
-                Err(e) => Err(Error::Simulation { source: e }),
-            },
-            Err(e) => {
-                return Err(Error::ActorDied { source: e });
-            }
-        }
+        self.call(ActorMessage::StartSession { reply_to: send }, recv)?
+            .map_err(|e| Error::Simulation { source: e })
     }
 
     pub fn stop_session(&self) -> Result<(), Error> {
         let (send, recv) = mpsc::channel();
-        let message = ActorMessage::StopSession { reply_to: send };
-        self.sender
-            .send(message)
-            .map_err(|e| errors::Error::ActorSend { e: e.to_string() })?;
-        match recv.recv() {
-            Ok(v) => match v {
-                Ok(_) => {
-                    // Nothing to do
-                    Ok(())
-                }
-                Err(e) => Err(Error::Simulation { source: e }),
-            },
-            Err(e) => {
-                return Err(Error::ActorDied { source: e });
-            }
-        }
+        self.call(ActorMessage::StopSession { reply_to: send }, recv)?
+            .map_err(|e| Error::Simulation { source: e })
     }
 
-    pub fn generate_gcr_and_angles_batch(&self) -> Result<Vec<[u8; 8]>, Error> {
+    pub fn generate_qkd_batch(&self) -> Result<QkdBatch, Error> {
         let (send, recv) = mpsc::channel();
-        let message = ActorMessage::GenerateGcrAndAnglesBatch { reply_to: send };
-        self.sender
-            .send(message)
-            .map_err(|e| errors::Error::ActorSend { e: e.to_string() })?;
-        match recv.recv() {
-            Ok(v) => match v {
-                Ok(b) => {
-                    // Nothing to do
-                    Ok(b)
-                }
-                Err(e) => Err(Error::Simulation { source: e }),
-            },
-            Err(e) => {
-                return Err(Error::ActorDied { source: e });
-            }
-        }
-    }
-
-    pub fn retrieve_pending_angles_batch(&self, received_gcs: Vec<u64>) -> Result<Vec<u8>, Error> {
-        let (send, recv) = mpsc::channel();
-        let message = ActorMessage::RetrievePendingAnglesBatch {
-            received_gcs,
-            reply_to: send,
-        };
-        self.sender
-            .send(message)
-            .map_err(|e| errors::Error::ActorSend { e: e.to_string() })?;
-        match recv.recv() {
-            Ok(v) => match v {
-                Ok(b) => {
-                    // Nothing to do
-                    Ok(b)
-                }
-                Err(e) => Err(Error::Simulation { source: e }),
-            },
-            Err(e) => {
-                return Err(Error::ActorDied { source: e });
-            }
-        }
+        self.call(ActorMessage::GenerateQkdBatch { reply_to: send }, recv)?
+            .map_err(|e| Error::Simulation { source: e })
     }
 
     pub fn set_angles(&self, angles: [u8; 4]) -> Result<(), Error> {
         let (send, recv) = mpsc::channel();
-        let message = ActorMessage::SetAngles {
-            angles,
-            reply_to: send,
-        };
-        let _ = self.sender.send(message);
-        match recv.recv() {
-            Ok(v) => match v {
-                Ok(_) => {
-                    // Nothing to do
-                    Ok(())
-                }
-                Err(e) => Err(Error::Simulation { source: e }),
+        self.call(
+            ActorMessage::SetAngles {
+                angles,
+                reply_to: send,
             },
-            Err(e) => {
-                return Err(Error::ActorDied { source: e });
-            }
-        }
-    }
-
-    pub fn generate_angles_for_gcs(&self, received_gcs: Vec<u64>) -> Result<Vec<u8>, Error> {
-        let (send, recv) = mpsc::channel();
-        let message = ActorMessage::GenerateAnglesForGcs {
-            received_gcs,
-            reply_to: send,
-        };
-        self.sender
-            .send(message)
-            .map_err(|e| errors::Error::ActorSend { e: e.to_string() })?;
-        match recv.recv() {
-            Ok(v) => match v {
-                Ok(b) => {
-                    // Nothing to do
-                    Ok(b)
-                }
-                Err(e) => Err(Error::Simulation { source: e }),
-            },
-            Err(e) => {
-                return Err(Error::ActorDied { source: e });
-            }
-        }
+            recv,
+        )?
+        .map_err(|e| Error::Simulation { source: e })
     }
 
     pub fn start_attack(&self) -> Result<(), Error> {
         let (send, recv) = mpsc::channel();
-        let message = ActorMessage::StartAttack { reply_to: send };
-        self.sender
-            .send(message)
-            .map_err(|e| errors::Error::ActorSend { e: e.to_string() })?;
-        match recv.recv() {
-            Ok(v) => match v {
-                Ok(_) => Ok(()),
-                Err(e) => Err(Error::Simulation { source: e }),
-            },
-            Err(e) => Err(Error::ActorDied { source: e }),
-        }
+        self.call(ActorMessage::StartAttack { reply_to: send }, recv)?
+            .map_err(|e| Error::Simulation { source: e })
     }
 
     pub fn stop_attack(&self) -> Result<(), Error> {
         let (send, recv) = mpsc::channel();
-        let message = ActorMessage::StopAttack { reply_to: send };
-        self.sender
-            .send(message)
-            .map_err(|e| errors::Error::ActorSend { e: e.to_string() })?;
-        match recv.recv() {
-            Ok(v) => match v {
-                Ok(_) => Ok(()),
-                Err(e) => Err(Error::Simulation { source: e }),
-            },
-            Err(e) => Err(Error::ActorDied { source: e }),
-        }
+        self.call(ActorMessage::StopAttack { reply_to: send }, recv)?
+            .map_err(|e| Error::Simulation { source: e })
     }
 }

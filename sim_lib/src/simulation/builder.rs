@@ -2,7 +2,7 @@ use rand::SeedableRng;
 use rand_pcg::Pcg64Mcg;
 use std::time::Instant;
 
-use configs::backend::{Configuration, QberConfig};
+use configs::backend::{Configuration, DecoyStatesConfig, QberConfig};
 
 use crate::{
     hardware::{
@@ -13,7 +13,6 @@ use crate::{
 
 pub struct SimulatorBuilder {
     pub eta: f64,
-    pub global_counter: u64,
     pub hw: Hardware,
     pub modulator_state: ModulatorState,
     pub angles: Vec<u8>,
@@ -24,6 +23,7 @@ pub struct SimulatorBuilder {
     pub mode: SimulatorMode,
     pub use_gcr_padding: bool,
     pub use_rate_limiter: bool,
+    pub decoy_states: Option<DecoyStatesConfig>,
 }
 
 impl SimulatorBuilder {
@@ -43,6 +43,7 @@ impl SimulatorBuilder {
             .with_rng(Pcg64Mcg::seed_from_u64(conf.seed))
             .with_seed(conf.seed)
             .with_mode(mode)
+            .with_decoy_states(conf.decoy_states.clone())
             .build()
     }
 
@@ -56,15 +57,14 @@ impl SimulatorBuilder {
             seed: self.seed,
             qb_err: self.qb_err.to_owned(),
             now: self.now,
-            global_counter: self.global_counter,
             modulator_state: self.modulator_state.to_owned(),
             angles: self.angles.to_owned(),
-            pending_angles_batch: None,
             time_of_start: None,
             use_gcr_padding: self.use_gcr_padding,
             rate_limiting_enabled: self.use_rate_limiter,
             last_event_count: 0,
             is_under_attack: false,
+            decoy_states: self.decoy_states.clone(),
         }
     }
 
@@ -108,11 +108,6 @@ impl SimulatorBuilder {
         self
     }
 
-    pub fn with_global_counter(&mut self, global_counter: u64) -> &mut Self {
-        self.global_counter = global_counter;
-        self
-    }
-
     pub fn with_modulator_state(&mut self, state: ModulatorState) -> &mut Self {
         self.modulator_state = state;
         self
@@ -127,13 +122,17 @@ impl SimulatorBuilder {
         self.use_rate_limiter = use_limiter;
         self
     }
+
+    pub fn with_decoy_states(&mut self, config: Option<DecoyStatesConfig>) -> &mut Self {
+        self.decoy_states = config;
+        self
+    }
 }
 
 impl Default for SimulatorBuilder {
     fn default() -> Self {
         SimulatorBuilder {
             eta: Default::default(),
-            global_counter: Default::default(),
             hw: Default::default(),
             modulator_state: Default::default(),
             angles: Default::default(),
@@ -141,9 +140,10 @@ impl Default for SimulatorBuilder {
             qb_err: Default::default(),
             rng: Pcg64Mcg::seed_from_u64(42),
             seed: 42,
-            mode: SimulatorMode::default(), // Add mode default
+            mode: Default::default(),
             use_gcr_padding: true,
             use_rate_limiter: true,
+            decoy_states: None,
         }
     }
 }
@@ -172,12 +172,11 @@ pub mod tests {
             .build();
         let sim = SimulatorBuilder::new()
             .with_hardware(hw.clone())
-            .with_mode(SimulatorMode::Detector) // Add with_mode for testing
+            .with_mode(SimulatorMode::Detector)
             .with_rng(Pcg64Mcg::seed_from_u64(5))
             .with_eta(13.)
             .with_qb_err(QberConfig::Fixed { value: 42. })
             .with_now(now)
-            .with_global_counter(99)
             .with_modulator_state(ModulatorState::Random)
             .with_seed(5)
             .with_angles(vec![0, 32, 34, 96])
@@ -188,22 +187,21 @@ pub mod tests {
         assert_eq!(
             Simulator {
                 hw,
-                simulator_mode: SimulatorMode::Detector, // Add mode to assertion
+                simulator_mode: SimulatorMode::Detector,
                 rng: Pcg64Mcg::seed_from_u64(5),
                 qber_oscillation_rng: Pcg64Mcg::seed_from_u64(5),
                 eta: 13.,
                 qb_err: QberConfig::Fixed { value: 42. },
                 now,
                 seed: 5,
-                global_counter: 99,
                 modulator_state: ModulatorState::Random,
                 angles: vec![0, 32, 34, 96],
-                pending_angles_batch: None,
                 time_of_start: None,
                 use_gcr_padding: false,
                 rate_limiting_enabled: false,
                 last_event_count: 0,
                 is_under_attack: false,
+                decoy_states: None,
             },
             sim
         )

@@ -43,6 +43,16 @@ where
 }
 
 #[derive(Debug, Deserialize, Serialize, PartialEq, Clone, JsonSchema)]
+pub struct DecoyStatesConfig {
+    /// Mean photon number for signal pulses.
+    pub mu1: f64,
+    /// Mean photon number for decoy pulses.
+    pub mu2: f64,
+    /// Probability of selecting signal intensity mu1 (vs decoy mu2).
+    pub p1: f64,
+}
+
+#[derive(Debug, Deserialize, Serialize, PartialEq, Clone, JsonSchema)]
 pub struct Configuration {
     pub angles: Vec<u8>,
     pub seed: u64,
@@ -50,6 +60,9 @@ pub struct Configuration {
     #[serde(deserialize_with = "deserialize_qber")]
     pub qberr: QberConfig,
     pub pulse_distance: f64,
+    /// Decoy-state parameters. Absent means decoy mode is disabled.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub decoy_states: Option<DecoyStatesConfig>,
 }
 
 impl Default for Configuration {
@@ -57,9 +70,10 @@ impl Default for Configuration {
         Self {
             angles: vec![0, 32, 64, 96],
             seed: 42,
-            eta: 0.,
+            eta: 1.,
             qberr: QberConfig::default(),
             pulse_distance: 1e-8,
+            decoy_states: Default::default(),
         }
     }
 }

@@ -12,8 +12,8 @@ pub struct IPCWriterActor {
 
 impl IPCWriterActor {
     pub fn new(
-        gcr_file: File,    // For GCR data (GC + result bit)
-        angles_file: File, // For angles data
+        gcr_file: File,
+        angles_file: File,
         receiver: mpsc::Receiver<WriterMessage>,
     ) -> Self {
         IPCWriterActor {
@@ -48,49 +48,19 @@ impl IPCWriterActor {
             }
             WriterMessage::WriteAnglesBatch(angles_batch) => {
                 tracing::info!(
-                    "WriterActor: Received WriteAnglesBatch ({} raw bytes), packing them.",
+                    "WriterActor: Received WriteAnglesBatch ({} pre-packed bytes).",
                     angles_batch.len()
                 );
-
-                // Pack angle indices. The raw data from the simulator has the 2-bit index
-                // in bits 1 and 2 of each byte. We take two such bytes and pack their
-                // indices into a single byte.
-                // The format is 0b00xx00yy, where yy is the index from the first byte
-                // and xx is the index from the second byte.
-                let packed_angles: Vec<u8> = angles_batch
-                    .chunks_exact(2)
-                    .map(|chunk| {
-                        let index1 = chunk[0] & 0b0000_0011;
-                        let index2 = chunk[1] & 0b0000_0011;
-                        // Combine into a single byte: 0b00xx00yy
-                        // index1 goes into the lower bits (yy)
-                        // index2 goes into bits 4 and 5 (xx)
-                        index1 | (index2 << 4)
-                    })
-                    .collect();
-
-                if angles_batch.len() % 2 != 0 {
-                    tracing::warn!(
-                        "WriterActor: Odd number of angle bytes received ({}). The last byte will be ignored.",
-                        angles_batch.len()
-                    );
-                }
-
-                tracing::info!(
-                    "WriterActor: Writing {} packed angle bytes.",
-                    packed_angles.len()
-                );
-                self.angles_file.write_all(&packed_angles).map_err(|e| {
-                    tracing::error!("Failed to write packed angles batch: {:?}", e);
+                self.angles_file.write_all(&angles_batch).map_err(|e| {
+                    tracing::error!("Failed to write angles batch: {:?}", e);
                     Error::Channel {
-                        e: format!("Failed to write packed angles batch to FIFO: {}", e),
+                        e: format!("Failed to write angles batch to FIFO: {}", e),
                     }
                 })?;
-                // write_all may buffer, so we flush to ensure it's sent immediately over the pipe.
                 self.angles_file.flush().map_err(|e| Error::Channel {
-                    e: format!("Failed to flush packed angles FIFO: {}", e),
+                    e: format!("Failed to flush angles FIFO: {}", e),
                 })?;
-                tracing::info!("WriterActor: Successfully wrote packed angles batch.");
+                tracing::info!("WriterActor: Successfully wrote angles batch.");
                 Ok(())
             }
             WriterMessage::Stop => {

@@ -9,22 +9,13 @@ use std::str::FromStr;
 
 use self::errors::Error;
 
-#[derive(Debug, Deserialize, Serialize, PartialEq, Clone, JsonSchema)]
+#[derive(Debug, Default, Deserialize, Serialize, PartialEq, Clone, JsonSchema)]
 pub struct Configuration {
     pub backend_config: backend::Configuration,
     pub ipc_config: ipc::Configuration,
     pub log_level: LogLevel,
 }
 
-impl Default for Configuration {
-    fn default() -> Self {
-        Self {
-            backend_config: Default::default(),
-            ipc_config: Default::default(),
-            log_level: Default::default(),
-        }
-    }
-}
 
 impl Configuration {
     pub fn new(path: String) -> Result<Self, Error> {

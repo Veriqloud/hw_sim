@@ -67,7 +67,7 @@ fn trigger_mmio_command(
     value_addr_bytes: usize,
     value: u32,
 ) -> io::Result<()> {
-    if value_addr_bytes % 4 != 0 {
+    if !value_addr_bytes.is_multiple_of(4) {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
             "MMIO address must be u32-aligned",
@@ -83,7 +83,8 @@ fn trigger_mmio_command(
     let file = OpenOptions::new()
         .read(true)
         .write(true)
-        .create(true) // Ensure file exists
+        .truncate(true)
+        .create(true)
         .open(device_path)?;
     // Ensure the file is large enough for the MMIO region
     let required_len =

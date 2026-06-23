@@ -2,6 +2,7 @@
 mod tests {
     use rand::SeedableRng;
     use rand_pcg::Pcg64Mcg;
+    use sim_lib::BATCH;
     use sim_lib::hardware::modes::SimulatorMode;
     use sim_lib::hardware::modulator_state::ModulatorState;
     use sim_lib::simulation::builder::SimulatorBuilder;
@@ -20,7 +21,7 @@ mod tests {
             // 1. SETUP
             let seed = 42;
             let test_angles = vec![0u8, 32u8, 64u8, 96u8];
-            let num_events = 100_000;
+            let num_events: usize = 100_000;
 
             let mut sim_a = SimulatorBuilder::new()
                 .with_rng(Pcg64Mcg::seed_from_u64(seed))
@@ -38,32 +39,31 @@ mod tests {
                 .with_modulator_state(ModulatorState::Random)
                 .build();
 
-            // 2. EXECUTION
-            let output_a = sim_a.generate_encoded_party_data(num_events).unwrap();
-            let output_b = sim_b.generate_encoded_party_data(num_events).unwrap();
-
-            // 3. DATA GATHERING
+            // 2. EXECUTION & DATA GATHERING
             let mut correlation_stats: HashMap<(u8, u8), (u32, u32)> = HashMap::new();
-            for i in 0..num_events {
-                let result = output_a[i] & 1;
-                assert_eq!(result, output_b[i] & 1, "Results must be identical");
+            for batch_idx in 0..num_events.div_ceil(BATCH) {
+                let batch_a = sim_a.generate_correlation_batch().unwrap();
+                let batch_b = sim_b.generate_correlation_batch().unwrap();
+                let events_in_batch = BATCH.min(num_events - batch_idx * BATCH);
 
-                let angle_idx_a = (output_a[i] >> 1) as usize;
-                let angle_idx_b = (output_b[i] >> 1) as usize;
-                let angle_a = test_angles[angle_idx_a];
-                let angle_b = test_angles[angle_idx_b];
+                for i in 0..events_in_batch {
+                    let result = batch_a.results[i];
+                    assert_eq!(result, batch_b.results[i], "Results must be identical");
 
-                let stats = correlation_stats
-                    .entry((angle_a, angle_b))
-                    .or_insert((0, 0));
-                if result == 0 {
-                    stats.0 += 1;
-                } else {
-                    stats.1 += 1;
+                    let angle_a = test_angles[batch_a.alice_state_index[i] as usize];
+                    let angle_b = test_angles[batch_b.bob_state_index[i] as usize];
+
+                    let stats = correlation_stats.entry((angle_a, angle_b)).or_insert((0, 0));
+                    if !result {
+                        stats.0 += 1;
+                    } else {
+                        stats.1 += 1;
+                    }
                 }
+
             }
 
-            // 4. VERIFICATION
+            // 3. VERIFICATION
             println!("  - Verifying error rate for all angle combinations:");
             let mut sorted_keys: Vec<_> = correlation_stats.keys().collect();
             sorted_keys.sort();
