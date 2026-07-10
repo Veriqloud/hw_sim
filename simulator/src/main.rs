@@ -2,6 +2,8 @@ pub mod backend;
 pub mod cli_args;
 pub mod errors;
 pub mod ipc;
+pub mod runtime_control;
+pub mod runtime_status;
 
 use clap::Parser;
 use configs::{
@@ -10,6 +12,8 @@ use configs::{
 };
 use ipc::writer::actor::IPCWriterActorHandle;
 use nix::sys::signal::{SigSet, Signal};
+use runtime_control::{start_runtime_control_server, RuntimeControl};
+use runtime_status::RuntimeStatusFiles;
 use sim_lib::{hardware::modes::SimulatorMode, simulation::builder::SimulatorBuilder};
 use snafu::ResultExt;
 use std::{
@@ -93,6 +97,12 @@ fn app_main() -> Result<(), crate::errors::Error> {
         .setup_ipc_fifos()
         .context(errors::IpcConfigSnafu)?;
 
+    let runtime_status = RuntimeStatusFiles::new(
+        CONFIG.get().unwrap().ipc_config.qkd_ready_path(),
+        CONFIG.get().unwrap().ipc_config.node_idle_path(),
+    );
+    runtime_status.initialize().context(errors::IOSnafu)?;
+
     tracing::info!(
         "Simulator with configuration : {:?}",
         CONFIG.get().unwrap().backend_config
@@ -109,6 +119,11 @@ fn app_main() -> Result<(), crate::errors::Error> {
 
     let sim = SimulatorBuilder::from_config(&CONFIG.get().unwrap().backend_config, simulator_mode);
     let simu_handle = backend::actor::ActorHandle::new(sim);
+    let runtime_control = start_runtime_control_server(
+        CONFIG.get().unwrap().ipc_config.control_socket_path(),
+        simu_handle.clone(),
+    )
+    .context(errors::IOSnafu)?;
 
     // Spawn the signal handling thread.
     let signal_handle = simu_handle.clone();
@@ -147,7 +162,13 @@ fn app_main() -> Result<(), crate::errors::Error> {
             } else {
                 tracing::info!("Initial PPS for Alice triggered successfully.");
             }
-            run_alice_workflow(alice_config, simu_handle, simulator_mode);
+            run_alice_workflow(
+                alice_config,
+                simu_handle,
+                simulator_mode,
+                runtime_control,
+                runtime_status,
+            );
             tracing::error!("Alice's workflow function returned unexpectedly.");
         }
         configs::ipc::Configuration::Bob(bob_config) => {
@@ -160,7 +181,13 @@ fn app_main() -> Result<(), crate::errors::Error> {
             } else {
                 tracing::info!("Initial PPS for Bob triggered successfully.");
             }
-            run_bob_workflow(bob_config, simu_handle, simulator_mode);
+            run_bob_workflow(
+                bob_config,
+                simu_handle,
+                simulator_mode,
+                runtime_control,
+                runtime_status,
+            );
             tracing::error!("Bob's workflow function returned unexpectedly.");
         }
     }
@@ -196,6 +223,8 @@ fn run_alice_workflow(
     config: &AliceIpcConfig,
     simu_handle: backend::actor::ActorHandle,
     simulator_mode: SimulatorMode,
+    runtime_control: RuntimeControl,
+    runtime_status: RuntimeStatusFiles,
 ) {
     loop {
         tracing::info!("Alice (Source) workflow: Waiting for a controller...");
@@ -274,14 +303,22 @@ fn run_alice_workflow(
             simu_handle.clone(),
             writer_handle.clone(),
             simulator_mode,
+            runtime_control.clone(),
         );
 
         tracing::info!("Starting IPC command processing loop for Alice.");
         if let Err(e) = ipc_reader.start() {
-            tracing::warn!(
-                "IPC processing for Alice ended with an error: {:?}. Preparing for new connection.",
-                e
-            );
+            match e {
+                ipc::reader::errors::Error::PauseRequested { duration } => {
+                    handle_runtime_pause(&runtime_status, &runtime_control, duration);
+                }
+                e => {
+                    tracing::warn!(
+                        "IPC processing for Alice ended with an error: {:?}. Preparing for new connection.",
+                        e
+                    );
+                }
+            }
         } else {
             tracing::info!("IPCReader for Alice exited cleanly. Preparing for new connection.");
         }
@@ -294,6 +331,8 @@ fn run_bob_workflow(
     config: &BobIpcConfig,
     simu_handle: backend::actor::ActorHandle,
     simulator_mode: SimulatorMode,
+    runtime_control: RuntimeControl,
+    runtime_status: RuntimeStatusFiles,
 ) {
     loop {
         tracing::info!("Bob (Detector) workflow: Waiting for a controller...");
@@ -382,17 +421,67 @@ fn run_bob_workflow(
             simu_handle.clone(),
             writer_handle.clone(),
             simulator_mode,
+            runtime_control.clone(),
         );
 
         tracing::info!("Starting IPC command processing loop for Bob.");
         if let Err(e) = ipc_reader.start() {
-            tracing::error!(
-                "IPC processing for Bob ended with an error: {:?}. Preparing for new connection.",
-                e
-            );
+            match e {
+                ipc::reader::errors::Error::PauseRequested { duration } => {
+                    handle_runtime_pause(&runtime_status, &runtime_control, duration);
+                }
+                e => {
+                    tracing::error!(
+                        "IPC processing for Bob ended with an error: {:?}. Preparing for new connection.",
+                        e
+                    );
+                }
+            }
         } else {
             tracing::info!("IPCReader for Bob exited cleanly. Preparing for new connection.");
         }
         sleep(Duration::from_millis(250));
     }
+}
+
+fn handle_runtime_pause(
+    runtime_status: &RuntimeStatusFiles,
+    runtime_control: &RuntimeControl,
+    duration: Duration,
+) {
+    tracing::info!("Starting runtime recalibration pause for {:?}.", duration);
+
+    if let Err(e) = runtime_status.begin_recalibration() {
+        tracing::error!("Failed to begin runtime recalibration: {}", e);
+        runtime_control.complete_pause();
+        return;
+    }
+
+    tracing::info!("Waiting for node idle file before recalibration pause.");
+    if let Err(e) = runtime_status.wait_for_node_idle() {
+        tracing::error!("Failed while waiting for node idle file: {}", e);
+        runtime_control.complete_pause();
+        return;
+    }
+
+    tracing::info!("Node idle detected. Sleeping for requested pause duration.");
+    sleep(duration);
+
+    if let Err(e) = CONFIG.get().unwrap().ipc_config.reset_ipc_fifos() {
+        tracing::error!("Failed to reset IPC FIFOs after runtime pause: {}", e);
+        runtime_control.complete_pause();
+        return;
+    }
+
+    if let Err(e) = runtime_status.create_qkd_ready() {
+        tracing::error!(
+            "Failed to recreate qkd ready file after runtime pause: {}",
+            e
+        );
+        runtime_control.complete_pause();
+        return;
+    }
+
+    tracing::info!("Runtime recalibration pause completed.");
+    runtime_control.complete_pause();
 }

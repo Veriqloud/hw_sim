@@ -9,7 +9,11 @@ use std::fs::OpenOptions as StdOpenOptions;
 use std::time::Duration;
 use std::{fs::File, io::Read};
 
-use crate::{backend::actor::ActorHandle as SimulatorHandle, ipc::Command};
+use crate::{
+    backend::actor::ActorHandle as SimulatorHandle,
+    ipc::Command,
+    runtime_control::{RuntimeCommand, RuntimeControl},
+};
 
 use super::writer::actor::IPCWriterActorHandle;
 
@@ -33,6 +37,7 @@ pub struct IPCReader {
     batch_queue: VecDeque<QkdBatch>,
     /// Whether to interleave 8-byte zero pads between GCR records (hardware protocol).
     use_gcr_padding: bool,
+    runtime_control: RuntimeControl,
 }
 
 /// Synchronously reads a u32 value from a memory-mapped device.
@@ -142,6 +147,7 @@ impl IPCReader {
         simulator_handle: SimulatorHandle,
         writer_handle: IPCWriterActorHandle,
         simulator_mode: SimulatorMode,
+        runtime_control: RuntimeControl,
     ) -> Self {
         let use_gcr_padding = simulator_handle.use_gcr_padding;
         IPCReader {
@@ -154,6 +160,28 @@ impl IPCReader {
             simulator_mode,
             batch_queue: VecDeque::new(),
             use_gcr_padding,
+            runtime_control,
+        }
+    }
+
+    fn check_runtime_pause(&mut self) -> Result<(), errors::Error> {
+        match self.runtime_control.try_recv() {
+            Some(RuntimeCommand::Pause { duration }) => {
+                tracing::info!("IPCReader: Runtime pause requested for {:?}.", duration);
+                self.batch_queue.clear();
+                self.simulator_handle
+                    .stop_session()
+                    .map_err(|e| errors::Error::Unexpected {
+                        reason: format!("Simulator stop_session failed before pause: {}", e),
+                    })?;
+                self.writer_handle
+                    .stop()
+                    .map_err(|e| errors::Error::Unexpected {
+                        reason: format!("IPCWriter stop failed before pause: {}", e),
+                    })?;
+                Err(errors::Error::PauseRequested { duration })
+            }
+            None => Ok(()),
         }
     }
 
@@ -221,6 +249,8 @@ impl IPCReader {
 
     fn await_next_command(&mut self) -> Result<Command, errors::Error> {
         loop {
+            self.check_runtime_pause()?;
+
             let device_path_clone = self.command_path.clone();
             let init_reset_read_result = read_u32_from_mmio(
                 &device_path_clone,
@@ -290,6 +320,8 @@ impl IPCReader {
                     tracing::info!("IPCReader (Bob): Simulator session started.");
 
                     loop {
+                        self.check_runtime_pause()?;
+
                         // Pop a pre-generated batch or generate a fresh one.
                         let batch = match self.next_batch() {
                             Ok(b) => b,
@@ -304,11 +336,13 @@ impl IPCReader {
                             "IPCReader (Bob): Sending GCR batch ({} items) to writer.",
                             gcr_data.len()
                         );
-                        self.writer_handle
-                            .write_gcr_batch(gcr_data)
-                            .map_err(|e| errors::Error::Unexpected {
+                        self.writer_handle.write_gcr_batch(gcr_data).map_err(|e| {
+                            errors::Error::Unexpected {
                                 reason: format!("IPCWriter write_gcr_batch failed: {}", e),
-                            })?;
+                            }
+                        })?;
+
+                        self.check_runtime_pause()?;
 
                         let echoed_gc_values = match self.read_gc_batch_from_file() {
                             Ok(vals) => vals,
@@ -333,16 +367,18 @@ impl IPCReader {
                             return Err(errors::Error::Unexpected { reason });
                         }
 
+                        self.check_runtime_pause()?;
+
                         let angles = batch.to_bob_angle_fifo();
                         tracing::info!(
                             "IPCReader (Bob): Sending angles batch ({} bytes) to writer.",
                             angles.len()
                         );
-                        self.writer_handle
-                            .write_angles_batch(angles)
-                            .map_err(|e| errors::Error::Unexpected {
+                        self.writer_handle.write_angles_batch(angles).map_err(|e| {
+                            errors::Error::Unexpected {
                                 reason: format!("IPCWriter write_angles_batch failed: {}", e),
-                            })?;
+                            }
+                        })?;
                     }
 
                     tracing::info!("IPCReader (Bob): Generation loop finished. Stopping session.");
@@ -417,6 +453,8 @@ impl IPCReader {
                     tracing::info!("IPCReader (Alice): Simulator session started.");
 
                     loop {
+                        self.check_runtime_pause()?;
+
                         let received_gc_values = match self.read_gc_batch_from_file() {
                             Ok(vals) => vals,
                             Err(e) => {
@@ -440,6 +478,8 @@ impl IPCReader {
                             return Err(errors::Error::Unexpected { reason });
                         }
 
+                        self.check_runtime_pause()?;
+
                         // Pop a pre-generated batch or generate a fresh one.
                         let batch = match self.next_batch() {
                             Ok(b) => b,
@@ -449,16 +489,18 @@ impl IPCReader {
                             }
                         };
 
+                        self.check_runtime_pause()?;
+
                         let angles = batch.to_alice_fifo();
                         tracing::info!(
                             "IPCReader (Alice): Sending angles batch ({} bytes) to writer.",
                             angles.len()
                         );
-                        self.writer_handle
-                            .write_angles_batch(angles)
-                            .map_err(|e| errors::Error::Unexpected {
+                        self.writer_handle.write_angles_batch(angles).map_err(|e| {
+                            errors::Error::Unexpected {
                                 reason: format!("IPCWriter write_angles_batch failed: {}", e),
-                            })?;
+                            }
+                        })?;
                     }
 
                     tracing::info!(
@@ -497,7 +539,9 @@ impl IPCReader {
                         .map_err(|e| errors::Error::Unexpected {
                             reason: format!("IPCWriter stop failed: {}", e),
                         })?;
-                    tracing::info!("IPCReader (Alice): Successfully processed Stop command. Exiting.");
+                    tracing::info!(
+                        "IPCReader (Alice): Successfully processed Stop command. Exiting."
+                    );
                     return Ok(());
                 }
             }

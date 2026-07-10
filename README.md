@@ -44,7 +44,7 @@ cargo run --bin simu_controller -- --config-path ~/.config/qline/alice/hw_sim_co
 
 The simulator includes a built-in feature to simulate an attack on the quantum channel. When active, this mode forces the Quantum Bit Error Rate (QBER) to **50%**, rendering the key exchange insecure.
 
-This feature is controlled via Unix signals, allowing you to trigger or stop an attack from an external script or terminal without interfering with the hardware registers (MMIO).
+This feature can still be controlled via Unix signals, allowing you to trigger or stop an attack from an external script or terminal without interfering with the hardware registers (MMIO).
 
 *   **Start Attack (QBER -> 50%):**
     ```bash
@@ -57,4 +57,30 @@ This feature is controlled via Unix signals, allowing you to trigger or stop an 
 
 When a signal is received, the simulator will log a warning (for `SIGUSR1`) or an info message (for `SIGUSR2`) to confirm the state change.
 
+The same attack controls are also available through the simulator runtime control socket.
 
+## Runtime Control Socket
+
+When the simulator starts, it opens a Unix socket for newline-delimited JSON commands:
+
+* Alice default: `/tmp/hw_sim_alice_control.socket`
+* Bob default: `/tmp/hw_sim_bob_control.socket`
+
+The path can be overridden with `control_socket_path` in `ipc_config`.
+
+Supported commands:
+
+```json
+{"command":"start_attack"}
+{"command":"stop_attack"}
+{"command":"pause","duration_ms":5000}
+```
+
+Each command receives a newline-delimited JSON response:
+
+```json
+{"status":"ok"}
+{"status":"error","message":"pause already pending or running"}
+```
+
+The `pause` command starts a simulated recalibration. The simulator removes `/tmp/qkd_ready`, waits for `/tmp/node_idle` through a filesystem watcher, sleeps for the requested duration, resets the IPC FIFOs, and recreates `/tmp/qkd_ready`. The simulator removes a stale `/tmp/node_idle` before starting the recalibration, but it does not delete the new `node_idle` file created by the external node. The status paths can be overridden with `qkd_ready_path` and `node_idle_path` in `ipc_config`.

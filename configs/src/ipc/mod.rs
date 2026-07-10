@@ -23,6 +23,12 @@ pub struct AliceIpcConfig {
     pub angle_file_path: String,
     pub gc_read_file_path: String,
     pub hw_params_file_path: String,
+    #[serde(default = "default_alice_control_socket_path")]
+    pub control_socket_path: String,
+    #[serde(default = "default_qkd_ready_path")]
+    pub qkd_ready_path: String,
+    #[serde(default = "default_node_idle_path")]
+    pub node_idle_path: String,
 }
 
 #[derive(Debug, Deserialize, Serialize, PartialEq, Clone, JsonSchema)]
@@ -32,6 +38,28 @@ pub struct BobIpcConfig {
     pub gcr_file_path: String,
     pub gc_read_file_path: String,
     pub hw_params_file_path: String,
+    #[serde(default = "default_bob_control_socket_path")]
+    pub control_socket_path: String,
+    #[serde(default = "default_qkd_ready_path")]
+    pub qkd_ready_path: String,
+    #[serde(default = "default_node_idle_path")]
+    pub node_idle_path: String,
+}
+
+fn default_alice_control_socket_path() -> String {
+    "/tmp/hw_sim_alice_control.socket".to_string()
+}
+
+fn default_bob_control_socket_path() -> String {
+    "/tmp/hw_sim_bob_control.socket".to_string()
+}
+
+fn default_qkd_ready_path() -> String {
+    "/tmp/qkd_ready".to_string()
+}
+
+fn default_node_idle_path() -> String {
+    "/tmp/node_idle".to_string()
 }
 
 impl Default for AliceIpcConfig {
@@ -41,6 +69,9 @@ impl Default for AliceIpcConfig {
             angle_file_path: "/tmp/gc_alice_angle.fifo".to_string(),
             gc_read_file_path: "/tmp/gc_alice_gc.fifo".to_string(),
             hw_params_file_path: "/tmp/hw_params_alice.fifo".to_string(),
+            control_socket_path: default_alice_control_socket_path(),
+            qkd_ready_path: default_qkd_ready_path(),
+            node_idle_path: default_node_idle_path(),
         }
     }
 }
@@ -53,6 +84,9 @@ impl Default for BobIpcConfig {
             gcr_file_path: "/tmp/gc_bob_gcr.fifo".to_string(),
             gc_read_file_path: "/tmp/gc_bob_gc.fifo".to_string(),
             hw_params_file_path: "/tmp/hw_params_bob.fifo".to_string(),
+            control_socket_path: default_bob_control_socket_path(),
+            qkd_ready_path: default_qkd_ready_path(),
+            node_idle_path: default_node_idle_path(),
         }
     }
 }
@@ -71,6 +105,27 @@ impl Default for Configuration {
 }
 
 impl Configuration {
+    pub fn control_socket_path(&self) -> &str {
+        match self {
+            Configuration::Alice(config) => &config.control_socket_path,
+            Configuration::Bob(config) => &config.control_socket_path,
+        }
+    }
+
+    pub fn qkd_ready_path(&self) -> &str {
+        match self {
+            Configuration::Alice(config) => &config.qkd_ready_path,
+            Configuration::Bob(config) => &config.qkd_ready_path,
+        }
+    }
+
+    pub fn node_idle_path(&self) -> &str {
+        match self {
+            Configuration::Alice(config) => &config.node_idle_path,
+            Configuration::Bob(config) => &config.node_idle_path,
+        }
+    }
+
     pub fn setup_ipc_fifos(&self) -> Result<(), Error> {
         tracing::info!("Ensuring IPC FIFOs are set up for IPC config...");
         match self {
@@ -378,6 +433,9 @@ mod tests {
             gcr_file_path: "/dev/h2c_gcr_test".to_owned(),
             gc_read_file_path: "/dev/h2c_gc_read_test".to_owned(),
             hw_params_file_path: "/tmp/hw_params_bob.fifo".to_owned(),
+            control_socket_path: "/tmp/hw_sim_bob_control.socket".to_owned(),
+            qkd_ready_path: "/tmp/qkd_ready".to_owned(),
+            node_idle_path: "/tmp/node_idle".to_owned(),
         };
 
         assert_eq!(Configuration::Bob(expected_bob_config), config_input);
@@ -400,9 +458,34 @@ mod tests {
             angle_file_path: "/dev/c2h_angles_test_alice".to_owned(),
             gc_read_file_path: "/dev/h2c_gc_read_test_alice".to_owned(),
             hw_params_file_path: "/tmp/hw_params_alice.fifo".to_owned(),
+            control_socket_path: "/tmp/hw_sim_alice_control.socket".to_owned(),
+            qkd_ready_path: "/tmp/qkd_ready".to_owned(),
+            node_idle_path: "/tmp/node_idle".to_owned(),
         };
 
         assert_eq!(Configuration::Alice(expected_alice_config), config_input);
+    }
+
+    #[test]
+    fn ipc_runtime_control_paths_can_be_overridden() {
+        let config_json = r#"{
+    "command_path": "/dev/command_test_alice",
+    "angle_file_path": "/dev/c2h_angles_test_alice",
+    "gc_read_file_path": "/dev/h2c_gc_read_test_alice",
+    "hw_params_file_path": "/tmp/hw_params_alice.fifo",
+    "control_socket_path": "/tmp/custom_control.socket",
+    "qkd_ready_path": "/tmp/custom_qkd_ready",
+    "node_idle_path": "/tmp/custom_node_idle"
+}"#;
+
+        let config_input: Configuration = serde_json::from_str(config_json).unwrap();
+
+        assert_eq!(
+            config_input.control_socket_path(),
+            "/tmp/custom_control.socket"
+        );
+        assert_eq!(config_input.qkd_ready_path(), "/tmp/custom_qkd_ready");
+        assert_eq!(config_input.node_idle_path(), "/tmp/custom_node_idle");
     }
 
     #[test]

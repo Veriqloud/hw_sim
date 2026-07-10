@@ -1,4 +1,5 @@
 use snafu::Snafu;
+use std::time::Duration;
 
 #[derive(Debug, Snafu)]
 #[snafu(visibility(pub))]
@@ -9,4 +10,6 @@ pub enum Error {
     SerdeJson { source: serde_json::Error },
     #[snafu(display("Serde error because : {}", reason))]
     Unexpected { reason: String },
+    #[snafu(display("Runtime pause requested for {:?}", duration))]
+    PauseRequested { duration: Duration },
 }
