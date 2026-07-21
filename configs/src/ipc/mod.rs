@@ -25,9 +25,11 @@ pub struct AliceIpcConfig {
     pub hw_params_file_path: String,
     #[serde(default = "default_alice_control_socket_path")]
     pub control_socket_path: String,
+    /// Hardware-ready flag managed by hw_sim and observed by gc.
     #[serde(default = "default_qkd_ready_path")]
     pub qkd_ready_path: String,
-    #[serde(default = "default_node_idle_path")]
+    /// Idle acknowledgement managed by gc and observed by hw_sim.
+    #[serde(default = "default_alice_node_idle_path")]
     pub node_idle_path: String,
 }
 
@@ -40,9 +42,11 @@ pub struct BobIpcConfig {
     pub hw_params_file_path: String,
     #[serde(default = "default_bob_control_socket_path")]
     pub control_socket_path: String,
+    /// Hardware-ready flag managed by hw_sim and observed by gc.
     #[serde(default = "default_qkd_ready_path")]
     pub qkd_ready_path: String,
-    #[serde(default = "default_node_idle_path")]
+    /// Idle acknowledgement managed by gc and observed by hw_sim.
+    #[serde(default = "default_bob_node_idle_path")]
     pub node_idle_path: String,
 }
 
@@ -58,8 +62,12 @@ fn default_qkd_ready_path() -> String {
     "/tmp/qkd_ready".to_string()
 }
 
-fn default_node_idle_path() -> String {
-    "/tmp/node_idle".to_string()
+fn default_alice_node_idle_path() -> String {
+    "/tmp/node_idle_alice".to_string()
+}
+
+fn default_bob_node_idle_path() -> String {
+    "/tmp/node_idle_bob".to_string()
 }
 
 impl Default for AliceIpcConfig {
@@ -71,7 +79,7 @@ impl Default for AliceIpcConfig {
             hw_params_file_path: "/tmp/hw_params_alice.fifo".to_string(),
             control_socket_path: default_alice_control_socket_path(),
             qkd_ready_path: default_qkd_ready_path(),
-            node_idle_path: default_node_idle_path(),
+            node_idle_path: default_alice_node_idle_path(),
         }
     }
 }
@@ -86,7 +94,7 @@ impl Default for BobIpcConfig {
             hw_params_file_path: "/tmp/hw_params_bob.fifo".to_string(),
             control_socket_path: default_bob_control_socket_path(),
             qkd_ready_path: default_qkd_ready_path(),
-            node_idle_path: default_node_idle_path(),
+            node_idle_path: default_bob_node_idle_path(),
         }
     }
 }
@@ -435,7 +443,7 @@ mod tests {
             hw_params_file_path: "/tmp/hw_params_bob.fifo".to_owned(),
             control_socket_path: "/tmp/hw_sim_bob_control.socket".to_owned(),
             qkd_ready_path: "/tmp/qkd_ready".to_owned(),
-            node_idle_path: "/tmp/node_idle".to_owned(),
+            node_idle_path: "/tmp/node_idle_bob".to_owned(),
         };
 
         assert_eq!(Configuration::Bob(expected_bob_config), config_input);
@@ -460,7 +468,7 @@ mod tests {
             hw_params_file_path: "/tmp/hw_params_alice.fifo".to_owned(),
             control_socket_path: "/tmp/hw_sim_alice_control.socket".to_owned(),
             qkd_ready_path: "/tmp/qkd_ready".to_owned(),
-            node_idle_path: "/tmp/node_idle".to_owned(),
+            node_idle_path: "/tmp/node_idle_alice".to_owned(),
         };
 
         assert_eq!(Configuration::Alice(expected_alice_config), config_input);

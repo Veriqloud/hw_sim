@@ -178,4 +178,34 @@ mod tests {
         assert!(idle.exists());
         let _ = fs::remove_dir_all(base);
     }
+
+    #[test]
+    fn recalibration_follows_the_gc_handshake() {
+        let base = std::env::temp_dir().join(format!(
+            "hw_sim_status_recalibration_{}",
+            std::process::id()
+        ));
+        let ready = base.join("qkd_ready");
+        let idle = base.join("node_idle_alice");
+        fs::create_dir_all(&base).unwrap();
+
+        let status = RuntimeStatusFiles::new(&ready, &idle);
+        status.initialize().unwrap();
+        assert!(ready.exists());
+
+        status.begin_recalibration().unwrap();
+        assert!(!ready.exists());
+        assert!(!idle.exists());
+
+        let idle_for_gc = idle.clone();
+        thread::spawn(move || fs::write(idle_for_gc, b"idle").unwrap());
+        status.wait_for_node_idle().unwrap();
+
+        assert!(idle.exists());
+        status.create_qkd_ready().unwrap();
+        assert!(ready.exists());
+        assert!(idle.exists());
+
+        let _ = fs::remove_dir_all(base);
+    }
 }
