@@ -303,7 +303,7 @@ fn run_alice_workflow(
             simu_handle.clone(),
             writer_handle.clone(),
             simulator_mode,
-            runtime_control.clone(),
+            &runtime_control,
         );
 
         tracing::info!("Starting IPC command processing loop for Alice.");
@@ -421,7 +421,7 @@ fn run_bob_workflow(
             simu_handle.clone(),
             writer_handle.clone(),
             simulator_mode,
-            runtime_control.clone(),
+            &runtime_control,
         );
 
         tracing::info!("Starting IPC command processing loop for Bob.");

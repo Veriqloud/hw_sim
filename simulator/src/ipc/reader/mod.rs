@@ -25,7 +25,7 @@ const MMIO_MAP_LEN: usize = 0x1000;
 const GENERATION_START_ADDR_BYTES: usize = 24;
 const POLLING_INTERVAL_MS: u64 = 50;
 
-pub struct IPCReader {
+pub struct IPCReader<'a> {
     command_path: String,
     gc_read_file: File,
     writer_handle: IPCWriterActorHandle,
@@ -37,7 +37,7 @@ pub struct IPCReader {
     batch_queue: VecDeque<QkdBatch>,
     /// Whether to interleave 8-byte zero pads between GCR records (hardware protocol).
     use_gcr_padding: bool,
-    runtime_control: RuntimeControl,
+    runtime_control: &'a RuntimeControl,
 }
 
 /// Synchronously reads a u32 value from a memory-mapped device.
@@ -94,7 +94,7 @@ fn classify_generation_start_transition(
     }
 }
 
-impl IPCReader {
+impl<'a> IPCReader<'a> {
     /// Reads a batch of GC values from the gc_read_file.
     /// Expects BATCH_SIZE (1024) 16-byte records, and extracts a u64 GC from the first 8 bytes of each.
     fn read_gc_batch_from_file(&mut self) -> Result<Vec<u64>, errors::Error> {
@@ -147,7 +147,7 @@ impl IPCReader {
         simulator_handle: SimulatorHandle,
         writer_handle: IPCWriterActorHandle,
         simulator_mode: SimulatorMode,
-        runtime_control: RuntimeControl,
+        runtime_control: &'a RuntimeControl,
     ) -> Self {
         let use_gcr_padding = simulator_handle.use_gcr_padding;
         IPCReader {
