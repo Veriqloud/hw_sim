@@ -555,7 +555,7 @@ fn test_qkd_attack_signal_flow() {
 
     // 2. Attack Batch (Reset session to get same RNG sequence, then start attack)
     sim_handle.start_session().unwrap();
-    sim_handle.start_attack().unwrap(); // Simulate SIGUSR1
+    sim_handle.start_attack().unwrap();
     let batch_attack = sim_handle.generate_qkd_batch().unwrap();
     let gcr_attack = batch_attack.to_gcr_batch(sim_handle.use_gcr_padding);
     let results_attack: Vec<u8> = gcr_attack.iter().map(|gcr| (gcr[6] >> 1) & 1).collect();
@@ -577,7 +577,7 @@ fn test_qkd_attack_signal_flow() {
     );
 
     // 3. Restore Batch (Reset session, stop attack)
-    sim_handle.stop_attack().unwrap(); // Simulate SIGUSR2
+    sim_handle.stop_attack().unwrap();
     sim_handle.stop_session().unwrap();
 
     sim_handle.start_session().unwrap();

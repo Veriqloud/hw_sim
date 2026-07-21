@@ -44,20 +44,7 @@ cargo run --bin simu_controller -- --config-path ~/.config/qline/alice/hw_sim_co
 
 The simulator includes a built-in feature to simulate an attack on the quantum channel. When active, this mode forces the Quantum Bit Error Rate (QBER) to **50%**, rendering the key exchange insecure.
 
-This feature can still be controlled via Unix signals, allowing you to trigger or stop an attack from an external script or terminal without interfering with the hardware registers (MMIO).
-
-*   **Start Attack (QBER -> 50%):**
-    ```bash
-    pkill -USR1 simulator
-    ```
-*   **Stop Attack (Back to normal QBER):**
-    ```bash
-    pkill -USR2 simulator
-    ```
-
-When a signal is received, the simulator will log a warning (for `SIGUSR1`) or an info message (for `SIGUSR2`) to confirm the state change.
-
-The same attack controls are also available through the simulator runtime control socket.
+This feature is controlled through the simulator runtime control socket.
 
 ## Runtime Control Socket
 
