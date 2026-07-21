@@ -72,4 +72,6 @@ Each command receives a newline-delimited JSON response:
 {"status":"error","message":"pause already pending or running"}
 ```
 
-The `pause` command starts a simulated recalibration. The simulator removes the shared `/tmp/qkd_ready` flag, waits through a filesystem watcher for the player-specific idle acknowledgement created by `gc` (`/tmp/node_idle_alice` or `/tmp/node_idle_bob`), sleeps for the requested duration, resets the IPC FIFOs, and recreates `/tmp/qkd_ready`. It removes a stale idle acknowledgement before starting, but leaves the new one for `gc` to remove when the node resumes. These paths can be overridden with `qkd_ready_path` and `node_idle_path` in `ipc_config`.
+At startup, the simulator removes its stale idle acknowledgement, starts the filesystem watcher, and creates `/tmp/qkd_ready`.
+
+The `pause` command starts a simulated recalibration. The simulator removes the shared `/tmp/qkd_ready` flag, waits through the watcher for the player-specific idle acknowledgement created by `gc` (`/tmp/node_idle_alice` or `/tmp/node_idle_bob`), sleeps for the requested duration, resets the IPC FIFOs, and recreates `/tmp/qkd_ready`. It removes a stale idle acknowledgement before starting, but leaves the new one for `gc` to remove when the node resumes. These paths can be overridden with `qkd_ready_path` and `node_idle_path` in `ipc_config`.
