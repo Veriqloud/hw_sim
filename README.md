@@ -63,6 +63,8 @@ Supported commands:
 {"command":"pause","duration_ms":5000}
 ```
 
+`pause` is handled at batch boundaries; it does not interrupt an in-progress FIFO read/write.
+
 Each command receives a newline-delimited JSON response:
 
 ```json
