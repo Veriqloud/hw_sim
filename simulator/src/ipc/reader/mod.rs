@@ -174,11 +174,6 @@ impl<'a> IPCReader<'a> {
                     .map_err(|e| errors::Error::Unexpected {
                         reason: format!("Simulator stop_session failed before pause: {}", e),
                     })?;
-                self.writer_handle
-                    .stop()
-                    .map_err(|e| errors::Error::Unexpected {
-                        reason: format!("IPCWriter stop failed before pause: {}", e),
-                    })?;
                 Err(errors::Error::PauseRequested { duration })
             }
             None => Ok(()),
@@ -390,16 +385,6 @@ impl<'a> IPCReader<'a> {
                             ),
                         }
                     })?;
-                    // The generation loop only ends when a FIFO peer detached, i.e. the
-                    // controller session is gone. Tear down completely so the workflow
-                    // loop resets the FIFOs and blocks in open() until the next session
-                    // attaches; keeping the stale handles and edge-detector state here
-                    // would make every subsequent Start undetectable or abort instantly.
-                    self.writer_handle
-                        .stop()
-                        .map_err(|e| errors::Error::Unexpected {
-                            reason: format!("IPCWriter stop failed: {}", e),
-                        })?;
                     tracing::info!(
                         "IPCReader (Bob): Session peers detached. Exiting for FIFO reset."
                     );
@@ -412,11 +397,6 @@ impl<'a> IPCReader<'a> {
                             reason: format!("Simulator stop_session failed: {}", e),
                         }
                     })?;
-                    self.writer_handle
-                        .stop()
-                        .map_err(|e| errors::Error::Unexpected {
-                            reason: format!("IPCWriter stop failed: {}", e),
-                        })?;
                     tracing::info!(
                         "IPCReader (Bob): Successfully processed Stop command. Exiting."
                     );
@@ -514,14 +494,6 @@ impl<'a> IPCReader<'a> {
                             ),
                         }
                     })?;
-                    // See the detector workflow: a finished generation loop means the
-                    // session peers detached, so exit for a full FIFO reset instead of
-                    // waiting for a Start edge on stale handles.
-                    self.writer_handle
-                        .stop()
-                        .map_err(|e| errors::Error::Unexpected {
-                            reason: format!("IPCWriter stop failed: {}", e),
-                        })?;
                     tracing::info!(
                         "IPCReader (Alice): Session peers detached. Exiting for FIFO reset."
                     );
@@ -534,11 +506,6 @@ impl<'a> IPCReader<'a> {
                             reason: format!("Simulator stop_session failed: {}", e),
                         }
                     })?;
-                    self.writer_handle
-                        .stop()
-                        .map_err(|e| errors::Error::Unexpected {
-                            reason: format!("IPCWriter stop failed: {}", e),
-                        })?;
                     tracing::info!(
                         "IPCReader (Alice): Successfully processed Stop command. Exiting."
                     );
@@ -548,7 +515,7 @@ impl<'a> IPCReader<'a> {
         }
     }
 
-    pub fn start(mut self) -> Result<(), errors::Error> {
+    pub fn run(mut self) -> Result<(), errors::Error> {
         match self.simulator_mode {
             SimulatorMode::Detector => {
                 tracing::info!("IPCReader starting in Detector (Bob) mode. Awaiting commands.");

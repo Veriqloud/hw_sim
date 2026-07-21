@@ -6,92 +6,134 @@ use std::sync::mpsc;
 
 pub struct IPCWriterActor {
     receiver: mpsc::Receiver<WriterMessage>,
-    gcr_file: File,
-    angles_file: File,
+    gcr_file: Option<File>,
+    angles_file: Option<File>,
 }
 
 impl IPCWriterActor {
-    pub fn new(
-        gcr_file: File,
-        angles_file: File,
-        receiver: mpsc::Receiver<WriterMessage>,
-    ) -> Self {
+    pub fn new(receiver: mpsc::Receiver<WriterMessage>) -> Self {
         IPCWriterActor {
             receiver,
-            gcr_file,
-            angles_file,
+            gcr_file: None,
+            angles_file: None,
         }
     }
 
-    fn handle_message(&mut self, msg: WriterMessage) -> Result<(), Error> {
-        match msg {
-            WriterMessage::WriteGcrBatch(gcr_data_batch) => {
-                tracing::info!(
-                    "WriterActor: Received WriteGcrBatch ({} items).",
-                    gcr_data_batch.len()
-                );
+    fn write_gcr_batch(&mut self, gcr_data_batch: Vec<[u8; 8]>) -> Result<(), Error> {
+        tracing::info!(
+            "WriterActor: Received WriteGcrBatch ({} items).",
+            gcr_data_batch.len()
+        );
 
-                // Flatten the Vec<[u8; 8]> into a single Vec<u8> for one write call
-                // for better performance.
-                let buffer: Vec<u8> = gcr_data_batch.into_iter().flatten().collect();
-                self.gcr_file
-                    .write_all(&buffer)
-                    .map_err(|e| Error::Channel {
-                        e: format!("Failed to write GCR batch to FIFO: {}", e),
-                    })?;
-                // write_all may buffer, so we flush to ensure it's sent immediately over the pipe.
-                self.gcr_file.flush().map_err(|e| Error::Channel {
-                    e: format!("Failed to flush GCR FIFO: {}", e),
-                })?;
-                tracing::info!("WriterActor: Successfully wrote GCR batch.");
-                Ok(())
+        let gcr_file = self
+            .gcr_file
+            .as_mut()
+            .ok_or(Error::WriterUnavailable { writer: "GCR" })?;
+
+        // Flatten the Vec<[u8; 8]> into a single Vec<u8> for one write call.
+        let buffer: Vec<u8> = gcr_data_batch.into_iter().flatten().collect();
+        gcr_file.write_all(&buffer).map_err(|e| Error::Channel {
+            e: format!("Failed to write GCR batch to FIFO: {}", e),
+        })?;
+        gcr_file.flush().map_err(|e| Error::Channel {
+            e: format!("Failed to flush GCR FIFO: {}", e),
+        })?;
+        tracing::info!("WriterActor: Successfully wrote GCR batch.");
+        Ok(())
+    }
+
+    fn write_angles_batch(&mut self, angles_batch: Vec<u8>) -> Result<(), Error> {
+        tracing::info!(
+            "WriterActor: Received WriteAnglesBatch ({} pre-packed bytes).",
+            angles_batch.len()
+        );
+
+        let angles_file = self
+            .angles_file
+            .as_mut()
+            .ok_or(Error::WriterUnavailable { writer: "angles" })?;
+        angles_file.write_all(&angles_batch).map_err(|e| {
+            tracing::error!("Failed to write angles batch: {:?}", e);
+            Error::Channel {
+                e: format!("Failed to write angles batch to FIFO: {}", e),
             }
-            WriterMessage::WriteAnglesBatch(angles_batch) => {
-                tracing::info!(
-                    "WriterActor: Received WriteAnglesBatch ({} pre-packed bytes).",
-                    angles_batch.len()
-                );
-                self.angles_file.write_all(&angles_batch).map_err(|e| {
-                    tracing::error!("Failed to write angles batch: {:?}", e);
-                    Error::Channel {
-                        e: format!("Failed to write angles batch to FIFO: {}", e),
-                    }
-                })?;
-                self.angles_file.flush().map_err(|e| Error::Channel {
-                    e: format!("Failed to flush angles FIFO: {}", e),
-                })?;
-                tracing::info!("WriterActor: Successfully wrote angles batch.");
-                Ok(())
+        })?;
+        angles_file.flush().map_err(|e| Error::Channel {
+            e: format!("Failed to flush angles FIFO: {}", e),
+        })?;
+        tracing::info!("WriterActor: Successfully wrote angles batch.");
+        Ok(())
+    }
+
+    fn open_writers(&mut self, gcr_file: File, angles_file: File) -> Result<(), Error> {
+        if self.gcr_file.is_some() || self.angles_file.is_some() {
+            return Err(Error::WritersAlreadyOpen);
+        }
+
+        self.gcr_file = Some(gcr_file);
+        self.angles_file = Some(angles_file);
+        tracing::info!("WriterActor: IPC writer files opened.");
+        Ok(())
+    }
+
+    fn close_writers(&mut self) -> Result<(), Error> {
+        drop(self.gcr_file.take());
+        drop(self.angles_file.take());
+        tracing::info!("WriterActor: IPC writer files closed.");
+        Ok(())
+    }
+
+    fn handle_message(&mut self, msg: WriterMessage) {
+        match msg {
+            WriterMessage::WriteGcrBatch(data) => {
+                if let Err(e) = self.write_gcr_batch(data) {
+                    tracing::error!("IPCWriterActor: Failed to write GCR batch: {:?}", e);
+                }
             }
-            WriterMessage::Stop => {
-                // The writer actor itself doesn't have a loop to stop other than processing messages.
-                // If the sender (IPCReader) stops sending messages, this actor's loop will end.
-                // This message can be used for graceful shutdown if the actor had internal tasks.
-                tracing::info!("WriterActor: Received Stop message. No active loops to stop in writer itself. Will stop processing further messages if channel closes.");
-                // To explicitly stop the actor from processing more messages, we could close its own receiver,
-                // but typically the owner (IPCReader) dropping its sender handle achieves this.
-                Ok(())
+            WriterMessage::WriteAnglesBatch(data) => {
+                if let Err(e) = self.write_angles_batch(data) {
+                    tracing::error!("IPCWriterActor: Failed to write angles batch: {:?}", e);
+                }
+            }
+            WriterMessage::OpenWriters {
+                gcr_file,
+                angles_file,
+                reply_to,
+            } => {
+                send_reply(reply_to, self.open_writers(gcr_file, angles_file));
+            }
+            WriterMessage::CloseWriters { reply_to } => {
+                send_reply(reply_to, self.close_writers());
             }
         }
     }
 }
 
-// Message enum for the writer actor
+fn send_reply(reply_to: mpsc::Sender<Result<(), Error>>, result: Result<(), Error>) {
+    if reply_to.send(result).is_err() {
+        tracing::warn!("IPCWriterActor: Requester dropped before receiving its reply.");
+    }
+}
+
 #[derive(Debug)]
 pub enum WriterMessage {
-    WriteGcrBatch(Vec<[u8; 8]>), // Batch of GCR data (Global Counter + Result bit)
-    WriteAnglesBatch(Vec<u8>),   // Batch of Angle values
-    Stop, // Command to stop (if needed for internal loops, currently informational)
+    WriteGcrBatch(Vec<[u8; 8]>),
+    WriteAnglesBatch(Vec<u8>),
+    OpenWriters {
+        gcr_file: File,
+        angles_file: File,
+        reply_to: mpsc::Sender<Result<(), Error>>,
+    },
+    CloseWriters {
+        reply_to: mpsc::Sender<Result<(), Error>>,
+    },
 }
 
 pub fn run_writer_actor(mut actor: IPCWriterActor) {
     tracing::info!("IPCWriterActor running.");
     while let Ok(msg) = actor.receiver.recv() {
         tracing::debug!("IPCWriterActor: Received message: {:?}", msg);
-        if let Err(e) = actor.handle_message(msg) {
-            tracing::error!("IPCWriterActor: Failed to handle message: {:?}", e);
-            // Depending on the error, might want to break or continue
-        }
+        actor.handle_message(msg);
     }
     tracing::info!("IPCWriterActor finished.");
 }
@@ -102,12 +144,9 @@ pub struct IPCWriterActorHandle {
 }
 
 impl IPCWriterActorHandle {
-    pub fn new(
-        gcr_file: File, // Renamed parameter to match usage
-        angles_file: File,
-    ) -> Self {
+    pub fn new() -> Self {
         let (sender, receiver) = mpsc::channel();
-        let actor = IPCWriterActor::new(gcr_file, angles_file, receiver);
+        let actor = IPCWriterActor::new(receiver);
         std::thread::spawn(move || {
             run_writer_actor(actor);
         });
@@ -115,35 +154,87 @@ impl IPCWriterActorHandle {
         Self { sender }
     }
 
-    pub fn write_gcr_batch(&self, gcr_data: Vec<[u8; 8]>) -> Result<(), Error> {
-        let message = WriterMessage::WriteGcrBatch(gcr_data);
-        self.sender.send(message).map_err(|e| {
-            tracing::error!("Failed to send WriteGcrBatch to IPCWriterActor: {}", e);
-            Error::Channel {
-                e: format!("Send GCR batch failed: {}", e),
-            }
+    fn send_command_and_wait(
+        &self,
+        make_message: impl FnOnce(mpsc::Sender<Result<(), Error>>) -> WriterMessage,
+    ) -> Result<(), Error> {
+        let (reply_to, reply_from) = mpsc::channel();
+        self.sender
+            .send(make_message(reply_to))
+            .map_err(|e| Error::Channel {
+                e: format!("Failed to send message to IPCWriterActor: {}", e),
+            })?;
+        reply_from
+            .recv()
+            .map_err(|source| Error::ActorDied { source })?
+    }
+
+    pub fn write_gcr_batch(&self, data: Vec<[u8; 8]>) -> Result<(), Error> {
+        self.sender
+            .send(WriterMessage::WriteGcrBatch(data))
+            .map_err(|e| Error::Channel {
+                e: format!("Failed to send GCR batch to IPCWriterActor: {}", e),
+            })
+    }
+
+    pub fn write_angles_batch(&self, data: Vec<u8>) -> Result<(), Error> {
+        self.sender
+            .send(WriterMessage::WriteAnglesBatch(data))
+            .map_err(|e| Error::Channel {
+                e: format!("Failed to send angles batch to IPCWriterActor: {}", e),
+            })
+    }
+
+    pub fn open_writers(&self, gcr_file: File, angles_file: File) -> Result<(), Error> {
+        self.send_command_and_wait(|reply_to| WriterMessage::OpenWriters {
+            gcr_file,
+            angles_file,
+            reply_to,
         })
     }
 
-    pub fn write_angles_batch(&self, angles_data: Vec<u8>) -> Result<(), Error> {
-        let message = WriterMessage::WriteAnglesBatch(angles_data);
-        self.sender.send(message).map_err(|e| {
-            tracing::error!("Failed to send WriteAnglesBatch to IPCWriterActor: {}", e);
-            Error::Channel {
-                e: format!("Send angles batch failed: {}", e),
-            }
-        })
+    pub fn close_writers(&self) -> Result<(), Error> {
+        self.send_command_and_wait(|reply_to| WriterMessage::CloseWriters { reply_to })
     }
+}
 
-    // Optional: A stop message if explicit cleanup or signaling is needed in the writer actor.
-    // For now, the writer stops when its command channel is closed by the reader.
-    pub fn stop(&self) -> Result<(), Error> {
-        let message = WriterMessage::Stop;
-        self.sender.send(message).map_err(|e| {
-            tracing::error!("Failed to send Stop to IPCWriterActor: {}", e);
-            Error::Channel {
-                e: format!("Send Stop failed: {}", e),
-            }
-        })
+#[cfg(test)]
+mod tests {
+    use super::IPCWriterActorHandle;
+    use std::fs;
+    use uuid::Uuid;
+
+    #[test]
+    fn cloned_handles_survive_writer_close_and_replacement() {
+        let base = std::env::temp_dir().join(format!("hw_sim_writer_{}", Uuid::new_v4()));
+        fs::create_dir_all(&base).unwrap();
+        let handle = IPCWriterActorHandle::new();
+        let cloned_handle = handle.clone();
+
+        let first_gcr_path = base.join("gcr_1");
+        let first_angles_path = base.join("angles_1");
+        handle
+            .open_writers(
+                fs::File::create(&first_gcr_path).unwrap(),
+                fs::File::create(&first_angles_path).unwrap(),
+            )
+            .unwrap();
+        cloned_handle.write_angles_batch(vec![1, 2, 3, 4]).unwrap();
+        handle.close_writers().unwrap();
+
+        assert_eq!(fs::read(&first_angles_path).unwrap(), vec![1, 2, 3, 4]);
+        let second_gcr_path = base.join("gcr_2");
+        let second_angles_path = base.join("angles_2");
+        cloned_handle
+            .open_writers(
+                fs::File::create(&second_gcr_path).unwrap(),
+                fs::File::create(&second_angles_path).unwrap(),
+            )
+            .unwrap();
+        handle.write_angles_batch(vec![6, 7]).unwrap();
+        cloned_handle.close_writers().unwrap();
+
+        assert_eq!(fs::read(&second_angles_path).unwrap(), vec![6, 7]);
+        fs::remove_dir_all(base).unwrap();
     }
 }

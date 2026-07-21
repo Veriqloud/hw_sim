@@ -194,6 +194,8 @@ fn run_alice_workflow(
     runtime_control: RuntimeControl,
     runtime_status: RuntimeStatusFiles,
 ) {
+    let writer_handle = IPCWriterActorHandle::new();
+
     loop {
         tracing::info!("Alice (Source) workflow: Waiting for a controller...");
 
@@ -262,7 +264,10 @@ fn run_alice_workflow(
             }
         };
 
-        let writer_handle = IPCWriterActorHandle::new(gcr_file_writer, angles_file_writer);
+        if let Err(e) = writer_handle.open_writers(gcr_file_writer, angles_file_writer) {
+            tracing::error!("Failed to open Alice IPC writer files: {}", e);
+            return;
+        }
 
         tracing::info!("IPC files opened. Initializing IPCReader for Alice.");
         let ipc_reader = ipc::reader::IPCReader::new(
@@ -275,7 +280,13 @@ fn run_alice_workflow(
         );
 
         tracing::info!("Starting IPC command processing loop for Alice.");
-        if let Err(e) = ipc_reader.start() {
+        let reader_result = ipc_reader.run();
+        if let Err(e) = writer_handle.close_writers() {
+            tracing::error!("Failed to close Alice IPC writer files: {}", e);
+            return;
+        }
+
+        if let Err(e) = reader_result {
             match e {
                 ipc::reader::errors::Error::PauseRequested { duration } => {
                     handle_runtime_pause(&runtime_status, &runtime_control, duration);
@@ -302,6 +313,8 @@ fn run_bob_workflow(
     runtime_control: RuntimeControl,
     runtime_status: RuntimeStatusFiles,
 ) {
+    let writer_handle = IPCWriterActorHandle::new();
+
     loop {
         tracing::info!("Bob (Detector) workflow: Waiting for a controller...");
 
@@ -380,7 +393,10 @@ fn run_bob_workflow(
             }
         };
 
-        let writer_handle = IPCWriterActorHandle::new(gcr_file_writer, angles_file_writer);
+        if let Err(e) = writer_handle.open_writers(gcr_file_writer, angles_file_writer) {
+            tracing::error!("Failed to open Bob IPC writer files: {}", e);
+            return;
+        }
 
         tracing::info!("IPC files opened. Initializing IPCReader for Bob.");
         let ipc_reader = ipc::reader::IPCReader::new(
@@ -393,7 +409,13 @@ fn run_bob_workflow(
         );
 
         tracing::info!("Starting IPC command processing loop for Bob.");
-        if let Err(e) = ipc_reader.start() {
+        let reader_result = ipc_reader.run();
+        if let Err(e) = writer_handle.close_writers() {
+            tracing::error!("Failed to close Bob IPC writer files: {}", e);
+            return;
+        }
+
+        if let Err(e) = reader_result {
             match e {
                 ipc::reader::errors::Error::PauseRequested { duration } => {
                     handle_runtime_pause(&runtime_status, &runtime_control, duration);
