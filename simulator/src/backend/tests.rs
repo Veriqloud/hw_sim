@@ -527,38 +527,53 @@ fn test_qber_oscillation_distributions() {
 fn test_qkd_attack_signal_flow() {
     // This test verifies the end-to-end flow of the attack mode:
     // Actor receives StartAttack -> Simulator forces QBER to 50% -> StopAttack restores it.
+    //
+    // Starting a session bumps the seed (seed -> seed+1, seed+2, ...) and reseeds
+    // both RNGs from it, so no restart ever replays a previous session's key
+    // material. The normal/attack comparison below uses two simulators built with
+    // the same initial seed and each started exactly once, so both land on the
+    // same seed+1 sequence before the attack flips anything.
 
     let hw = HardwareBuilder::new().with_pulse_distance(1e-9).build();
     let seed = 42;
     let config_angles = vec![0, 32, 64, 96];
 
-    let sim = SimulatorBuilder::new()
-        .with_hardware(hw)
-        .with_rng(Pcg64Mcg::seed_from_u64(seed))
-        .with_seed(seed)
-        .with_mode(SimulatorMode::Detector)
-        .with_qb_err(QberConfig::Fixed { value: 0.0 }) // Normal QBER is 0%
-        .with_angles(config_angles)
-        .with_modulator_state(ModulatorState::Random)
-        .with_gcr_padding(false)
-        .build();
+    let build_sim = || {
+        SimulatorBuilder::new()
+            .with_hardware(hw.clone())
+            .with_rng(Pcg64Mcg::seed_from_u64(seed))
+            .with_seed(seed)
+            .with_mode(SimulatorMode::Detector)
+            .with_qb_err(QberConfig::Fixed { value: 0.0 }) // Normal QBER is 0%
+            .with_angles(config_angles.clone())
+            .with_modulator_state(ModulatorState::Random)
+            .with_gcr_padding(false)
+            .build()
+    };
 
-    let sim_handle = crate::backend::actor::ActorHandle::new(sim);
+    let extract_results = |batch: sim_lib::simulation::batches::QkdBatch, padding: bool| -> Vec<u8> {
+        batch
+            .to_gcr_batch(padding)
+            .iter()
+            .map(|gcr| (gcr[6] >> 1) & 1)
+            .collect()
+    };
 
-    // 1. Reference Batch (Normal mode)
-    sim_handle.start_session().unwrap();
-    let batch_normal = sim_handle.generate_qkd_batch().unwrap();
-    // The test sim has use_gcr_padding=false; base_gc=0 after start_session.
-    let gcr_normal = batch_normal.to_gcr_batch(sim_handle.use_gcr_padding);
-    let results_normal: Vec<u8> = gcr_normal.iter().map(|gcr| (gcr[6] >> 1) & 1).collect();
-    sim_handle.stop_session().unwrap();
+    // 1. Reference batch (normal mode), fresh simulator, single start.
+    let sim_handle_normal = crate::backend::actor::ActorHandle::new(build_sim());
+    sim_handle_normal.start_session().unwrap();
+    let batch_normal = sim_handle_normal.generate_qkd_batch().unwrap();
+    let results_normal = extract_results(batch_normal, sim_handle_normal.use_gcr_padding);
+    sim_handle_normal.stop_session().unwrap();
 
-    // 2. Attack Batch (Reset session to get same RNG sequence, then start attack)
-    sim_handle.start_session().unwrap();
-    sim_handle.start_attack().unwrap(); // Simulate SIGUSR1
-    let batch_attack = sim_handle.generate_qkd_batch().unwrap();
-    let gcr_attack = batch_attack.to_gcr_batch(sim_handle.use_gcr_padding);
-    let results_attack: Vec<u8> = gcr_attack.iter().map(|gcr| (gcr[6] >> 1) & 1).collect();
+    // 2. Attack batch: separate simulator built with the same initial seed and
+    // started once, so it lands on the same seed+1 RNG stream (angles/results)
+    // as sim_handle_normal before any QBER flip.
+    let sim_handle_attack = crate::backend::actor::ActorHandle::new(build_sim());
+    sim_handle_attack.start_session().unwrap();
+    sim_handle_attack.start_attack().unwrap(); // Simulate SIGUSR1
+    let batch_attack = sim_handle_attack.generate_qkd_batch().unwrap();
+    let results_attack = extract_results(batch_attack, sim_handle_attack.use_gcr_padding);
 
     // Calculate QBER
     let mut diffs = 0;
@@ -576,19 +591,20 @@ fn test_qkd_attack_signal_flow() {
         qber_attack
     );
 
-    // 3. Restore Batch (Reset session, stop attack)
-    sim_handle.stop_attack().unwrap(); // Simulate SIGUSR2
-    sim_handle.stop_session().unwrap();
+    // 3. Stop attack and restart the session on the same simulator: the restart
+    // bumps the seed again (seed+1 -> seed+2), so the new batch must NOT replay
+    // the original key material.
+    sim_handle_attack.stop_attack().unwrap(); // Simulate SIGUSR2
+    sim_handle_attack.stop_session().unwrap();
 
-    sim_handle.start_session().unwrap();
-    let batch_restored = sim_handle.generate_qkd_batch().unwrap();
-    let gcr_restored = batch_restored.to_gcr_batch(sim_handle.use_gcr_padding);
-    let results_restored: Vec<u8> = gcr_restored.iter().map(|gcr| (gcr[6] >> 1) & 1).collect();
+    sim_handle_attack.start_session().unwrap();
+    let batch_restarted = sim_handle_attack.generate_qkd_batch().unwrap();
+    let results_restarted = extract_results(batch_restarted, sim_handle_attack.use_gcr_padding);
 
-    assert_eq!(
-        results_normal, results_restored,
-        "Restored session results should be identical to original normal session"
+    assert_ne!(
+        results_normal, results_restarted,
+        "Restarting a session must not regenerate the same key as an earlier session"
     );
 
-    sim_handle.stop_session().unwrap();
+    sim_handle_attack.stop_session().unwrap();
 }

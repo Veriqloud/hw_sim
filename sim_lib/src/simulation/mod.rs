@@ -202,8 +202,13 @@ impl Simulator {
         self.modulator_state = ModulatorState::Random; // Ready to generate
         self.reset_time(); // Reset self.now for internal time calculations if any
         self.last_event_count = 0; // Reset event counter for the new session
-        self.rng = Pcg64Mcg::seed_from_u64(self.seed); // Re-seed the RNG
-        self.qber_oscillation_rng = Pcg64Mcg::seed_from_u64(self.seed); // Re-seed the oscillation RNG
+        // Bump the seed rather than reusing it, so a restart never replays the
+        // previous session's key material. Both peers advance through the same
+        // number of start/stop cycles in lockstep, so the two sides stay
+        // correlated on the new seed.
+        self.seed = self.seed.wrapping_add(1);
+        self.rng = Pcg64Mcg::seed_from_u64(self.seed);
+        self.qber_oscillation_rng = Pcg64Mcg::seed_from_u64(self.seed);
         Ok(())
     }
 
@@ -287,6 +292,8 @@ impl Simulator {
 mod tests {
     use crate::simulation::builder::SimulatorBuilder;
     use configs::backend::QberConfig;
+    use rand::SeedableRng;
+    use rand_pcg::Pcg64Mcg;
 
     #[test]
     fn test_under_attack_qber() {
@@ -297,10 +304,15 @@ mod tests {
 
         // 1. Normal session
         sim.initialize_session().unwrap();
+        let seed = sim.seed;
         let results_normal = sim.generate_correlation_batch().unwrap().results;
 
-        // 2. Attack session (reset session to get the same RNG sequence)
-        sim.initialize_session().unwrap();
+        // 2. Attack session on the *same* RNG sequence as the normal run, so the
+        // only difference between the two batches is the attack flag itself.
+        // initialize_session() would advance to seed+1 (a different sequence),
+        // so re-seed explicitly here instead of calling it again.
+        sim.rng = Pcg64Mcg::seed_from_u64(seed);
+        sim.qber_oscillation_rng = Pcg64Mcg::seed_from_u64(seed);
         sim.start_attack();
         let results_attack = sim.generate_correlation_batch().unwrap().results;
 
