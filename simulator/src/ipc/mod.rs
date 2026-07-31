@@ -1,4 +1,3 @@
-pub mod reader;
 pub mod writer;
 
 use serde::Deserialize;

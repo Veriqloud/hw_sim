@@ -1,6 +1,7 @@
 pub mod backend;
 pub mod cli_args;
 pub mod errors;
+pub mod hardware_session;
 pub mod ipc;
 pub mod runtime_control;
 pub mod runtime_status;
@@ -10,6 +11,7 @@ use configs::{
     ipc::{AliceIpcConfig, BobIpcConfig},
     Configuration,
 };
+use hardware_session::HardwareSessionRunner;
 use ipc::writer::actor::IPCWriterActorHandle;
 use runtime_control::{start_runtime_control_server, RuntimeControl};
 use runtime_status::RuntimeStatusFiles;
@@ -269,8 +271,8 @@ fn run_alice_workflow(
             return;
         }
 
-        tracing::info!("IPC files opened. Initializing IPCReader for Alice.");
-        let ipc_reader = ipc::reader::IPCReader::new(
+        tracing::info!("IPC files opened. Initializing hardware session for Alice.");
+        let session_runner = HardwareSessionRunner::new(
             config.command_path.clone(),
             gc_read_file_handle,
             simu_handle.clone(),
@@ -279,27 +281,29 @@ fn run_alice_workflow(
             &runtime_control,
         );
 
-        tracing::info!("Starting IPC command processing loop for Alice.");
-        let reader_result = ipc_reader.run();
+        tracing::info!("Starting hardware session for Alice.");
+        let session_result = session_runner.run();
         if let Err(e) = writer_handle.close_writers() {
             tracing::error!("Failed to close Alice IPC writer files: {}", e);
             return;
         }
 
-        if let Err(e) = reader_result {
+        if let Err(e) = session_result {
             match e {
-                ipc::reader::errors::Error::PauseRequested { duration } => {
+                hardware_session::errors::Error::PauseRequested { duration } => {
                     handle_runtime_pause(&runtime_status, &runtime_control, duration);
                 }
                 e => {
                     tracing::warn!(
-                        "IPC processing for Alice ended with an error: {:?}. Preparing for new connection.",
+                        "Hardware session for Alice ended with an error: {:?}. Preparing for new connection.",
                         e
                     );
                 }
             }
         } else {
-            tracing::info!("IPCReader for Alice exited cleanly. Preparing for new connection.");
+            tracing::info!(
+                "Hardware session for Alice exited cleanly. Preparing for new connection."
+            );
         }
         sleep(Duration::from_millis(250));
     }
@@ -343,7 +347,7 @@ fn run_bob_workflow(
 
             let gc_read_handle = s.spawn(|| {
                 std::fs::OpenOptions::new()
-                    .read(true) // <-- This must be opened for READING for the IPCReader
+                    .read(true)
                     .open(&config.gc_read_file_path)
             });
 
@@ -398,8 +402,8 @@ fn run_bob_workflow(
             return;
         }
 
-        tracing::info!("IPC files opened. Initializing IPCReader for Bob.");
-        let ipc_reader = ipc::reader::IPCReader::new(
+        tracing::info!("IPC files opened. Initializing hardware session for Bob.");
+        let session_runner = HardwareSessionRunner::new(
             config.command_path.clone(),
             gc_read_file_handle,
             simu_handle.clone(),
@@ -408,27 +412,29 @@ fn run_bob_workflow(
             &runtime_control,
         );
 
-        tracing::info!("Starting IPC command processing loop for Bob.");
-        let reader_result = ipc_reader.run();
+        tracing::info!("Starting hardware session for Bob.");
+        let session_result = session_runner.run();
         if let Err(e) = writer_handle.close_writers() {
             tracing::error!("Failed to close Bob IPC writer files: {}", e);
             return;
         }
 
-        if let Err(e) = reader_result {
+        if let Err(e) = session_result {
             match e {
-                ipc::reader::errors::Error::PauseRequested { duration } => {
+                hardware_session::errors::Error::PauseRequested { duration } => {
                     handle_runtime_pause(&runtime_status, &runtime_control, duration);
                 }
                 e => {
                     tracing::error!(
-                        "IPC processing for Bob ended with an error: {:?}. Preparing for new connection.",
+                        "Hardware session for Bob ended with an error: {:?}. Preparing for new connection.",
                         e
                     );
                 }
             }
         } else {
-            tracing::info!("IPCReader for Bob exited cleanly. Preparing for new connection.");
+            tracing::info!(
+                "Hardware session for Bob exited cleanly. Preparing for new connection."
+            );
         }
         sleep(Duration::from_millis(250));
     }
