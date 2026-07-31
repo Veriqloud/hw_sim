@@ -6,12 +6,12 @@ use sim_lib::simulation::batches::QkdBatch;
 use sim_lib::BATCH_SIZE;
 use std::collections::VecDeque;
 use std::fs::OpenOptions as StdOpenOptions;
+use std::io::Read;
 use std::time::Duration;
-use std::{fs::File, io::Read};
 
 use crate::{
     backend::actor::ActorHandle as SimulatorHandle,
-    ipc::{writer::actor::IPCWriterActorHandle, Command},
+    ipc::{fifo_connection::FifoConnection, Command},
     runtime_control::{RuntimeCommand, RuntimeControl},
 };
 
@@ -26,8 +26,7 @@ const POLLING_INTERVAL_MS: u64 = 50;
 /// Coordinates hardware commands, simulator state, and FIFO data flow for one connection.
 pub struct HardwareSessionRunner<'a> {
     command_path: String,
-    gc_read_file: File,
-    writer_handle: IPCWriterActorHandle,
+    fifo_connection: FifoConnection,
     simulator_handle: SimulatorHandle,
     last_known_command_trigger_value: u32,
     last_known_init_reset_value: u32,
@@ -104,7 +103,11 @@ impl<'a> HardwareSessionRunner<'a> {
             BATCH_SIZE
         );
         for i in 0..BATCH_SIZE {
-            match self.gc_read_file.read_exact(&mut record_buffer) {
+            match self
+                .fifo_connection
+                .gc_reader()
+                .read_exact(&mut record_buffer)
+            {
                 Ok(_) => {
                     let gc_bytes: [u8; 8] = record_buffer[0..8].try_into().unwrap();
                     gc_values.push(u64::from_le_bytes(gc_bytes));
@@ -142,17 +145,15 @@ impl<'a> HardwareSessionRunner<'a> {
 
     pub fn new(
         command_path: String,
-        gc_read_file: File,
+        fifo_connection: FifoConnection,
         simulator_handle: SimulatorHandle,
-        writer_handle: IPCWriterActorHandle,
         simulator_mode: SimulatorMode,
         runtime_control: &'a RuntimeControl,
     ) -> Self {
         let use_gcr_padding = simulator_handle.use_gcr_padding;
         HardwareSessionRunner {
             command_path,
-            gc_read_file,
-            writer_handle,
+            fifo_connection,
             simulator_handle,
             last_known_command_trigger_value: 0,
             last_known_init_reset_value: 0,
@@ -336,11 +337,11 @@ impl<'a> HardwareSessionRunner<'a> {
                             "HardwareSessionRunner (Bob): Sending GCR batch ({} items) to writer.",
                             gcr_data.len()
                         );
-                        self.writer_handle.write_gcr_batch(gcr_data).map_err(|e| {
-                            errors::Error::Unexpected {
+                        self.fifo_connection
+                            .write_gcr_batch(gcr_data)
+                            .map_err(|e| errors::Error::Unexpected {
                                 reason: format!("IPCWriter write_gcr_batch failed: {}", e),
-                            }
-                        })?;
+                            })?;
 
                         self.check_runtime_pause()?;
 
@@ -374,11 +375,11 @@ impl<'a> HardwareSessionRunner<'a> {
                             "HardwareSessionRunner (Bob): Sending angles batch ({} bytes) to writer.",
                             angles.len()
                         );
-                        self.writer_handle.write_angles_batch(angles).map_err(|e| {
-                            errors::Error::Unexpected {
+                        self.fifo_connection
+                            .write_angles_batch(angles)
+                            .map_err(|e| errors::Error::Unexpected {
                                 reason: format!("IPCWriter write_angles_batch failed: {}", e),
-                            }
-                        })?;
+                            })?;
                     }
 
                     tracing::info!(
@@ -486,11 +487,11 @@ impl<'a> HardwareSessionRunner<'a> {
                             "HardwareSessionRunner (Alice): Sending angles batch ({} bytes) to writer.",
                             angles.len()
                         );
-                        self.writer_handle.write_angles_batch(angles).map_err(|e| {
-                            errors::Error::Unexpected {
+                        self.fifo_connection
+                            .write_angles_batch(angles)
+                            .map_err(|e| errors::Error::Unexpected {
                                 reason: format!("IPCWriter write_angles_batch failed: {}", e),
-                            }
-                        })?;
+                            })?;
                     }
 
                     tracing::info!(

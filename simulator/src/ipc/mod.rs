@@ -1,3 +1,4 @@
+pub mod fifo_connection;
 pub mod writer;
 
 use serde::Deserialize;

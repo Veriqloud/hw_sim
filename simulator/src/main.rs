@@ -12,7 +12,7 @@ use configs::{
     Configuration,
 };
 use hardware_session::HardwareSessionRunner;
-use ipc::writer::actor::IPCWriterActorHandle;
+use ipc::{fifo_connection::FifoConnection, writer::actor::IPCWriterActorHandle};
 use runtime_control::{start_runtime_control_server, RuntimeControl};
 use runtime_status::RuntimeStatusFiles;
 use sim_lib::{hardware::modes::SimulatorMode, simulation::builder::SimulatorBuilder};
@@ -266,27 +266,26 @@ fn run_alice_workflow(
             }
         };
 
-        if let Err(e) = writer_handle.open_writers(gcr_file_writer, angles_file_writer) {
-            tracing::error!("Failed to open Alice IPC writer files: {}", e);
-            return;
-        }
-
-        tracing::info!("IPC files opened. Initializing hardware session for Alice.");
+        let writers = match writer_handle
+            .clone()
+            .attach_writers(gcr_file_writer, angles_file_writer)
+        {
+            Ok(writers) => writers,
+            Err(e) => {
+                tracing::error!("Failed to attach Alice FIFO writers: {}", e);
+                return;
+            }
+        };
         let session_runner = HardwareSessionRunner::new(
             config.command_path.clone(),
-            gc_read_file_handle,
+            FifoConnection::new(gc_read_file_handle, writers),
             simu_handle.clone(),
-            writer_handle.clone(),
             simulator_mode,
             &runtime_control,
         );
 
         tracing::info!("Starting hardware session for Alice.");
         let session_result = session_runner.run();
-        if let Err(e) = writer_handle.close_writers() {
-            tracing::error!("Failed to close Alice IPC writer files: {}", e);
-            return;
-        }
 
         if let Err(e) = session_result {
             match e {
@@ -397,27 +396,26 @@ fn run_bob_workflow(
             }
         };
 
-        if let Err(e) = writer_handle.open_writers(gcr_file_writer, angles_file_writer) {
-            tracing::error!("Failed to open Bob IPC writer files: {}", e);
-            return;
-        }
-
-        tracing::info!("IPC files opened. Initializing hardware session for Bob.");
+        let writers = match writer_handle
+            .clone()
+            .attach_writers(gcr_file_writer, angles_file_writer)
+        {
+            Ok(writers) => writers,
+            Err(e) => {
+                tracing::error!("Failed to attach Bob FIFO writers: {}", e);
+                return;
+            }
+        };
         let session_runner = HardwareSessionRunner::new(
             config.command_path.clone(),
-            gc_read_file_handle,
+            FifoConnection::new(gc_read_file_handle, writers),
             simu_handle.clone(),
-            writer_handle.clone(),
             simulator_mode,
             &runtime_control,
         );
 
         tracing::info!("Starting hardware session for Bob.");
         let session_result = session_runner.run();
-        if let Err(e) = writer_handle.close_writers() {
-            tracing::error!("Failed to close Bob IPC writer files: {}", e);
-            return;
-        }
 
         if let Err(e) = session_result {
             match e {
