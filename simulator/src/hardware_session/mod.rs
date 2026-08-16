@@ -558,7 +558,7 @@ impl<'a> HardwareSessionRunner<'a> {
         }
     }
 
-    pub fn run(mut self) -> Result<SessionExit, errors::Error> {
+    pub fn run(&mut self) -> Result<SessionExit, errors::Error> {
         match self.simulator_mode {
             SimulatorMode::Detector => {
                 tracing::info!(

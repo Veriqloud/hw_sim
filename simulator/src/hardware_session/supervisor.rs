@@ -9,7 +9,7 @@ use configs::ipc::{AliceIpcConfig, BobIpcConfig, Configuration as IpcConfigurati
 use sim_lib::hardware::modes::SimulatorMode;
 use snafu::Snafu;
 
-use super::{errors::Error as SessionError, HardwareSessionRunner, SessionExit};
+use super::{HardwareSessionRunner, SessionExit};
 use crate::{
     backend::actor::ActorHandle as SimulatorHandle,
     ipc::{
@@ -33,6 +33,24 @@ enum FifoConnectionError {
     },
     #[snafu(display("Failed to initialize FIFO connection: {source}"))]
     Initialize { source: WriterError },
+}
+
+#[derive(Debug, Snafu)]
+enum RecalibrationError {
+    #[snafu(display("Failed to begin runtime recalibration: {source}"))]
+    Begin { source: io::Error },
+    #[snafu(display("Failed while waiting for node idle: {source}"))]
+    WaitForNodeIdle { source: io::Error },
+    #[snafu(display("Failed to reset IPC FIFOs after runtime pause: {source}"))]
+    ResetFifos { source: configs::ipc::errors::Error },
+    #[snafu(display("Failed to recreate qkd ready file after runtime pause: {source}"))]
+    CreateReady { source: io::Error },
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum FifoPathsState {
+    ReadyForOpen,
+    ResetRequired,
 }
 
 pub struct HardwareSessionSupervisor<'config> {
@@ -60,26 +78,31 @@ impl<'config> HardwareSessionSupervisor<'config> {
     }
 
     pub fn run(self) {
+        let mut fifo_paths_state = FifoPathsState::ReadyForOpen;
+
         loop {
             let (role, command_path, simulator_mode) = self.session_parameters();
             tracing::info!("{} workflow: Waiting for a controller...", role);
-            tracing::info!("Resetting FIFOs for new {} session.", role);
 
-            if let Err(error) = self.ipc_config.reset_ipc_fifos() {
-                tracing::error!(
-                    "Failed to reset FIFOs for {}: {}. Retrying in {:?}.",
-                    role,
-                    error,
-                    SESSION_RETRY_DELAY
-                );
-                sleep(SESSION_RETRY_DELAY);
-                continue;
+            if fifo_paths_state == FifoPathsState::ResetRequired {
+                tracing::info!("Resetting FIFOs for new {} session.", role);
+                if let Err(error) = self.ipc_config.reset_ipc_fifos() {
+                    tracing::error!(
+                        "Failed to reset FIFOs for {}: {}. Retrying in {:?}.",
+                        role,
+                        error,
+                        SESSION_RETRY_DELAY
+                    );
+                    sleep(SESSION_RETRY_DELAY);
+                    continue;
+                }
             }
 
             let fifo_connection = match self.open_fifo_connection() {
                 Ok(connection) => connection,
                 Err(error @ FifoConnectionError::Open { .. }) => {
                     tracing::error!("{}. Retrying in {:?}.", error, SESSION_RETRY_DELAY);
+                    fifo_paths_state = FifoPathsState::ResetRequired;
                     sleep(SESSION_RETRY_DELAY);
                     continue;
                 }
@@ -89,7 +112,7 @@ impl<'config> HardwareSessionSupervisor<'config> {
                 }
             };
 
-            let session_runner = HardwareSessionRunner::new(
+            let mut session_runner = HardwareSessionRunner::new(
                 command_path.to_owned(),
                 fifo_connection,
                 self.simulator_handle.clone(),
@@ -98,7 +121,46 @@ impl<'config> HardwareSessionSupervisor<'config> {
             );
 
             tracing::info!("Starting hardware session for {}.", role);
-            self.handle_session_result(role, session_runner.run());
+            match session_runner.run() {
+                Ok(SessionExit::RecalibrationRequested { duration }) => {
+                    tracing::info!("Starting runtime recalibration pause for {:?}.", duration);
+                    let begin_result = self
+                        .runtime_status
+                        .begin_recalibration()
+                        .map_err(|source| RecalibrationError::Begin { source });
+
+                    drop(session_runner);
+
+                    let recalibration_result =
+                        begin_result.and_then(|()| self.finish_runtime_pause(duration));
+                    self.runtime_control.complete_pause();
+
+                    if let Err(error) = recalibration_result {
+                        tracing::error!("{}", error);
+                        return;
+                    }
+                    fifo_paths_state = FifoPathsState::ReadyForOpen;
+                }
+                Ok(SessionExit::Stopped) => {
+                    drop(session_runner);
+                    tracing::info!("Hardware session for {} stopped cleanly.", role);
+                    fifo_paths_state = FifoPathsState::ResetRequired;
+                }
+                Ok(SessionExit::PeerDisconnected) => {
+                    drop(session_runner);
+                    tracing::info!("Hardware session peer for {} disconnected.", role);
+                    fifo_paths_state = FifoPathsState::ResetRequired;
+                }
+                Err(error) => {
+                    drop(session_runner);
+                    tracing::error!(
+                        "Hardware session for {} ended with an error: {:?}. Preparing for new connection.",
+                        role,
+                        error
+                    );
+                    fifo_paths_state = FifoPathsState::ResetRequired;
+                }
+            }
             sleep(SESSION_RESTART_DELAY);
         }
     }
@@ -196,63 +258,24 @@ impl<'config> HardwareSessionSupervisor<'config> {
         .map_err(|source| FifoConnectionError::Initialize { source })
     }
 
-    fn handle_session_result(&self, role: &str, result: Result<SessionExit, SessionError>) {
-        match result {
-            Ok(SessionExit::RecalibrationRequested { duration }) => {
-                self.handle_runtime_pause(duration);
-            }
-            Ok(SessionExit::Stopped) => {
-                tracing::info!("Hardware session for {} stopped cleanly.", role);
-            }
-            Ok(SessionExit::PeerDisconnected) => {
-                tracing::info!("Hardware session peer for {} disconnected.", role);
-            }
-            Err(error) => {
-                tracing::error!(
-                    "Hardware session for {} ended with an error: {:?}. Preparing for new connection.",
-                    role,
-                    error
-                );
-            }
-        }
-    }
-
-    fn handle_runtime_pause(&self, duration: Duration) {
-        tracing::info!("Starting runtime recalibration pause for {:?}.", duration);
-
-        if let Err(error) = self.runtime_status.begin_recalibration() {
-            tracing::error!("Failed to begin runtime recalibration: {}", error);
-            self.runtime_control.complete_pause();
-            return;
-        }
-
+    fn finish_runtime_pause(&self, duration: Duration) -> Result<(), RecalibrationError> {
         tracing::info!("Waiting for node idle file before recalibration pause.");
-        if let Err(error) = self.runtime_status.wait_for_node_idle() {
-            tracing::error!("Failed while waiting for node idle file: {}", error);
-            self.runtime_control.complete_pause();
-            return;
-        }
+        self.runtime_status
+            .wait_for_node_idle()
+            .map_err(|source| RecalibrationError::WaitForNodeIdle { source })?;
 
         tracing::info!("Node idle detected. Sleeping for requested pause duration.");
         sleep(duration);
 
-        if let Err(error) = self.ipc_config.reset_ipc_fifos() {
-            tracing::error!("Failed to reset IPC FIFOs after runtime pause: {}", error);
-            self.runtime_control.complete_pause();
-            return;
-        }
-
-        if let Err(error) = self.runtime_status.create_qkd_ready() {
-            tracing::error!(
-                "Failed to recreate qkd ready file after runtime pause: {}",
-                error
-            );
-            self.runtime_control.complete_pause();
-            return;
-        }
+        self.ipc_config
+            .reset_ipc_fifos()
+            .map_err(|source| RecalibrationError::ResetFifos { source })?;
+        self.runtime_status
+            .create_qkd_ready()
+            .map_err(|source| RecalibrationError::CreateReady { source })?;
 
         tracing::info!("Runtime recalibration pause completed.");
-        self.runtime_control.complete_pause();
+        Ok(())
     }
 }
 
