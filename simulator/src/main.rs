@@ -1,17 +1,14 @@
-pub mod backend;
-pub mod cli_args;
-pub mod errors;
-pub mod hardware_session;
-pub mod ipc;
-pub mod runtime_control;
-pub mod runtime_status;
-
 use clap::Parser;
 use configs::Configuration;
-use hardware_session::supervisor::HardwareSessionSupervisor;
-use runtime_control::start_runtime_control_server;
-use runtime_status::RuntimeStatusFiles;
 use sim_lib::{hardware::modes::SimulatorMode, simulation::builder::SimulatorBuilder};
+use simulator::{
+    backend::actor::ActorHandle,
+    cli_args::CliArgs,
+    errors::{self, Error},
+    hardware_session::supervisor::HardwareSessionSupervisor,
+    runtime_control::start_runtime_control_server,
+    runtime_status::RuntimeStatusFiles,
+};
 use snafu::ResultExt;
 use std::{
     io::{Seek, SeekFrom, Write},
@@ -21,7 +18,7 @@ use tracing::trace_span;
 use tracing_subscriber::fmt::writer::MakeWriterExt;
 use uuid::Uuid;
 
-pub static CONFIG: OnceLock<Configuration> = OnceLock::new();
+static CONFIG: OnceLock<Configuration> = OnceLock::new();
 
 fn main() {
     if let Err(e) = app_main() {
@@ -31,11 +28,11 @@ fn main() {
 }
 
 // Core application logic
-fn app_main() -> Result<(), crate::errors::Error> {
+fn app_main() -> Result<(), Error> {
     let span = trace_span!("app_main");
     let _guard = span.enter();
 
-    let args = cli_args::CliArgs::parse();
+    let args = CliArgs::parse();
 
     let configuration: Configuration = if let Some(path) = args.conf.config_path {
         Configuration::new(path).context(errors::ConfigLoadSnafu)?
@@ -106,7 +103,7 @@ fn app_main() -> Result<(), crate::errors::Error> {
     };
 
     let sim = SimulatorBuilder::from_config(&CONFIG.get().unwrap().backend_config, simulator_mode);
-    let simu_handle = backend::actor::ActorHandle::new(sim);
+    let simu_handle = ActorHandle::new(sim);
     let runtime_control = start_runtime_control_server(
         CONFIG.get().unwrap().ipc_config.control_socket_path(),
         simu_handle.clone(),
