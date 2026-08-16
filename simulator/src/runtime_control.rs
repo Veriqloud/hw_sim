@@ -39,19 +39,19 @@ pub enum RuntimeCommand {
     Pause { duration: Duration },
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "command", rename_all = "snake_case")]
-enum CommandRequest {
+pub enum CommandRequest {
     StartAttack,
     StopAttack,
     Pause { duration_ms: u64 },
 }
 
-#[derive(Debug, Serialize)]
-struct CommandResponse {
-    status: &'static str,
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CommandResponse {
+    pub status: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    message: Option<String>,
+    pub message: Option<String>,
 }
 
 pub fn start_runtime_control_server(
@@ -149,13 +149,11 @@ fn handle_line(
             Ok(()) => CommandResponse::ok(),
             Err(e) => CommandResponse::error(format!("stop_attack failed: {}", e)),
         },
-        Ok(CommandRequest::Pause { duration_ms }) => {
-            enqueue_pause(
-                command_sender,
-                pause_in_progress,
-                Duration::from_millis(duration_ms),
-            )
-        }
+        Ok(CommandRequest::Pause { duration_ms }) => enqueue_pause(
+            command_sender,
+            pause_in_progress,
+            Duration::from_millis(duration_ms),
+        ),
         Err(e) => CommandResponse::error(format!("invalid json: {}", e)),
     }
 }
@@ -163,14 +161,14 @@ fn handle_line(
 impl CommandResponse {
     fn ok() -> Self {
         Self {
-            status: "ok",
+            status: "ok".to_owned(),
             message: None,
         }
     }
 
     fn error(message: String) -> Self {
         Self {
-            status: "error",
+            status: "error".to_owned(),
             message: Some(message),
         }
     }
@@ -207,7 +205,7 @@ fn remove_socket_if_exists(path: &Path) -> Result<(), std::io::Error> {
 
 #[cfg(test)]
 mod tests {
-    use super::{enqueue_pause, CommandRequest, RuntimeCommand};
+    use super::{enqueue_pause, CommandRequest, CommandResponse, RuntimeCommand};
     use std::{
         sync::{
             atomic::{AtomicBool, Ordering},
@@ -221,13 +219,15 @@ mod tests {
         let command: CommandRequest =
             serde_json::from_str(r#"{"command":"pause","duration_ms":250}"#).unwrap();
 
-        assert!(matches!(command, CommandRequest::Pause { duration_ms: 250 }));
+        assert!(matches!(
+            command,
+            CommandRequest::Pause { duration_ms: 250 }
+        ));
     }
 
     #[test]
     fn rejects_pause_without_duration() {
-        let error =
-            serde_json::from_str::<CommandRequest>(r#"{"command":"pause"}"#).unwrap_err();
+        let error = serde_json::from_str::<CommandRequest>(r#"{"command":"pause"}"#).unwrap_err();
 
         assert!(error.to_string().contains("duration_ms"));
     }
@@ -242,6 +242,37 @@ mod tests {
             serde_json::from_str::<CommandRequest>(r#"{"command":"stop_attack"}"#).unwrap(),
             CommandRequest::StopAttack
         ));
+    }
+
+    #[test]
+    fn control_messages_keep_their_wire_format() {
+        assert_eq!(
+            serde_json::to_string(&CommandRequest::StartAttack).unwrap(),
+            r#"{"command":"start_attack"}"#
+        );
+        assert_eq!(
+            serde_json::to_string(&CommandRequest::StopAttack).unwrap(),
+            r#"{"command":"stop_attack"}"#
+        );
+        assert_eq!(
+            serde_json::to_string(&CommandRequest::Pause { duration_ms: 250 }).unwrap(),
+            r#"{"command":"pause","duration_ms":250}"#
+        );
+
+        assert_eq!(
+            serde_json::to_string(&CommandResponse::ok()).unwrap(),
+            r#"{"status":"ok"}"#
+        );
+        let response = CommandResponse::error("failed".to_owned());
+        assert_eq!(
+            serde_json::to_string(&response).unwrap(),
+            r#"{"status":"error","message":"failed"}"#
+        );
+        assert_eq!(
+            serde_json::from_str::<CommandResponse>(r#"{"status":"error","message":"failed"}"#)
+                .unwrap(),
+            response
+        );
     }
 
     #[test]
