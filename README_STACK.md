@@ -42,7 +42,20 @@ config_files/
     └── qber_config.json
 ```
 
-These files are set up for local communication using FIFOs and sockets in the `/tmp` directory and are ready to be used with the provided `docker-compose.yml`.
+These files are set up for baseline local communication using FIFOs and sockets in the `/tmp` directory and are ready to be used with the provided `docker-compose.yml`. They do not currently declare the recalibration handshake paths described below.
+
+### Runtime recalibration paths
+
+Recalibration uses two local files for each player. Their paths must agree between that player's `hw_sim` and `gc` configurations:
+
+| Purpose | `hw_sim` IPC configuration | `gc` configuration |
+| --- | --- | --- |
+| Hardware availability | `qkd_ready_path` | `ready_flag_path` |
+| Node idle acknowledgement | `node_idle_path` | `node_idle_flag_path` |
+
+Alice and Bob must use different paths when they share one filesystem. Recommended local paths are `/tmp/qkd_ready_alice` and `/tmp/node_idle_alice` for Alice, and `/tmp/qkd_ready_bob` and `/tmp/node_idle_bob` for Bob. Reusing `/tmp/qkd_ready` for both independent simulator processes is unsafe because either process could recreate it before the other has completed its recalibration.
+
+When the players run on separate machines or in containers with separate `/tmp` filesystems, they may use identical local path names. Each consuming node must set `support_recalibration` to `true`, and a simulated pair must receive the `pause` command on both `hw_sim` control sockets.
 
 ## 3. Running the Stack
 

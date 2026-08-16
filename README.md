@@ -72,6 +72,26 @@ Each command receives a newline-delimited JSON response:
 {"status":"error","message":"pause already pending or running"}
 ```
 
-At startup, the simulator removes its stale idle acknowledgement, starts the filesystem watcher, and creates `/tmp/qkd_ready`.
+At startup, the simulator removes its stale idle acknowledgement, starts the filesystem watcher, and creates the configured hardware-ready file.
 
-The `pause` command starts a simulated recalibration. The simulator removes the shared `/tmp/qkd_ready` flag, waits through the watcher for the player-specific idle acknowledgement created by `gc` (`/tmp/node_idle_alice` or `/tmp/node_idle_bob`), sleeps for the requested duration, resets the IPC FIFOs, and recreates `/tmp/qkd_ready`. It removes a stale idle acknowledgement before starting, but leaves the new one for `gc` to remove when the node resumes. These paths can be overridden with `qkd_ready_path` and `node_idle_path` in `ipc_config`.
+The `pause` command starts a simulated recalibration. The simulator removes its hardware-ready file, waits through the watcher for the idle acknowledgement created by `gc`, sleeps for the requested duration, resets the IPC FIFOs, and recreates the hardware-ready file. It removes a stale idle acknowledgement before starting, but leaves the new one for `gc` to remove when the node resumes.
+
+The handshake paths must match between each `hw_sim` and `gc` pair:
+
+| `hw_sim` IPC configuration | `gc` configuration |
+| --- | --- |
+| `qkd_ready_path` | `ready_flag_path` |
+| `node_idle_path` | `node_idle_flag_path` |
+
+When Alice and Bob share the same filesystem, use player-specific paths, for example:
+
+| Player | Hardware ready | Node idle |
+| --- | --- | --- |
+| Alice | `/tmp/qkd_ready_alice` | `/tmp/node_idle_alice` |
+| Bob | `/tmp/qkd_ready_bob` | `/tmp/node_idle_bob` |
+
+Do not share one hardware-ready file between two independent simulator processes: the first simulator to finish could advertise readiness while the other is still recalibrating. On separate machines or in containers with separate `/tmp` filesystems, both players may use the same local path names.
+
+To recalibrate a local Alice/Bob pair, send `pause` to both runtime control sockets. `gc` does not forward this simulator command between players. On separate machines, the command must be issued locally on each host because these are Unix sockets, not network sockets. Each consuming node must also enable `support_recalibration` so it polls `gc`, closes its FIFO readers while the hardware is unavailable, and reopens the recreated FIFOs afterwards.
+
+This filesystem handshake belongs to the standalone `simulator` runtime. A binary embedding `sim_lib` directly gets batch generation, session lifecycle, and attack controls, but must provide its own recalibration orchestration if it needs to simulate runtime pauses.
