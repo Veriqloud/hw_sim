@@ -1,4 +1,5 @@
 pub mod errors;
+pub mod supervisor;
 
 use memmap2::MmapOptions;
 use sim_lib::hardware::modes::SimulatorMode;

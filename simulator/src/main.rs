@@ -7,22 +7,15 @@ pub mod runtime_control;
 pub mod runtime_status;
 
 use clap::Parser;
-use configs::{
-    ipc::{AliceIpcConfig, BobIpcConfig},
-    Configuration,
-};
-use hardware_session::{HardwareSessionRunner, SessionExit};
-use ipc::{fifo_connection::FifoConnection, writer::actor::IPCWriterActorHandle};
-use runtime_control::{start_runtime_control_server, RuntimeControl};
+use configs::Configuration;
+use hardware_session::supervisor::HardwareSessionSupervisor;
+use runtime_control::start_runtime_control_server;
 use runtime_status::RuntimeStatusFiles;
 use sim_lib::{hardware::modes::SimulatorMode, simulation::builder::SimulatorBuilder};
 use snafu::ResultExt;
 use std::{
-    fs,
     io::{Seek, SeekFrom, Write},
     sync::OnceLock,
-    thread::{self, sleep},
-    time::Duration,
 };
 use tracing::trace_span;
 use tracing_subscriber::fmt::writer::MakeWriterExt;
@@ -120,8 +113,8 @@ fn app_main() -> Result<(), crate::errors::Error> {
     )
     .context(errors::IOSnafu)?;
 
-    // The logic now diverges based on the IPC configuration type
-    match &CONFIG.get().unwrap().ipc_config {
+    let ipc_config = &CONFIG.get().unwrap().ipc_config;
+    match ipc_config {
         configs::ipc::Configuration::Alice(alice_config) => {
             tracing::info!("Attempting to trigger initial PPS for Alice...");
             if let Err(e) = trigger_pps(&alice_config.command_path) {
@@ -132,14 +125,6 @@ fn app_main() -> Result<(), crate::errors::Error> {
             } else {
                 tracing::info!("Initial PPS for Alice triggered successfully.");
             }
-            run_alice_workflow(
-                alice_config,
-                simu_handle,
-                simulator_mode,
-                runtime_control,
-                runtime_status,
-            );
-            tracing::error!("Alice's workflow function returned unexpectedly.");
         }
         configs::ipc::Configuration::Bob(bob_config) => {
             tracing::info!("Attempting to trigger initial PPS for Bob...");
@@ -151,16 +136,11 @@ fn app_main() -> Result<(), crate::errors::Error> {
             } else {
                 tracing::info!("Initial PPS for Bob triggered successfully.");
             }
-            run_bob_workflow(
-                bob_config,
-                simu_handle,
-                simulator_mode,
-                runtime_control,
-                runtime_status,
-            );
-            tracing::error!("Bob's workflow function returned unexpectedly.");
         }
     }
+
+    HardwareSessionSupervisor::new(ipc_config, simu_handle, runtime_control, runtime_status).run();
+    tracing::error!("Hardware session supervisor returned unexpectedly.");
 
     Ok(())
 }
@@ -186,296 +166,4 @@ fn trigger_pps(command_path: &str) -> Result<(), std::io::Error> {
         command_path
     );
     Ok(())
-}
-
-// Alice's (Source) workflow: waits for a controller connection in a loop.
-fn run_alice_workflow(
-    config: &AliceIpcConfig,
-    simu_handle: backend::actor::ActorHandle,
-    simulator_mode: SimulatorMode,
-    runtime_control: RuntimeControl,
-    runtime_status: RuntimeStatusFiles,
-) {
-    let writer_handle = IPCWriterActorHandle::new();
-
-    loop {
-        tracing::info!("Alice (Source) workflow: Waiting for a controller...");
-
-        // Reset FIFOs for the new session.
-        tracing::info!("Resetting FIFOs for new Alice session.");
-        if let Err(e) = CONFIG.get().unwrap().ipc_config.reset_ipc_fifos() {
-            tracing::error!("Failed to reset FIFOs for Alice: {}. Retrying in 500ms.", e);
-            sleep(Duration::from_millis(500));
-            continue;
-        }
-
-        // For Alice, the GCR file is not used for writing data, but the IPCWriterActor
-        // requires a file handle. We open /dev/null as a black hole for any potential writes.
-        let gcr_file_writer = match std::fs::OpenOptions::new().write(true).open("/dev/null") {
-            Ok(file) => file,
-            Err(e) => {
-                tracing::error!("Failed to open /dev/null for GCR writer: {}. This is required for Alice's workflow. Exiting.", e);
-                return;
-            }
-        };
-        // Assuming `config` is available in this scope.
-        let (angles_res, gc_read_res) = thread::scope(|s| {
-            let angles_handle = s.spawn(|| {
-                fs::OpenOptions::new()
-                    .write(true)
-                    .open(&config.angle_file_path)
-            });
-
-            let gc_read_handle = s.spawn(|| {
-                fs::OpenOptions::new()
-                    .read(true)
-                    .open(&config.gc_read_file_path)
-            });
-
-            // The .join() calls will block until the threads complete.
-            // The `unwrap()` here will propagate panics from the threads.
-            (
-                angles_handle.join().unwrap(),
-                gc_read_handle.join().unwrap(),
-            )
-        });
-
-        let angles_file_writer = match angles_res {
-            Ok(file) => file,
-            Err(e) => {
-                tracing::error!(
-                    "Failed to open angles_file_path '{}': {}. Retrying in 500ms.",
-                    &config.angle_file_path,
-                    e
-                );
-                sleep(Duration::from_millis(500));
-                continue;
-            }
-        };
-
-        let gc_read_file_handle = match gc_read_res {
-            Ok(file) => file,
-            Err(e) => {
-                tracing::error!(
-                    "Failed to open gc_read_file '{}': {}. Retrying in 500ms.",
-                    &config.gc_read_file_path,
-                    e
-                );
-                sleep(Duration::from_millis(500));
-                continue;
-            }
-        };
-
-        let fifo_connection = match FifoConnection::new(
-            gc_read_file_handle,
-            writer_handle.clone(),
-            gcr_file_writer,
-            angles_file_writer,
-        ) {
-            Ok(connection) => connection,
-            Err(e) => {
-                tracing::error!("Failed to initialize Alice FIFO connection: {}", e);
-                return;
-            }
-        };
-        let session_runner = HardwareSessionRunner::new(
-            config.command_path.clone(),
-            fifo_connection,
-            simu_handle.clone(),
-            simulator_mode,
-            &runtime_control,
-        );
-
-        tracing::info!("Starting hardware session for Alice.");
-        match session_runner.run() {
-            Ok(SessionExit::RecalibrationRequested { duration }) => {
-                handle_runtime_pause(&runtime_status, &runtime_control, duration);
-            }
-            Ok(SessionExit::Stopped) => {
-                tracing::info!("Hardware session for Alice stopped cleanly.");
-            }
-            Ok(SessionExit::PeerDisconnected) => {
-                tracing::info!("Hardware session peer for Alice disconnected.");
-            }
-            Err(e) => {
-                tracing::warn!(
-                    "Hardware session for Alice ended with an error: {:?}. Preparing for new connection.",
-                    e
-                );
-            }
-        }
-        sleep(Duration::from_millis(250));
-    }
-}
-
-// Bob's (Detector) workflow: starts immediately, does not wait for controller.
-fn run_bob_workflow(
-    config: &BobIpcConfig,
-    simu_handle: backend::actor::ActorHandle,
-    simulator_mode: SimulatorMode,
-    runtime_control: RuntimeControl,
-    runtime_status: RuntimeStatusFiles,
-) {
-    let writer_handle = IPCWriterActorHandle::new();
-
-    loop {
-        tracing::info!("Bob (Detector) workflow: Waiting for a controller...");
-
-        // Reset FIFOs for the new session.
-        tracing::info!("Resetting FIFOs for new Bob session.");
-        if let Err(e) = CONFIG.get().unwrap().ipc_config.reset_ipc_fifos() {
-            tracing::error!("Failed to reset FIFOs for Bob: {}. Retrying in 500ms.", e);
-            sleep(Duration::from_millis(500));
-            continue;
-        }
-
-        // Open file handles concurrently to prevent deadlocks with other processes.
-        // The `OpenOptions` structs must outlive the futures created by `open()`.
-        let (angles_res, gcr_res, gc_read_res) = thread::scope(|s| {
-            let angles_handle = s.spawn(|| {
-                std::fs::OpenOptions::new()
-                    .write(true)
-                    .open(&config.angle_file_path)
-            });
-
-            let gcr_handle = s.spawn(|| {
-                std::fs::OpenOptions::new()
-                    .write(true)
-                    .open(&config.gcr_file_path)
-            });
-
-            let gc_read_handle = s.spawn(|| {
-                std::fs::OpenOptions::new()
-                    .read(true)
-                    .open(&config.gc_read_file_path)
-            });
-
-            (
-                angles_handle.join().unwrap(),
-                gcr_handle.join().unwrap(),
-                gc_read_handle.join().unwrap(),
-            )
-        });
-
-        let angles_file_writer = match angles_res {
-            Ok(f) => f,
-            Err(e) => {
-                tracing::error!(
-                    "Failed to open angles_file_path '{}': {}. Retrying in 500ms.",
-                    &config.angle_file_path,
-                    e
-                );
-                sleep(Duration::from_millis(500));
-                continue;
-            }
-        };
-
-        let gcr_file_writer = match gcr_res {
-            Ok(f) => f,
-            Err(e) => {
-                tracing::error!(
-                    "Failed to open gcr_file_path '{}': {}. Retrying in 500ms.",
-                    &config.gcr_file_path,
-                    e
-                );
-                sleep(Duration::from_millis(500));
-                continue;
-            }
-        };
-
-        let gc_read_file_handle = match gc_read_res {
-            Ok(f) => f,
-            Err(e) => {
-                tracing::error!(
-                    "Failed to open gc_read_file_path '{}': {}. Retrying in 500ms.",
-                    &config.gc_read_file_path,
-                    e
-                );
-                sleep(Duration::from_millis(500));
-                continue;
-            }
-        };
-
-        let fifo_connection = match FifoConnection::new(
-            gc_read_file_handle,
-            writer_handle.clone(),
-            gcr_file_writer,
-            angles_file_writer,
-        ) {
-            Ok(connection) => connection,
-            Err(e) => {
-                tracing::error!("Failed to initialize Bob FIFO connection: {}", e);
-                return;
-            }
-        };
-        let session_runner = HardwareSessionRunner::new(
-            config.command_path.clone(),
-            fifo_connection,
-            simu_handle.clone(),
-            simulator_mode,
-            &runtime_control,
-        );
-
-        tracing::info!("Starting hardware session for Bob.");
-        match session_runner.run() {
-            Ok(SessionExit::RecalibrationRequested { duration }) => {
-                handle_runtime_pause(&runtime_status, &runtime_control, duration);
-            }
-            Ok(SessionExit::Stopped) => {
-                tracing::info!("Hardware session for Bob stopped cleanly.");
-            }
-            Ok(SessionExit::PeerDisconnected) => {
-                tracing::info!("Hardware session peer for Bob disconnected.");
-            }
-            Err(e) => {
-                tracing::error!(
-                    "Hardware session for Bob ended with an error: {:?}. Preparing for new connection.",
-                    e
-                );
-            }
-        }
-        sleep(Duration::from_millis(250));
-    }
-}
-
-fn handle_runtime_pause(
-    runtime_status: &RuntimeStatusFiles,
-    runtime_control: &RuntimeControl,
-    duration: Duration,
-) {
-    tracing::info!("Starting runtime recalibration pause for {:?}.", duration);
-
-    if let Err(e) = runtime_status.begin_recalibration() {
-        tracing::error!("Failed to begin runtime recalibration: {}", e);
-        runtime_control.complete_pause();
-        return;
-    }
-
-    tracing::info!("Waiting for node idle file before recalibration pause.");
-    if let Err(e) = runtime_status.wait_for_node_idle() {
-        tracing::error!("Failed while waiting for node idle file: {}", e);
-        runtime_control.complete_pause();
-        return;
-    }
-
-    tracing::info!("Node idle detected. Sleeping for requested pause duration.");
-    sleep(duration);
-
-    if let Err(e) = CONFIG.get().unwrap().ipc_config.reset_ipc_fifos() {
-        tracing::error!("Failed to reset IPC FIFOs after runtime pause: {}", e);
-        runtime_control.complete_pause();
-        return;
-    }
-
-    if let Err(e) = runtime_status.create_qkd_ready() {
-        tracing::error!(
-            "Failed to recreate qkd ready file after runtime pause: {}",
-            e
-        );
-        runtime_control.complete_pause();
-        return;
-    }
-
-    tracing::info!("Runtime recalibration pause completed.");
-    runtime_control.complete_pause();
 }
