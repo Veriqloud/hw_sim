@@ -11,7 +11,7 @@ use configs::{
     ipc::{AliceIpcConfig, BobIpcConfig},
     Configuration,
 };
-use hardware_session::HardwareSessionRunner;
+use hardware_session::{HardwareSessionRunner, SessionExit};
 use ipc::{fifo_connection::FifoConnection, writer::actor::IPCWriterActorHandle};
 use runtime_control::{start_runtime_control_server, RuntimeControl};
 use runtime_status::RuntimeStatusFiles;
@@ -287,24 +287,22 @@ fn run_alice_workflow(
         );
 
         tracing::info!("Starting hardware session for Alice.");
-        let session_result = session_runner.run();
-
-        if let Err(e) = session_result {
-            match e {
-                hardware_session::errors::Error::PauseRequested { duration } => {
-                    handle_runtime_pause(&runtime_status, &runtime_control, duration);
-                }
-                e => {
-                    tracing::warn!(
-                        "Hardware session for Alice ended with an error: {:?}. Preparing for new connection.",
-                        e
-                    );
-                }
+        match session_runner.run() {
+            Ok(SessionExit::RecalibrationRequested { duration }) => {
+                handle_runtime_pause(&runtime_status, &runtime_control, duration);
             }
-        } else {
-            tracing::info!(
-                "Hardware session for Alice exited cleanly. Preparing for new connection."
-            );
+            Ok(SessionExit::Stopped) => {
+                tracing::info!("Hardware session for Alice stopped cleanly.");
+            }
+            Ok(SessionExit::PeerDisconnected) => {
+                tracing::info!("Hardware session peer for Alice disconnected.");
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "Hardware session for Alice ended with an error: {:?}. Preparing for new connection.",
+                    e
+                );
+            }
         }
         sleep(Duration::from_millis(250));
     }
@@ -419,24 +417,22 @@ fn run_bob_workflow(
         );
 
         tracing::info!("Starting hardware session for Bob.");
-        let session_result = session_runner.run();
-
-        if let Err(e) = session_result {
-            match e {
-                hardware_session::errors::Error::PauseRequested { duration } => {
-                    handle_runtime_pause(&runtime_status, &runtime_control, duration);
-                }
-                e => {
-                    tracing::error!(
-                        "Hardware session for Bob ended with an error: {:?}. Preparing for new connection.",
-                        e
-                    );
-                }
+        match session_runner.run() {
+            Ok(SessionExit::RecalibrationRequested { duration }) => {
+                handle_runtime_pause(&runtime_status, &runtime_control, duration);
             }
-        } else {
-            tracing::info!(
-                "Hardware session for Bob exited cleanly. Preparing for new connection."
-            );
+            Ok(SessionExit::Stopped) => {
+                tracing::info!("Hardware session for Bob stopped cleanly.");
+            }
+            Ok(SessionExit::PeerDisconnected) => {
+                tracing::info!("Hardware session peer for Bob disconnected.");
+            }
+            Err(e) => {
+                tracing::error!(
+                    "Hardware session for Bob ended with an error: {:?}. Preparing for new connection.",
+                    e
+                );
+            }
         }
         sleep(Duration::from_millis(250));
     }

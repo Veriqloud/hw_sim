@@ -7,6 +7,7 @@ use sim_lib::BATCH_SIZE;
 use std::collections::VecDeque;
 use std::fs::OpenOptions as StdOpenOptions;
 use std::io::Read;
+use std::ops::ControlFlow;
 use std::time::Duration;
 
 use crate::{
@@ -22,6 +23,13 @@ const GENERATION_START_MMIO_MAP_OFFSET: u64 = 0x1000;
 const MMIO_MAP_LEN: usize = 0x1000;
 const GENERATION_START_ADDR_BYTES: usize = 24;
 const POLLING_INTERVAL_MS: u64 = 50;
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum SessionExit {
+    Stopped,
+    PeerDisconnected,
+    RecalibrationRequested { duration: Duration },
+}
 
 /// Coordinates hardware commands, simulator state, and FIFO data flow for one connection.
 pub struct HardwareSessionRunner<'a> {
@@ -136,11 +144,22 @@ impl<'a> HardwareSessionRunner<'a> {
         if let Some(batch) = self.batch_queue.pop_front() {
             return Ok(batch);
         }
-        self.simulator_handle
-            .generate_qkd_batch()
-            .map_err(|e| errors::Error::Unexpected {
-                reason: format!("generate_qkd_batch failed: {}", e),
-            })
+        match self.simulator_handle.generate_qkd_batch() {
+            Ok(batch) => Ok(batch),
+            Err(error) => {
+                self.simulator_handle.stop_session().map_err(|e| {
+                    errors::Error::Unexpected {
+                        reason: format!(
+                            "Simulator stop_session failed after batch generation error: {}",
+                            e
+                        ),
+                    }
+                })?;
+                Err(errors::Error::Unexpected {
+                    reason: format!("generate_qkd_batch failed: {}", error),
+                })
+            }
+        }
     }
 
     pub fn new(
@@ -164,7 +183,7 @@ impl<'a> HardwareSessionRunner<'a> {
         }
     }
 
-    fn check_runtime_pause(&mut self) -> Result<(), errors::Error> {
+    fn check_runtime_pause(&mut self) -> Result<ControlFlow<SessionExit>, errors::Error> {
         match self.runtime_control.try_recv() {
             Some(RuntimeCommand::Pause { duration }) => {
                 tracing::info!(
@@ -177,9 +196,11 @@ impl<'a> HardwareSessionRunner<'a> {
                     .map_err(|e| errors::Error::Unexpected {
                         reason: format!("Simulator stop_session failed before pause: {}", e),
                     })?;
-                Err(errors::Error::PauseRequested { duration })
+                Ok(ControlFlow::Break(
+                    SessionExit::RecalibrationRequested { duration },
+                ))
             }
-            None => Ok(()),
+            None => Ok(ControlFlow::Continue(())),
         }
     }
 
@@ -245,9 +266,13 @@ impl<'a> HardwareSessionRunner<'a> {
         command
     }
 
-    fn await_next_command(&mut self) -> Result<Command, errors::Error> {
+    fn await_next_command(
+        &mut self,
+    ) -> Result<ControlFlow<SessionExit, Command>, errors::Error> {
         loop {
-            self.check_runtime_pause()?;
+            if let ControlFlow::Break(exit) = self.check_runtime_pause()? {
+                return Ok(ControlFlow::Break(exit));
+            }
 
             let device_path_clone = self.command_path.clone();
             let init_reset_read_result = read_u32_from_mmio(
@@ -277,7 +302,7 @@ impl<'a> HardwareSessionRunner<'a> {
             match generation_start_read_result {
                 Ok(current_value) => {
                     if let Some(command) = self.observe_generation_start_transition(current_value) {
-                        return Ok(command);
+                        return Ok(ControlFlow::Continue(command));
                     }
                 }
                 Err(join_err) => {
@@ -292,7 +317,7 @@ impl<'a> HardwareSessionRunner<'a> {
     }
 
     /// Runs the Detector (Bob) workflow.
-    fn run_detector_workflow(&mut self) -> Result<(), errors::Error> {
+    fn run_detector_workflow(&mut self) -> Result<SessionExit, errors::Error> {
         self.last_known_command_trigger_value = 0;
         self.last_known_init_reset_value = 0;
 
@@ -301,7 +326,10 @@ impl<'a> HardwareSessionRunner<'a> {
                 "HardwareSessionRunner (Bob): Awaiting next command via MMIO (last known trigger value: {})...",
                 self.last_known_command_trigger_value
             );
-            let cmd = self.await_next_command()?;
+            let cmd = match self.await_next_command()? {
+                ControlFlow::Continue(command) => command,
+                ControlFlow::Break(exit) => return Ok(exit),
+            };
             tracing::info!(
                 "HardwareSessionRunner (Bob): Processing command: {:?}",
                 &cmd
@@ -321,16 +349,12 @@ impl<'a> HardwareSessionRunner<'a> {
                     tracing::info!("HardwareSessionRunner (Bob): Simulator session started.");
 
                     loop {
-                        self.check_runtime_pause()?;
+                        if let ControlFlow::Break(exit) = self.check_runtime_pause()? {
+                            return Ok(exit);
+                        }
 
                         // Pop a pre-generated batch or generate a fresh one.
-                        let batch = match self.next_batch() {
-                            Ok(b) => b,
-                            Err(e) => {
-                                tracing::warn!("HardwareSessionRunner (Bob): Failed to get batch, ending generation loop. Error: {}", e);
-                                break;
-                            }
-                        };
+                        let batch = self.next_batch()?;
 
                         let gcr_data = batch.to_gcr_batch(self.use_gcr_padding);
                         tracing::info!(
@@ -343,7 +367,9 @@ impl<'a> HardwareSessionRunner<'a> {
                                 reason: format!("IPCWriter write_gcr_batch failed: {}", e),
                             })?;
 
-                        self.check_runtime_pause()?;
+                        if let ControlFlow::Break(exit) = self.check_runtime_pause()? {
+                            return Ok(exit);
+                        }
 
                         let echoed_gc_values = match self.read_gc_batch_from_file() {
                             Ok(vals) => vals,
@@ -368,7 +394,9 @@ impl<'a> HardwareSessionRunner<'a> {
                             return Err(errors::Error::Unexpected { reason });
                         }
 
-                        self.check_runtime_pause()?;
+                        if let ControlFlow::Break(exit) = self.check_runtime_pause()? {
+                            return Ok(exit);
+                        }
 
                         let angles = batch.to_bob_angle_fifo();
                         tracing::info!(
@@ -396,7 +424,7 @@ impl<'a> HardwareSessionRunner<'a> {
                     tracing::info!(
                         "HardwareSessionRunner (Bob): Session peers detached. Exiting for FIFO reset."
                     );
-                    return Ok(());
+                    return Ok(SessionExit::PeerDisconnected);
                 }
                 Command::Stop => {
                     tracing::info!("HardwareSessionRunner (Bob): Stop command received.");
@@ -408,14 +436,14 @@ impl<'a> HardwareSessionRunner<'a> {
                     tracing::info!(
                         "HardwareSessionRunner (Bob): Successfully processed Stop command. Exiting."
                     );
-                    return Ok(());
+                    return Ok(SessionExit::Stopped);
                 }
             }
         }
     }
 
     /// Runs the Source (Alice) workflow.
-    fn run_source_workflow(&mut self) -> Result<(), errors::Error> {
+    fn run_source_workflow(&mut self) -> Result<SessionExit, errors::Error> {
         self.last_known_command_trigger_value = 0;
         self.last_known_init_reset_value = 0;
 
@@ -424,7 +452,10 @@ impl<'a> HardwareSessionRunner<'a> {
                 "Awaiting next command via MMIO (last known trigger value: {})...",
                 self.last_known_command_trigger_value
             );
-            let cmd = self.await_next_command()?;
+            let cmd = match self.await_next_command()? {
+                ControlFlow::Continue(command) => command,
+                ControlFlow::Break(exit) => return Ok(exit),
+            };
             tracing::info!(
                 "HardwareSessionRunner (Alice): Processing command: {:?}",
                 &cmd
@@ -444,7 +475,9 @@ impl<'a> HardwareSessionRunner<'a> {
                     tracing::info!("HardwareSessionRunner (Alice): Simulator session started.");
 
                     loop {
-                        self.check_runtime_pause()?;
+                        if let ControlFlow::Break(exit) = self.check_runtime_pause()? {
+                            return Ok(exit);
+                        }
 
                         let received_gc_values = match self.read_gc_batch_from_file() {
                             Ok(vals) => vals,
@@ -469,18 +502,16 @@ impl<'a> HardwareSessionRunner<'a> {
                             return Err(errors::Error::Unexpected { reason });
                         }
 
-                        self.check_runtime_pause()?;
+                        if let ControlFlow::Break(exit) = self.check_runtime_pause()? {
+                            return Ok(exit);
+                        }
 
                         // Pop a pre-generated batch or generate a fresh one.
-                        let batch = match self.next_batch() {
-                            Ok(b) => b,
-                            Err(e) => {
-                                tracing::warn!("HardwareSessionRunner (Alice): Failed to get batch, ending generation loop. Error: {}", e);
-                                break;
-                            }
-                        };
+                        let batch = self.next_batch()?;
 
-                        self.check_runtime_pause()?;
+                        if let ControlFlow::Break(exit) = self.check_runtime_pause()? {
+                            return Ok(exit);
+                        }
 
                         let angles = batch.to_alice_fifo();
                         tracing::info!(
@@ -508,7 +539,7 @@ impl<'a> HardwareSessionRunner<'a> {
                     tracing::info!(
                         "HardwareSessionRunner (Alice): Session peers detached. Exiting for FIFO reset."
                     );
-                    return Ok(());
+                    return Ok(SessionExit::PeerDisconnected);
                 }
                 Command::Stop => {
                     tracing::info!("HardwareSessionRunner (Alice): Stop command received.");
@@ -520,13 +551,13 @@ impl<'a> HardwareSessionRunner<'a> {
                     tracing::info!(
                         "HardwareSessionRunner (Alice): Successfully processed Stop command. Exiting."
                     );
-                    return Ok(());
+                    return Ok(SessionExit::Stopped);
                 }
             }
         }
     }
 
-    pub fn run(mut self) -> Result<(), errors::Error> {
+    pub fn run(mut self) -> Result<SessionExit, errors::Error> {
         match self.simulator_mode {
             SimulatorMode::Detector => {
                 tracing::info!(
