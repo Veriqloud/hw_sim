@@ -72,6 +72,24 @@ Each command receives a newline-delimited JSON response:
 {"status":"error","message":"pause already pending or running"}
 ```
 
+### Local control client
+
+The `hw_sim_control` binary sends a command to both members of a local Alice/Bob pair:
+
+```bash
+cargo run -p hw_sim_control -- start_attack
+cargo run -p hw_sim_control -- stop_attack
+cargo run -p hw_sim_control -- recalibrate --duration 5000
+```
+
+It uses the default sockets listed above. Custom local paths can be selected with
+`--alice-socket PATH` and `--bob-socket PATH`. Commands are sent to both sockets
+concurrently, and the process exits with an error if either simulator rejects the command or
+cannot be reached.
+
+The client only supports local Unix sockets. It does not expose TCP, IP address, or port
+options.
+
 At startup, the simulator removes its stale idle acknowledgement, starts the filesystem watcher, and creates the configured hardware-ready file.
 
 The `pause` command starts a simulated recalibration. The simulator removes its hardware-ready file, waits through the watcher for the idle acknowledgement created by `gc`, sleeps for the requested duration, resets the IPC FIFOs, and recreates the hardware-ready file. It removes a stale idle acknowledgement before starting, but leaves the new one for `gc` to remove when the node resumes.

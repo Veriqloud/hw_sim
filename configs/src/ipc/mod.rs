@@ -17,6 +17,9 @@ const GC_FIFO_STATUS_ABS_OFFSET: u64 = 0x1000 + 52;
 // Bit 1 means the GC input FIFO is empty/ready to accept a new batch.
 const GC_IN_EMPTY_BIT: u32 = 0b10;
 
+pub const DEFAULT_ALICE_CONTROL_SOCKET_PATH: &str = "/tmp/hw_sim_alice_control.socket";
+pub const DEFAULT_BOB_CONTROL_SOCKET_PATH: &str = "/tmp/hw_sim_bob_control.socket";
+
 #[derive(Debug, Deserialize, Serialize, PartialEq, Clone, JsonSchema)]
 pub struct AliceIpcConfig {
     pub command_path: String,
@@ -51,11 +54,11 @@ pub struct BobIpcConfig {
 }
 
 fn default_alice_control_socket_path() -> String {
-    "/tmp/hw_sim_alice_control.socket".to_string()
+    DEFAULT_ALICE_CONTROL_SOCKET_PATH.to_owned()
 }
 
 fn default_bob_control_socket_path() -> String {
-    "/tmp/hw_sim_bob_control.socket".to_string()
+    DEFAULT_BOB_CONTROL_SOCKET_PATH.to_owned()
 }
 
 fn default_qkd_ready_path() -> String {
