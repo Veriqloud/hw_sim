@@ -1,21 +1,36 @@
 use super::errors::Error;
+use nix::fcntl::{fcntl, FcntlArg, OFlag};
 use std::fmt::Debug;
 use std::fs::File;
-use std::io::Write;
-use std::sync::mpsc;
+use std::io::{self, Write};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    mpsc, Arc,
+};
+use std::thread;
+use std::time::Duration;
+
+const WRITE_RETRY_DELAY: Duration = Duration::from_millis(10);
+
+enum WriteStatus {
+    Completed,
+    Cancelled,
+}
 
 pub struct IPCWriterActor {
     receiver: mpsc::Receiver<WriterMessage>,
     gcr_file: Option<File>,
     angles_file: Option<File>,
+    close_requested: Arc<AtomicBool>,
 }
 
 impl IPCWriterActor {
-    pub fn new(receiver: mpsc::Receiver<WriterMessage>) -> Self {
+    pub fn new(receiver: mpsc::Receiver<WriterMessage>, close_requested: Arc<AtomicBool>) -> Self {
         IPCWriterActor {
             receiver,
             gcr_file: None,
             angles_file: None,
+            close_requested,
         }
     }
 
@@ -32,13 +47,18 @@ impl IPCWriterActor {
 
         // Flatten the Vec<[u8; 8]> into a single Vec<u8> for one write call.
         let buffer: Vec<u8> = gcr_data_batch.into_iter().flatten().collect();
-        gcr_file.write_all(&buffer).map_err(|e| Error::Channel {
-            e: format!("Failed to write GCR batch to FIFO: {}", e),
-        })?;
-        gcr_file.flush().map_err(|e| Error::Channel {
-            e: format!("Failed to flush GCR FIFO: {}", e),
-        })?;
-        tracing::info!("WriterActor: Successfully wrote GCR batch.");
+        match write_interruptibly(&self.close_requested, gcr_file, &buffer).map_err(|e| {
+            Error::Channel {
+                e: format!("Failed to write GCR batch to FIFO: {}", e),
+            }
+        })? {
+            WriteStatus::Completed => {
+                tracing::info!("WriterActor: Successfully wrote GCR batch.");
+            }
+            WriteStatus::Cancelled => {
+                tracing::debug!("WriterActor: GCR batch interrupted while closing writers.");
+            }
+        }
         Ok(())
     }
 
@@ -52,16 +72,21 @@ impl IPCWriterActor {
             .angles_file
             .as_mut()
             .ok_or(Error::WriterUnavailable { writer: "angles" })?;
-        angles_file.write_all(&angles_batch).map_err(|e| {
-            tracing::error!("Failed to write angles batch: {:?}", e);
-            Error::Channel {
-                e: format!("Failed to write angles batch to FIFO: {}", e),
+        match write_interruptibly(&self.close_requested, angles_file, &angles_batch).map_err(
+            |e| {
+                tracing::error!("Failed to write angles batch: {:?}", e);
+                Error::Channel {
+                    e: format!("Failed to write angles batch to FIFO: {}", e),
+                }
+            },
+        )? {
+            WriteStatus::Completed => {
+                tracing::info!("WriterActor: Successfully wrote angles batch.");
             }
-        })?;
-        angles_file.flush().map_err(|e| Error::Channel {
-            e: format!("Failed to flush angles FIFO: {}", e),
-        })?;
-        tracing::info!("WriterActor: Successfully wrote angles batch.");
+            WriteStatus::Cancelled => {
+                tracing::debug!("WriterActor: angles batch interrupted while closing writers.");
+            }
+        }
         Ok(())
     }
 
@@ -70,8 +95,11 @@ impl IPCWriterActor {
             return Err(Error::WritersAlreadyOpen);
         }
 
+        set_nonblocking(&gcr_file)?;
+        set_nonblocking(&angles_file)?;
         self.gcr_file = Some(gcr_file);
         self.angles_file = Some(angles_file);
+        self.close_requested.store(false, Ordering::Release);
         tracing::info!("WriterActor: IPC writer files attached.");
         Ok(())
     }
@@ -109,6 +137,46 @@ impl IPCWriterActor {
     }
 }
 
+fn write_interruptibly(
+    close_requested: &AtomicBool,
+    mut file: &File,
+    mut buffer: &[u8],
+) -> io::Result<WriteStatus> {
+    while !buffer.is_empty() {
+        match file.write(buffer) {
+            Ok(0) => {
+                return Err(io::Error::new(
+                    io::ErrorKind::WriteZero,
+                    "failed to write the complete FIFO batch",
+                ));
+            }
+            Ok(written) => buffer = &buffer[written..],
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
+            Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                if close_requested.load(Ordering::Acquire) {
+                    return Ok(WriteStatus::Cancelled);
+                }
+                thread::sleep(WRITE_RETRY_DELAY);
+            }
+            Err(error) => return Err(error),
+        }
+    }
+
+    file.flush()?;
+    Ok(WriteStatus::Completed)
+}
+
+fn set_nonblocking(file: &File) -> Result<(), Error> {
+    let flags = fcntl(file, FcntlArg::F_GETFL).map_err(|source| Error::IO {
+        source: source.into(),
+    })?;
+    let flags = OFlag::from_bits_truncate(flags);
+    fcntl(file, FcntlArg::F_SETFL(flags | OFlag::O_NONBLOCK)).map_err(|source| Error::IO {
+        source: source.into(),
+    })?;
+    Ok(())
+}
+
 fn send_reply(reply_to: mpsc::Sender<Result<(), Error>>, result: Result<(), Error>) {
     if reply_to.send(result).is_err() {
         tracing::warn!("IPCWriterActor: Requester dropped before receiving its reply.");
@@ -141,17 +209,22 @@ pub fn run_writer_actor(mut actor: IPCWriterActor) {
 #[derive(Debug, Clone)]
 pub struct IPCWriterActorHandle {
     sender: mpsc::Sender<WriterMessage>,
+    close_requested: Arc<AtomicBool>,
 }
 
 impl IPCWriterActorHandle {
     pub fn new() -> Self {
         let (sender, receiver) = mpsc::channel();
-        let actor = IPCWriterActor::new(receiver);
+        let close_requested = Arc::new(AtomicBool::new(false));
+        let actor = IPCWriterActor::new(receiver, Arc::clone(&close_requested));
         std::thread::spawn(move || {
             run_writer_actor(actor);
         });
 
-        Self { sender }
+        Self {
+            sender,
+            close_requested,
+        }
     }
 
     fn send_command_and_wait(
@@ -198,6 +271,7 @@ impl IPCWriterActorHandle {
     }
 
     pub(in crate::ipc) fn close_writers(&self) -> Result<(), Error> {
+        self.close_requested.store(true, Ordering::Release);
         self.send_command_and_wait(|reply_to| WriterMessage::CloseWriters { reply_to })
     }
 }
@@ -205,7 +279,14 @@ impl IPCWriterActorHandle {
 #[cfg(test)]
 mod tests {
     use super::IPCWriterActorHandle;
-    use std::fs;
+    use nix::{fcntl::OFlag, sys::stat::Mode, unistd::mkfifo};
+    use std::{
+        fs::{self, OpenOptions},
+        os::unix::fs::OpenOptionsExt,
+        sync::mpsc,
+        thread,
+        time::Duration,
+    };
     use uuid::Uuid;
 
     #[test]
@@ -239,6 +320,60 @@ mod tests {
         cloned_handle.close_writers().unwrap();
 
         assert_eq!(fs::read(&second_angles_path).unwrap(), vec![6, 7]);
+        fs::remove_dir_all(base).unwrap();
+    }
+
+    #[test]
+    fn close_writers_interrupts_blocked_fifo_write() {
+        let base = std::env::temp_dir().join(format!("hw_sim_writer_{}", Uuid::new_v4()));
+        fs::create_dir_all(&base).unwrap();
+        let angles_path = base.join("angles");
+        mkfifo(&angles_path, Mode::S_IRUSR | Mode::S_IWUSR).unwrap();
+
+        let mut angles_reader = Some(
+            OpenOptions::new()
+                .read(true)
+                .custom_flags(OFlag::O_NONBLOCK.bits())
+                .open(&angles_path)
+                .unwrap(),
+        );
+        let angles_writer = OpenOptions::new().write(true).open(&angles_path).unwrap();
+        let handle = IPCWriterActorHandle::new();
+        handle
+            .attach_writers(fs::File::create(base.join("gcr")).unwrap(), angles_writer)
+            .unwrap();
+
+        handle.write_angles_batch(vec![0; 2 * 1024 * 1024]).unwrap();
+        thread::sleep(Duration::from_millis(50));
+
+        let close_handle = handle.clone();
+        let (result_sender, result_receiver) = mpsc::channel();
+        let close_thread = thread::spawn(move || {
+            result_sender.send(close_handle.close_writers()).unwrap();
+        });
+        let close_result = result_receiver.recv_timeout(Duration::from_millis(500));
+
+        if close_result.is_err() {
+            drop(angles_reader.take());
+            let _ = result_receiver.recv_timeout(Duration::from_secs(1));
+        }
+        close_thread.join().unwrap();
+        close_result
+            .expect("closing writers remained blocked behind a FIFO write")
+            .unwrap();
+
+        drop(angles_reader.take());
+        let resumed_angles_path = base.join("angles_resumed");
+        handle
+            .attach_writers(
+                fs::File::create(base.join("gcr_resumed")).unwrap(),
+                fs::File::create(&resumed_angles_path).unwrap(),
+            )
+            .unwrap();
+        handle.write_angles_batch(vec![1, 2, 3]).unwrap();
+        handle.close_writers().unwrap();
+
+        assert_eq!(fs::read(resumed_angles_path).unwrap(), vec![1, 2, 3]);
         fs::remove_dir_all(base).unwrap();
     }
 }
