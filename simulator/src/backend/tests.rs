@@ -68,14 +68,13 @@ fn valid_config_with_decoy() {
 }
 
 #[test]
-fn generate_bytes() {
-    // test correctness of consecutive calls to correlations_random
+fn rng_streams_stay_synchronized_across_sessions() {
     let hw = HardwareBuilder::new().with_pulse_distance(1e-8).build();
     let now = Instant::now();
     let mut sim_a: Simulator = SimulatorBuilder::new()
         .with_hardware(hw.clone())
         .with_rng(Pcg64Mcg::seed_from_u64(42))
-        .with_mode(SimulatorMode::Source) // Added mode
+        .with_mode(SimulatorMode::Source)
         .with_eta(1e-2)
         .with_qb_err(QberConfig::Fixed { value: 0.0 })
         .with_angles(vec![0, 32, 64, 96])
@@ -86,7 +85,7 @@ fn generate_bytes() {
     let mut sim_b = SimulatorBuilder::new()
         .with_hardware(hw.clone())
         .with_rng(Pcg64Mcg::seed_from_u64(42))
-        .with_mode(SimulatorMode::Source) // Changed to Source for identical comparison
+        .with_mode(SimulatorMode::Detector)
         .with_eta(1e-2)
         .with_qb_err(QberConfig::Fixed { value: 0.0 })
         .with_angles(vec![0, 32, 64, 96])
@@ -115,7 +114,12 @@ fn generate_bytes() {
         "Result bits for batch 1 should be identical"
     );
 
-    // Batch 2
+    sim_a.setup_session_end().unwrap();
+    sim_b.setup_session_end().unwrap();
+    sim_a.initialize_session().unwrap();
+    sim_b.initialize_session().unwrap();
+
+    // First batch of the new session
     let batch_a2 = sim_a.generate_batch().unwrap();
     let batch_b2 = sim_b.generate_batch().unwrap();
     let gcr_a2_raw = batch_a2.to_gcr_batch(sim_a.use_gcr_padding());
@@ -128,6 +132,10 @@ fn generate_bytes() {
         gcr_a2_raw.iter().map(extract_result).collect::<Vec<_>>(),
         gcr_b2_raw.iter().map(extract_result).collect::<Vec<_>>(),
         "Result bits for batch 2 should be identical"
+    );
+    assert_ne!(
+        angles_a1, angles_a2,
+        "A new session must continue the random stream instead of replaying batch 1"
     );
 
     sim_a.setup_session_end().unwrap();
@@ -532,38 +540,50 @@ fn test_qkd_attack_signal_flow() {
     let seed = 42;
     let config_angles = vec![0, 32, 64, 96];
 
-    let sim = SimulatorBuilder::new()
-        .with_hardware(hw)
-        .with_rng(Pcg64Mcg::seed_from_u64(seed))
-        .with_seed(seed)
-        .with_mode(SimulatorMode::Detector)
-        .with_qb_err(QberConfig::Fixed { value: 0.0 }) // Normal QBER is 0%
-        .with_angles(config_angles)
-        .with_modulator_state(ModulatorState::Random)
-        .with_gcr_padding(false)
-        .build();
-
-    let sim_handle = crate::backend::actor::ActorHandle::new(sim);
+    let make_handle = || {
+        let simulator = SimulatorBuilder::new()
+            .with_hardware(hw.clone())
+            .with_rng(Pcg64Mcg::seed_from_u64(seed))
+            .with_seed(seed)
+            .with_mode(SimulatorMode::Detector)
+            .with_qb_err(QberConfig::Fixed { value: 0.0 })
+            .with_angles(config_angles.clone())
+            .with_modulator_state(ModulatorState::Random)
+            .with_gcr_padding(false)
+            .build();
+        crate::backend::actor::ActorHandle::new(simulator)
+    };
+    let sim_handle = make_handle();
+    let control_handle = make_handle();
 
     // 1. Reference Batch (Normal mode)
     sim_handle.start_session().unwrap();
+    control_handle.start_session().unwrap();
     let batch_normal = sim_handle.generate_qkd_batch().unwrap();
-    // The test sim has use_gcr_padding=false; base_gc=0 after start_session.
+    let batch_control = control_handle.generate_qkd_batch().unwrap();
     let gcr_normal = batch_normal.to_gcr_batch(sim_handle.use_gcr_padding);
+    let gcr_control = batch_control.to_gcr_batch(control_handle.use_gcr_padding);
     let results_normal: Vec<u8> = gcr_normal.iter().map(|gcr| (gcr[6] >> 1) & 1).collect();
-    sim_handle.stop_session().unwrap();
+    let results_control: Vec<u8> = gcr_control.iter().map(|gcr| (gcr[6] >> 1) & 1).collect();
+    assert_eq!(results_normal, results_control);
 
-    // 2. Attack Batch (Reset session to get same RNG sequence, then start attack)
-    sim_handle.start_session().unwrap();
+    // 2. Activate the attack while the session is running.
     sim_handle.start_attack().unwrap();
     let batch_attack = sim_handle.generate_qkd_batch().unwrap();
+    let batch_attack_control = control_handle.generate_qkd_batch().unwrap();
     let gcr_attack = batch_attack.to_gcr_batch(sim_handle.use_gcr_padding);
+    let gcr_attack_control =
+        batch_attack_control.to_gcr_batch(control_handle.use_gcr_padding);
     let results_attack: Vec<u8> = gcr_attack.iter().map(|gcr| (gcr[6] >> 1) & 1).collect();
+    let results_attack_control: Vec<u8> = gcr_attack_control
+        .iter()
+        .map(|gcr| (gcr[6] >> 1) & 1)
+        .collect();
 
     // Calculate QBER
     let mut diffs = 0;
     for i in 0..BATCH_SIZE {
-        if results_normal[i] != results_attack[i] {
+        if results_attack_control[i] != results_attack[i] {
             diffs += 1;
         }
     }
@@ -576,19 +596,24 @@ fn test_qkd_attack_signal_flow() {
         qber_attack
     );
 
-    // 3. Restore Batch (Reset session, stop attack)
+    // 3. Stop the attack and verify the next batch without restarting the session.
     sim_handle.stop_attack().unwrap();
-    sim_handle.stop_session().unwrap();
-
-    sim_handle.start_session().unwrap();
     let batch_restored = sim_handle.generate_qkd_batch().unwrap();
+    let batch_restored_control = control_handle.generate_qkd_batch().unwrap();
     let gcr_restored = batch_restored.to_gcr_batch(sim_handle.use_gcr_padding);
+    let gcr_restored_control =
+        batch_restored_control.to_gcr_batch(control_handle.use_gcr_padding);
     let results_restored: Vec<u8> = gcr_restored.iter().map(|gcr| (gcr[6] >> 1) & 1).collect();
+    let results_restored_control: Vec<u8> = gcr_restored_control
+        .iter()
+        .map(|gcr| (gcr[6] >> 1) & 1)
+        .collect();
 
     assert_eq!(
-        results_normal, results_restored,
-        "Restored session results should be identical to original normal session"
+        results_restored, results_restored_control,
+        "Stopping the attack should restore the configured QBER"
     );
 
     sim_handle.stop_session().unwrap();
+    control_handle.stop_session().unwrap();
 }

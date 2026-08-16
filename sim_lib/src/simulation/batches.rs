@@ -13,7 +13,7 @@ fn encode_gcr(gc: u64, result_bit: u8) -> [u8; 8] {
     buffer
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct QkdBatch {
     /// Hardware GC value of the first event in this batch (gc_offset + pulses_before_batch).
     pub base_gc: u64,

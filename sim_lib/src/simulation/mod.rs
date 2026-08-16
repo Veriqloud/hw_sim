@@ -1,5 +1,5 @@
 use configs::backend::{DecoyStatesConfig, QberConfig};
-use rand::{RngExt, SeedableRng};
+use rand::RngExt;
 use rand_pcg::Pcg64Mcg;
 use std::time::{Duration, Instant};
 
@@ -26,7 +26,6 @@ pub struct Simulator {
     pub qb_err: QberConfig,
     pub(crate) rng: Pcg64Mcg,
     pub(crate) qber_oscillation_rng: Pcg64Mcg,
-    pub(crate) seed: u64,
     pub simulator_mode: SimulatorMode,
     pub(crate) time_of_start: Option<Instant>,
     pub(crate) last_event_count: u64,
@@ -195,15 +194,13 @@ impl Simulator {
     }
 
     /// Initializes the simulator state for starting a generation sequence.
-    /// Resets counters and sets the modulator state.
+    /// Resets counters and sets the modulator state without restarting the random streams.
     pub fn initialize_session(&mut self) -> Result<(), SimulationError> {
         tracing::info!("Simulator: Start session command received. Initializing for generation.");
         self.time_of_start = Some(Instant::now());
         self.modulator_state = ModulatorState::Random; // Ready to generate
         self.reset_time(); // Reset self.now for internal time calculations if any
         self.last_event_count = 0; // Reset event counter for the new session
-        self.rng = Pcg64Mcg::seed_from_u64(self.seed); // Re-seed the RNG
-        self.qber_oscillation_rng = Pcg64Mcg::seed_from_u64(self.seed); // Re-seed the oscillation RNG
         Ok(())
     }
 
@@ -287,27 +284,63 @@ impl Simulator {
 mod tests {
     use crate::simulation::builder::SimulatorBuilder;
     use configs::backend::QberConfig;
+    use rand::SeedableRng;
+    use rand_pcg::Pcg64Mcg;
+
+    #[test]
+    fn session_restart_preserves_rng_state() {
+        let make_simulator = || {
+            SimulatorBuilder::new()
+                .with_angles(vec![0, 32, 64, 96])
+                .with_rng(Pcg64Mcg::seed_from_u64(42))
+                .with_seed(42)
+                .with_qb_err(QberConfig::Uniform {
+                    min: 0.01,
+                    max: 0.10,
+                })
+                .build()
+        };
+        let mut restarted = make_simulator();
+        let mut uninterrupted = make_simulator();
+
+        restarted.initialize_session().unwrap();
+        uninterrupted.initialize_session().unwrap();
+        let first_batch = restarted.generate_correlation_batch().unwrap();
+        let expected_first_batch = uninterrupted.generate_correlation_batch().unwrap();
+        assert_eq!(first_batch, expected_first_batch);
+
+        restarted.setup_session_end().unwrap();
+        restarted.initialize_session().unwrap();
+        let second_batch = restarted.generate_correlation_batch().unwrap();
+        let expected_second_batch = uninterrupted.generate_correlation_batch().unwrap();
+
+        assert_eq!(second_batch, expected_second_batch);
+        assert_ne!(
+            first_batch.alice_state_index, second_batch.alice_state_index,
+            "A session restart must not replay the first random batch"
+        );
+    }
 
     #[test]
     fn test_under_attack_qber() {
-        let mut sim = SimulatorBuilder::new()
-            .with_angles(vec![0, 32, 64, 96])
-            .with_qb_err(QberConfig::Fixed { value: 0.0 }) // Normal QBER is 0%
-            .build();
+        let make_simulator = || {
+            SimulatorBuilder::new()
+                .with_angles(vec![0, 32, 64, 96])
+                .with_qb_err(QberConfig::Fixed { value: 0.0 })
+                .build()
+        };
+        let mut sim = make_simulator();
+        let mut control = make_simulator();
 
-        // 1. Normal session
         sim.initialize_session().unwrap();
-        let results_normal = sim.generate_correlation_batch().unwrap().results;
-
-        // 2. Attack session (reset session to get the same RNG sequence)
-        sim.initialize_session().unwrap();
+        control.initialize_session().unwrap();
         sim.start_attack();
         let results_attack = sim.generate_correlation_batch().unwrap().results;
+        let results_control = control.generate_correlation_batch().unwrap().results;
 
-        // 3. Calculate actual QBER (fraction of flipped bits)
         let mut diffs = 0;
         for i in 0..1024 {
-            if results_normal[i] != results_attack[i] {
+            if results_control[i] != results_attack[i] {
                 diffs += 1;
             }
         }
