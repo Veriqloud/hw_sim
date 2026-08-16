@@ -143,28 +143,6 @@ pub struct IPCWriterActorHandle {
     sender: mpsc::Sender<WriterMessage>,
 }
 
-pub struct FifoWriterLease {
-    writer_handle: IPCWriterActorHandle,
-}
-
-impl FifoWriterLease {
-    pub fn write_gcr_batch(&self, data: Vec<[u8; 8]>) -> Result<(), Error> {
-        self.writer_handle.write_gcr_batch(data)
-    }
-
-    pub fn write_angles_batch(&self, data: Vec<u8>) -> Result<(), Error> {
-        self.writer_handle.write_angles_batch(data)
-    }
-}
-
-impl Drop for FifoWriterLease {
-    fn drop(&mut self) {
-        if let Err(error) = self.writer_handle.close_writers() {
-            tracing::error!("Failed to close FIFO writers: {}", error);
-        }
-    }
-}
-
 impl IPCWriterActorHandle {
     pub fn new() -> Self {
         let (sender, receiver) = mpsc::channel();
@@ -191,7 +169,7 @@ impl IPCWriterActorHandle {
             .map_err(|source| Error::ActorDied { source })?
     }
 
-    fn write_gcr_batch(&self, data: Vec<[u8; 8]>) -> Result<(), Error> {
+    pub(in crate::ipc) fn write_gcr_batch(&self, data: Vec<[u8; 8]>) -> Result<(), Error> {
         self.sender
             .send(WriterMessage::WriteGcrBatch(data))
             .map_err(|e| Error::Channel {
@@ -199,7 +177,7 @@ impl IPCWriterActorHandle {
             })
     }
 
-    fn write_angles_batch(&self, data: Vec<u8>) -> Result<(), Error> {
+    pub(in crate::ipc) fn write_angles_batch(&self, data: Vec<u8>) -> Result<(), Error> {
         self.sender
             .send(WriterMessage::WriteAnglesBatch(data))
             .map_err(|e| Error::Channel {
@@ -207,22 +185,19 @@ impl IPCWriterActorHandle {
             })
     }
 
-    pub fn attach_writers(
-        self,
+    pub(in crate::ipc) fn attach_writers(
+        &self,
         gcr_file: File,
         angles_file: File,
-    ) -> Result<FifoWriterLease, Error> {
+    ) -> Result<(), Error> {
         self.send_command_and_wait(|reply_to| WriterMessage::AttachWriters {
             gcr_file,
             angles_file,
             reply_to,
-        })?;
-        Ok(FifoWriterLease {
-            writer_handle: self,
         })
     }
 
-    fn close_writers(&self) -> Result<(), Error> {
+    pub(in crate::ipc) fn close_writers(&self) -> Result<(), Error> {
         self.send_command_and_wait(|reply_to| WriterMessage::CloseWriters { reply_to })
     }
 }
@@ -242,27 +217,26 @@ mod tests {
 
         let first_gcr_path = base.join("gcr_1");
         let first_angles_path = base.join("angles_1");
-        let first_lease = handle
-            .clone()
+        handle
             .attach_writers(
                 fs::File::create(&first_gcr_path).unwrap(),
                 fs::File::create(&first_angles_path).unwrap(),
             )
             .unwrap();
-        first_lease.write_angles_batch(vec![1, 2, 3, 4]).unwrap();
-        drop(first_lease);
+        handle.write_angles_batch(vec![1, 2, 3, 4]).unwrap();
+        handle.close_writers().unwrap();
 
         assert_eq!(fs::read(&first_angles_path).unwrap(), vec![1, 2, 3, 4]);
         let second_gcr_path = base.join("gcr_2");
         let second_angles_path = base.join("angles_2");
-        let second_lease = cloned_handle
+        cloned_handle
             .attach_writers(
                 fs::File::create(&second_gcr_path).unwrap(),
                 fs::File::create(&second_angles_path).unwrap(),
             )
             .unwrap();
-        second_lease.write_angles_batch(vec![6, 7]).unwrap();
-        drop(second_lease);
+        cloned_handle.write_angles_batch(vec![6, 7]).unwrap();
+        cloned_handle.close_writers().unwrap();
 
         assert_eq!(fs::read(&second_angles_path).unwrap(), vec![6, 7]);
         fs::remove_dir_all(base).unwrap();

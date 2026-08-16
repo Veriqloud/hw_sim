@@ -1,32 +1,48 @@
 use std::fs::File;
 
-use super::writer::{actor::FifoWriterLease, errors::Error};
+use super::writer::{actor::IPCWriterActorHandle, errors::Error};
 
 /// Owns all FIFO descriptors used by one hardware session.
 pub struct FifoConnection {
-    // Fields are dropped in declaration order: release the reader before the writers.
-    gc_read_file: File,
-    writers: FifoWriterLease,
+    gc_read_file: Option<File>,
+    writer_handle: IPCWriterActorHandle,
 }
 
 impl FifoConnection {
-    pub fn new(gc_read_file: File, writers: FifoWriterLease) -> Self {
-        Self {
-            gc_read_file,
-            writers,
-        }
+    pub fn new(
+        gc_read_file: File,
+        writer_handle: IPCWriterActorHandle,
+        gcr_file: File,
+        angles_file: File,
+    ) -> Result<Self, Error> {
+        writer_handle.attach_writers(gcr_file, angles_file)?;
+        Ok(Self {
+            gc_read_file: Some(gc_read_file),
+            writer_handle,
+        })
     }
 
     pub fn gc_reader(&mut self) -> &mut File {
-        &mut self.gc_read_file
+        self.gc_read_file
+            .as_mut()
+            .expect("FIFO reader is unavailable while the connection is alive")
     }
 
     pub fn write_gcr_batch(&self, data: Vec<[u8; 8]>) -> Result<(), Error> {
-        self.writers.write_gcr_batch(data)
+        self.writer_handle.write_gcr_batch(data)
     }
 
     pub fn write_angles_batch(&self, data: Vec<u8>) -> Result<(), Error> {
-        self.writers.write_angles_batch(data)
+        self.writer_handle.write_angles_batch(data)
+    }
+}
+
+impl Drop for FifoConnection {
+    fn drop(&mut self) {
+        drop(self.gc_read_file.take());
+        if let Err(error) = self.writer_handle.close_writers() {
+            tracing::error!("Failed to close FIFO writers: {}", error);
+        }
     }
 }
 
@@ -44,17 +60,13 @@ mod tests {
         suffix: &str,
         writer_handle: &IPCWriterActorHandle,
     ) -> FifoConnection {
-        let writers = writer_handle
-            .clone()
-            .attach_writers(
-                fs::File::create(base.join(format!("gcr_{suffix}"))).unwrap(),
-                fs::File::create(base.join(format!("angles_{suffix}"))).unwrap(),
-            )
-            .unwrap();
         FifoConnection::new(
             fs::File::create(base.join(format!("gc_read_{suffix}"))).unwrap(),
-            writers,
+            writer_handle.clone(),
+            fs::File::create(base.join(format!("gcr_{suffix}"))).unwrap(),
+            fs::File::create(base.join(format!("angles_{suffix}"))).unwrap(),
         )
+        .unwrap()
     }
 
     #[test]

@@ -266,19 +266,21 @@ fn run_alice_workflow(
             }
         };
 
-        let writers = match writer_handle
-            .clone()
-            .attach_writers(gcr_file_writer, angles_file_writer)
-        {
-            Ok(writers) => writers,
+        let fifo_connection = match FifoConnection::new(
+            gc_read_file_handle,
+            writer_handle.clone(),
+            gcr_file_writer,
+            angles_file_writer,
+        ) {
+            Ok(connection) => connection,
             Err(e) => {
-                tracing::error!("Failed to attach Alice FIFO writers: {}", e);
+                tracing::error!("Failed to initialize Alice FIFO connection: {}", e);
                 return;
             }
         };
         let session_runner = HardwareSessionRunner::new(
             config.command_path.clone(),
-            FifoConnection::new(gc_read_file_handle, writers),
+            fifo_connection,
             simu_handle.clone(),
             simulator_mode,
             &runtime_control,
@@ -396,19 +398,21 @@ fn run_bob_workflow(
             }
         };
 
-        let writers = match writer_handle
-            .clone()
-            .attach_writers(gcr_file_writer, angles_file_writer)
-        {
-            Ok(writers) => writers,
+        let fifo_connection = match FifoConnection::new(
+            gc_read_file_handle,
+            writer_handle.clone(),
+            gcr_file_writer,
+            angles_file_writer,
+        ) {
+            Ok(connection) => connection,
             Err(e) => {
-                tracing::error!("Failed to attach Bob FIFO writers: {}", e);
+                tracing::error!("Failed to initialize Bob FIFO connection: {}", e);
                 return;
             }
         };
         let session_runner = HardwareSessionRunner::new(
             config.command_path.clone(),
-            FifoConnection::new(gc_read_file_handle, writers),
+            fifo_connection,
             simu_handle.clone(),
             simulator_mode,
             &runtime_control,
