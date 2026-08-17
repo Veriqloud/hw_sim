@@ -1,0 +1,13 @@
+[package]
+name = "hw_sim_control"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+clap = { workspace = true }
+serde_json = { workspace = true }
+simulator = { path = "../simulator" }
+configs = { path = "../configs" }
+
+[dev-dependencies]
+uuid = { workspace = true }

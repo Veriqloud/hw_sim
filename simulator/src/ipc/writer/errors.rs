@@ -7,6 +7,10 @@ pub enum Error {
     Channel { e: String },
     #[snafu(display("could not connect to Unix Stream because : {}", source))]
     ActorDied { source: std::sync::mpsc::RecvError },
+    #[snafu(display("IPC writer for {} is unavailable", writer))]
+    WriterUnavailable { writer: &'static str },
+    #[snafu(display("IPC writer files are already open"))]
+    WritersAlreadyOpen,
     #[snafu(display("Backend Error : {}", source))]
     Backend {
         source: crate::backend::errors::Error,

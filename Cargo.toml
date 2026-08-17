@@ -1,5 +1,5 @@
 [workspace]
-members = ["simulator", "configs", "sim_lib"]
+members = ["simulator", "configs", "sim_lib", "hw_sim_control"]
 resolver = "2"
 
 [workspace.dependencies]
@@ -16,7 +16,7 @@ rand_pcg = "0.10"
 itertools = "0.12.1"
 clap = { version = "4", features = ["derive", "string"] }
 uuid = { version = "1.3.0", features = ["serde", "v4"] }
-nix = { version = "0.30.1", features = ["fs", "signal", "process"] }
+nix = { version = "0.30.1", features = ["fs", "process", "inotify"] }
 memmap2 = "0.9.5"
 schemars = "1"
 gc = { git = "ssh://git@github.com/Veriqloud/kiwi_hw_control.git", branch = "master" }

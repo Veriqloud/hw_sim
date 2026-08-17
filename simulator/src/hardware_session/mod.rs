@@ -1,4 +1,5 @@
 pub mod errors;
+pub mod supervisor;
 
 use memmap2::MmapOptions;
 use sim_lib::hardware::modes::SimulatorMode;
@@ -6,12 +7,15 @@ use sim_lib::simulation::batches::QkdBatch;
 use sim_lib::BATCH_SIZE;
 use std::collections::VecDeque;
 use std::fs::OpenOptions as StdOpenOptions;
+use std::io::Read;
+use std::ops::ControlFlow;
 use std::time::Duration;
-use std::{fs::File, io::Read};
 
-use crate::{backend::actor::ActorHandle as SimulatorHandle, ipc::Command};
-
-use super::writer::actor::IPCWriterActorHandle;
+use crate::{
+    backend::actor::ActorHandle as SimulatorHandle,
+    ipc::{fifo_connection::FifoConnection, Command},
+    runtime_control::{RuntimeCommand, RuntimeControl, RuntimeReply},
+};
 
 // --- MMIO Constants ---
 const INIT_RESET_MMIO_MAP_OFFSET: u64 = 0x12000;
@@ -21,10 +25,20 @@ const MMIO_MAP_LEN: usize = 0x1000;
 const GENERATION_START_ADDR_BYTES: usize = 24;
 const POLLING_INTERVAL_MS: u64 = 50;
 
-pub struct IPCReader {
+#[derive(Debug)]
+pub enum SessionExit {
+    Stopped,
+    PeerDisconnected,
+    RecalibrationRequested {
+        duration: Duration,
+        reply_to: RuntimeReply<sim_lib::simulation::GenerationProgress>,
+    },
+}
+
+/// Coordinates hardware commands, simulator state, and FIFO data flow for one connection.
+pub struct HardwareSessionRunner<'a> {
     command_path: String,
-    gc_read_file: File,
-    writer_handle: IPCWriterActorHandle,
+    fifo_connection: FifoConnection,
     simulator_handle: SimulatorHandle,
     last_known_command_trigger_value: u32,
     last_known_init_reset_value: u32,
@@ -33,6 +47,7 @@ pub struct IPCReader {
     batch_queue: VecDeque<QkdBatch>,
     /// Whether to interleave 8-byte zero pads between GCR records (hardware protocol).
     use_gcr_padding: bool,
+    runtime_control: &'a RuntimeControl,
 }
 
 /// Synchronously reads a u32 value from a memory-mapped device.
@@ -89,18 +104,22 @@ fn classify_generation_start_transition(
     }
 }
 
-impl IPCReader {
+impl<'a> HardwareSessionRunner<'a> {
     /// Reads a batch of GC values from the gc_read_file.
     /// Expects BATCH_SIZE (1024) 16-byte records, and extracts a u64 GC from the first 8 bytes of each.
     fn read_gc_batch_from_file(&mut self) -> Result<Vec<u64>, errors::Error> {
         let mut gc_values = Vec::with_capacity(BATCH_SIZE);
         let mut record_buffer = [0u8; 16];
         tracing::debug!(
-            "IPCReader: Attempting to read {} 16-byte GC records from gc_read_file.",
+            "HardwareSessionRunner: Attempting to read {} 16-byte GC records from gc_read_file.",
             BATCH_SIZE
         );
         for i in 0..BATCH_SIZE {
-            match self.gc_read_file.read_exact(&mut record_buffer) {
+            match self
+                .fifo_connection
+                .gc_reader()
+                .read_exact(&mut record_buffer)
+            {
                 Ok(_) => {
                     let gc_bytes: [u8; 8] = record_buffer[0..8].try_into().unwrap();
                     gc_values.push(u64::from_le_bytes(gc_bytes));
@@ -118,7 +137,7 @@ impl IPCReader {
             }
         }
         tracing::debug!(
-            "IPCReader: Successfully read {} GC values.",
+            "HardwareSessionRunner: Successfully read {} GC values.",
             gc_values.len()
         );
         Ok(gc_values)
@@ -129,31 +148,71 @@ impl IPCReader {
         if let Some(batch) = self.batch_queue.pop_front() {
             return Ok(batch);
         }
-        self.simulator_handle
-            .generate_qkd_batch()
-            .map_err(|e| errors::Error::Unexpected {
-                reason: format!("generate_qkd_batch failed: {}", e),
-            })
+        match self.simulator_handle.generate_qkd_batch() {
+            Ok(batch) => Ok(batch),
+            Err(error) => {
+                self.simulator_handle.stop_session().map_err(|e| {
+                    errors::Error::Unexpected {
+                        reason: format!(
+                            "Simulator stop_session failed after batch generation error: {}",
+                            e
+                        ),
+                    }
+                })?;
+                Err(errors::Error::Unexpected {
+                    reason: format!("generate_qkd_batch failed: {}", error),
+                })
+            }
+        }
     }
 
     pub fn new(
         command_path: String,
-        gc_read_file: File,
+        fifo_connection: FifoConnection,
         simulator_handle: SimulatorHandle,
-        writer_handle: IPCWriterActorHandle,
         simulator_mode: SimulatorMode,
+        runtime_control: &'a RuntimeControl,
     ) -> Self {
         let use_gcr_padding = simulator_handle.use_gcr_padding;
-        IPCReader {
+        HardwareSessionRunner {
             command_path,
-            gc_read_file,
-            writer_handle,
+            fifo_connection,
             simulator_handle,
             last_known_command_trigger_value: 0,
             last_known_init_reset_value: 0,
             simulator_mode,
             batch_queue: VecDeque::new(),
             use_gcr_padding,
+            runtime_control,
+        }
+    }
+
+    fn check_runtime_pause(&mut self) -> Result<ControlFlow<SessionExit>, errors::Error> {
+        match self.runtime_control.try_recv() {
+            Some(RuntimeCommand::Pause { duration, reply_to }) => {
+                tracing::info!(
+                    "HardwareSessionRunner: Runtime pause requested for {:?}.",
+                    duration
+                );
+                self.batch_queue.clear();
+                Ok(ControlFlow::Break(SessionExit::RecalibrationRequested {
+                    duration,
+                    reply_to,
+                }))
+            }
+            Some(RuntimeCommand::Synchronize { reply_to, .. }) => {
+                let _ = reply_to.send(Err(
+                    "cannot synchronize before the hardware session is paused".to_owned(),
+                ));
+                Ok(ControlFlow::Continue(()))
+            }
+            Some(RuntimeCommand::Resume { reply_to }) => {
+                let _ = reply_to.send(Err(
+                    "cannot resume before the hardware session is paused".to_owned()
+                ));
+                Ok(ControlFlow::Continue(()))
+            }
+            None => Ok(ControlFlow::Continue(())),
         }
     }
 
@@ -219,8 +278,14 @@ impl IPCReader {
         command
     }
 
-    fn await_next_command(&mut self) -> Result<Command, errors::Error> {
+    fn await_next_command(
+        &mut self,
+    ) -> Result<ControlFlow<SessionExit, Command>, errors::Error> {
         loop {
+            if let ControlFlow::Break(exit) = self.check_runtime_pause()? {
+                return Ok(ControlFlow::Break(exit));
+            }
+
             let device_path_clone = self.command_path.clone();
             let init_reset_read_result = read_u32_from_mmio(
                 &device_path_clone,
@@ -249,7 +314,7 @@ impl IPCReader {
             match generation_start_read_result {
                 Ok(current_value) => {
                     if let Some(command) = self.observe_generation_start_transition(current_value) {
-                        return Ok(command);
+                        return Ok(ControlFlow::Continue(command));
                     }
                 }
                 Err(join_err) => {
@@ -264,22 +329,28 @@ impl IPCReader {
     }
 
     /// Runs the Detector (Bob) workflow.
-    fn run_detector_workflow(&mut self) -> Result<(), errors::Error> {
+    fn run_detector_workflow(&mut self) -> Result<SessionExit, errors::Error> {
         self.last_known_command_trigger_value = 0;
         self.last_known_init_reset_value = 0;
 
         loop {
             tracing::info!(
-                "IPCReader (Bob): Awaiting next command via MMIO (last known trigger value: {})...",
+                "HardwareSessionRunner (Bob): Awaiting next command via MMIO (last known trigger value: {})...",
                 self.last_known_command_trigger_value
             );
-            let cmd = self.await_next_command()?;
-            tracing::info!("IPCReader (Bob): Processing command: {:?}", &cmd);
+            let cmd = match self.await_next_command()? {
+                ControlFlow::Continue(command) => command,
+                ControlFlow::Break(exit) => return Ok(exit),
+            };
+            tracing::info!(
+                "HardwareSessionRunner (Bob): Processing command: {:?}",
+                &cmd
+            );
 
             match cmd {
                 Command::Start => {
                     tracing::info!(
-                        "IPCReader (Bob): Start command received. Initiating generation loop."
+                        "HardwareSessionRunner (Bob): Start command received. Initiating generation loop."
                     );
                     self.simulator_handle.start_session().map_err(|e| {
                         errors::Error::Unexpected {
@@ -287,38 +358,40 @@ impl IPCReader {
                         }
                     })?;
                     self.batch_queue.clear();
-                    tracing::info!("IPCReader (Bob): Simulator session started.");
+                    tracing::info!("HardwareSessionRunner (Bob): Simulator session started.");
 
                     loop {
+                        if let ControlFlow::Break(exit) = self.check_runtime_pause()? {
+                            return Ok(exit);
+                        }
+
                         // Pop a pre-generated batch or generate a fresh one.
-                        let batch = match self.next_batch() {
-                            Ok(b) => b,
-                            Err(e) => {
-                                tracing::warn!("IPCReader (Bob): Failed to get batch, ending generation loop. Error: {}", e);
-                                break;
-                            }
-                        };
+                        let batch = self.next_batch()?;
 
                         let gcr_data = batch.to_gcr_batch(self.use_gcr_padding);
                         tracing::info!(
-                            "IPCReader (Bob): Sending GCR batch ({} items) to writer.",
+                            "HardwareSessionRunner (Bob): Sending GCR batch ({} items) to writer.",
                             gcr_data.len()
                         );
-                        self.writer_handle
+                        self.fifo_connection
                             .write_gcr_batch(gcr_data)
                             .map_err(|e| errors::Error::Unexpected {
                                 reason: format!("IPCWriter write_gcr_batch failed: {}", e),
                             })?;
 
+                        if let ControlFlow::Break(exit) = self.check_runtime_pause()? {
+                            return Ok(exit);
+                        }
+
                         let echoed_gc_values = match self.read_gc_batch_from_file() {
                             Ok(vals) => vals,
                             Err(e) => {
-                                tracing::warn!("IPCReader (Bob): Failed to read echoed GC batch, ending generation loop. Error: {}", e);
+                                tracing::warn!("HardwareSessionRunner (Bob): Failed to read echoed GC batch, ending generation loop. Error: {}", e);
                                 break;
                             }
                         };
                         tracing::info!(
-                            "IPCReader (Bob): Received echoed GC batch ({} items) from controller.",
+                            "HardwareSessionRunner (Bob): Received echoed GC batch ({} items) from controller.",
                             echoed_gc_values.len()
                         );
 
@@ -333,19 +406,25 @@ impl IPCReader {
                             return Err(errors::Error::Unexpected { reason });
                         }
 
+                        if let ControlFlow::Break(exit) = self.check_runtime_pause()? {
+                            return Ok(exit);
+                        }
+
                         let angles = batch.to_bob_angle_fifo();
                         tracing::info!(
-                            "IPCReader (Bob): Sending angles batch ({} bytes) to writer.",
+                            "HardwareSessionRunner (Bob): Sending angles batch ({} bytes) to writer.",
                             angles.len()
                         );
-                        self.writer_handle
+                        self.fifo_connection
                             .write_angles_batch(angles)
                             .map_err(|e| errors::Error::Unexpected {
                                 reason: format!("IPCWriter write_angles_batch failed: {}", e),
                             })?;
                     }
 
-                    tracing::info!("IPCReader (Bob): Generation loop finished. Stopping session.");
+                    tracing::info!(
+                        "HardwareSessionRunner (Bob): Generation loop finished. Stopping session."
+                    );
                     self.simulator_handle.stop_session().map_err(|e| {
                         errors::Error::Unexpected {
                             reason: format!(
@@ -354,44 +433,29 @@ impl IPCReader {
                             ),
                         }
                     })?;
-                    // The generation loop only ends when a FIFO peer detached, i.e. the
-                    // controller session is gone. Tear down completely so the workflow
-                    // loop resets the FIFOs and blocks in open() until the next session
-                    // attaches; keeping the stale handles and edge-detector state here
-                    // would make every subsequent Start undetectable or abort instantly.
-                    self.writer_handle
-                        .stop()
-                        .map_err(|e| errors::Error::Unexpected {
-                            reason: format!("IPCWriter stop failed: {}", e),
-                        })?;
                     tracing::info!(
-                        "IPCReader (Bob): Session peers detached. Exiting for FIFO reset."
+                        "HardwareSessionRunner (Bob): Session peers detached. Exiting for FIFO reset."
                     );
-                    return Ok(());
+                    return Ok(SessionExit::PeerDisconnected);
                 }
                 Command::Stop => {
-                    tracing::info!("IPCReader (Bob): Stop command received.");
+                    tracing::info!("HardwareSessionRunner (Bob): Stop command received.");
                     self.simulator_handle.stop_session().map_err(|e| {
                         errors::Error::Unexpected {
                             reason: format!("Simulator stop_session failed: {}", e),
                         }
                     })?;
-                    self.writer_handle
-                        .stop()
-                        .map_err(|e| errors::Error::Unexpected {
-                            reason: format!("IPCWriter stop failed: {}", e),
-                        })?;
                     tracing::info!(
-                        "IPCReader (Bob): Successfully processed Stop command. Exiting."
+                        "HardwareSessionRunner (Bob): Successfully processed Stop command. Exiting."
                     );
-                    return Ok(());
+                    return Ok(SessionExit::Stopped);
                 }
             }
         }
     }
 
     /// Runs the Source (Alice) workflow.
-    fn run_source_workflow(&mut self) -> Result<(), errors::Error> {
+    fn run_source_workflow(&mut self) -> Result<SessionExit, errors::Error> {
         self.last_known_command_trigger_value = 0;
         self.last_known_init_reset_value = 0;
 
@@ -400,13 +464,19 @@ impl IPCReader {
                 "Awaiting next command via MMIO (last known trigger value: {})...",
                 self.last_known_command_trigger_value
             );
-            let cmd = self.await_next_command()?;
-            tracing::info!("IPCReader (Alice): Processing command: {:?}", &cmd);
+            let cmd = match self.await_next_command()? {
+                ControlFlow::Continue(command) => command,
+                ControlFlow::Break(exit) => return Ok(exit),
+            };
+            tracing::info!(
+                "HardwareSessionRunner (Alice): Processing command: {:?}",
+                &cmd
+            );
 
             match cmd {
                 Command::Start => {
                     tracing::info!(
-                        "IPCReader (Alice): Start command received. Initiating generation loop."
+                        "HardwareSessionRunner (Alice): Start command received. Initiating generation loop."
                     );
                     self.simulator_handle.start_session().map_err(|e| {
                         errors::Error::Unexpected {
@@ -414,18 +484,22 @@ impl IPCReader {
                         }
                     })?;
                     self.batch_queue.clear();
-                    tracing::info!("IPCReader (Alice): Simulator session started.");
+                    tracing::info!("HardwareSessionRunner (Alice): Simulator session started.");
 
                     loop {
+                        if let ControlFlow::Break(exit) = self.check_runtime_pause()? {
+                            return Ok(exit);
+                        }
+
                         let received_gc_values = match self.read_gc_batch_from_file() {
                             Ok(vals) => vals,
                             Err(e) => {
-                                tracing::warn!("IPCReader (Alice): Failed to read GC batch, ending generation loop. Error: {}", e);
+                                tracing::warn!("HardwareSessionRunner (Alice): Failed to read GC batch, ending generation loop. Error: {}", e);
                                 break;
                             }
                         };
                         tracing::info!(
-                            "IPCReader (Alice): Received GC batch ({} items) from gc_client.",
+                            "HardwareSessionRunner (Alice): Received GC batch ({} items) from gc_client.",
                             received_gc_values.len()
                         );
 
@@ -440,21 +514,23 @@ impl IPCReader {
                             return Err(errors::Error::Unexpected { reason });
                         }
 
+                        if let ControlFlow::Break(exit) = self.check_runtime_pause()? {
+                            return Ok(exit);
+                        }
+
                         // Pop a pre-generated batch or generate a fresh one.
-                        let batch = match self.next_batch() {
-                            Ok(b) => b,
-                            Err(e) => {
-                                tracing::warn!("IPCReader (Alice): Failed to get batch, ending generation loop. Error: {}", e);
-                                break;
-                            }
-                        };
+                        let batch = self.next_batch()?;
+
+                        if let ControlFlow::Break(exit) = self.check_runtime_pause()? {
+                            return Ok(exit);
+                        }
 
                         let angles = batch.to_alice_fifo();
                         tracing::info!(
-                            "IPCReader (Alice): Sending angles batch ({} bytes) to writer.",
+                            "HardwareSessionRunner (Alice): Sending angles batch ({} bytes) to writer.",
                             angles.len()
                         );
-                        self.writer_handle
+                        self.fifo_connection
                             .write_angles_batch(angles)
                             .map_err(|e| errors::Error::Unexpected {
                                 reason: format!("IPCWriter write_angles_batch failed: {}", e),
@@ -462,7 +538,7 @@ impl IPCReader {
                     }
 
                     tracing::info!(
-                        "IPCReader (Alice): Generation loop finished. Stopping session."
+                        "HardwareSessionRunner (Alice): Generation loop finished. Stopping session."
                     );
                     self.simulator_handle.stop_session().map_err(|e| {
                         errors::Error::Unexpected {
@@ -472,46 +548,39 @@ impl IPCReader {
                             ),
                         }
                     })?;
-                    // See the detector workflow: a finished generation loop means the
-                    // session peers detached, so exit for a full FIFO reset instead of
-                    // waiting for a Start edge on stale handles.
-                    self.writer_handle
-                        .stop()
-                        .map_err(|e| errors::Error::Unexpected {
-                            reason: format!("IPCWriter stop failed: {}", e),
-                        })?;
                     tracing::info!(
-                        "IPCReader (Alice): Session peers detached. Exiting for FIFO reset."
+                        "HardwareSessionRunner (Alice): Session peers detached. Exiting for FIFO reset."
                     );
-                    return Ok(());
+                    return Ok(SessionExit::PeerDisconnected);
                 }
                 Command::Stop => {
-                    tracing::info!("IPCReader (Alice): Stop command received.");
+                    tracing::info!("HardwareSessionRunner (Alice): Stop command received.");
                     self.simulator_handle.stop_session().map_err(|e| {
                         errors::Error::Unexpected {
                             reason: format!("Simulator stop_session failed: {}", e),
                         }
                     })?;
-                    self.writer_handle
-                        .stop()
-                        .map_err(|e| errors::Error::Unexpected {
-                            reason: format!("IPCWriter stop failed: {}", e),
-                        })?;
-                    tracing::info!("IPCReader (Alice): Successfully processed Stop command. Exiting.");
-                    return Ok(());
+                    tracing::info!(
+                        "HardwareSessionRunner (Alice): Successfully processed Stop command. Exiting."
+                    );
+                    return Ok(SessionExit::Stopped);
                 }
             }
         }
     }
 
-    pub fn start(mut self) -> Result<(), errors::Error> {
+    pub fn run(&mut self) -> Result<SessionExit, errors::Error> {
         match self.simulator_mode {
             SimulatorMode::Detector => {
-                tracing::info!("IPCReader starting in Detector (Bob) mode. Awaiting commands.");
+                tracing::info!(
+                    "HardwareSessionRunner starting in Detector (Bob) mode. Awaiting commands."
+                );
                 self.run_detector_workflow()
             }
             SimulatorMode::Source => {
-                tracing::info!("IPCReader starting in Source (Alice) mode. Awaiting commands.");
+                tracing::info!(
+                    "HardwareSessionRunner starting in Source (Alice) mode. Awaiting commands."
+                );
                 self.run_source_workflow()
             }
         }

@@ -2,7 +2,7 @@ use std::sync::mpsc::{self, Sender};
 
 use sim_lib::{
     errors::SimulationError,
-    simulation::{batches::QkdBatch, Simulator},
+    simulation::{batches::QkdBatch, GenerationProgress, Simulator},
 };
 
 use super::errors::{self, Error};
@@ -40,6 +40,20 @@ impl Actor {
                     tracing::error!("SimulatorActor: Failed to send GenerateQkdBatch reply: {}", e);
                 }
             }
+            ActorMessage::GenerationProgress { reply_to } => {
+                if let Err(e) = reply_to.send(self.simulator.generation_progress()) {
+                    tracing::error!(
+                        "SimulatorActor: Failed to send GenerationProgress reply: {}",
+                        e
+                    );
+                }
+            }
+            ActorMessage::DiscardBatches { count, reply_to } => {
+                tracing::debug!("SimulatorActor: Discarding {} batches", count);
+                if let Err(e) = reply_to.send(self.simulator.discard_batches(count)) {
+                    tracing::error!("SimulatorActor: Failed to send DiscardBatches reply: {}", e);
+                }
+            }
             ActorMessage::SetAngles { angles, reply_to } => {
                 tracing::debug!("SimulatorActor: Processing SetAngles");
                 if let Err(e) = reply_to.send(self.simulator.set_angles(angles)) {
@@ -73,6 +87,13 @@ pub enum ActorMessage {
     },
     GenerateQkdBatch {
         reply_to: Sender<Result<QkdBatch, SimulationError>>,
+    },
+    GenerationProgress {
+        reply_to: Sender<GenerationProgress>,
+    },
+    DiscardBatches {
+        count: u64,
+        reply_to: Sender<Result<(), SimulationError>>,
     },
     SetAngles {
         angles: [u8; 4],
@@ -133,6 +154,23 @@ impl ActorHandle {
         let (send, recv) = mpsc::channel();
         self.call(ActorMessage::GenerateQkdBatch { reply_to: send }, recv)?
             .map_err(|e| Error::Simulation { source: e })
+    }
+
+    pub fn generation_progress(&self) -> Result<GenerationProgress, Error> {
+        let (send, recv) = mpsc::channel();
+        self.call(ActorMessage::GenerationProgress { reply_to: send }, recv)
+    }
+
+    pub fn discard_batches(&self, count: u64) -> Result<(), Error> {
+        let (send, recv) = mpsc::channel();
+        self.call(
+            ActorMessage::DiscardBatches {
+                count,
+                reply_to: send,
+            },
+            recv,
+        )?
+        .map_err(|e| Error::Simulation { source: e })
     }
 
     pub fn set_angles(&self, angles: [u8; 4]) -> Result<(), Error> {

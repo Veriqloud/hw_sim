@@ -3,9 +3,9 @@ use snafu::Snafu;
 #[derive(Debug, Snafu)]
 #[snafu(visibility(pub))]
 pub enum Error {
-    #[snafu(display("IPC Reader error {}", source))]
-    IpcReader {
-        source: crate::ipc::reader::errors::Error,
+    #[snafu(display("Hardware session error {}", source))]
+    HardwareSession {
+        source: crate::hardware_session::errors::Error,
     },
     #[snafu(display("Simulator error {}", source))]
     Backend {
