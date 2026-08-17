@@ -14,7 +14,7 @@ use std::time::Duration;
 use crate::{
     backend::actor::ActorHandle as SimulatorHandle,
     ipc::{fifo_connection::FifoConnection, Command},
-    runtime_control::{RuntimeCommand, RuntimeControl},
+    runtime_control::{RuntimeCommand, RuntimeControl, RuntimeReply},
 };
 
 // --- MMIO Constants ---
@@ -25,11 +25,14 @@ const MMIO_MAP_LEN: usize = 0x1000;
 const GENERATION_START_ADDR_BYTES: usize = 24;
 const POLLING_INTERVAL_MS: u64 = 50;
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug)]
 pub enum SessionExit {
     Stopped,
     PeerDisconnected,
-    RecalibrationRequested { duration: Duration },
+    RecalibrationRequested {
+        duration: Duration,
+        reply_to: RuntimeReply<sim_lib::simulation::GenerationProgress>,
+    },
 }
 
 /// Coordinates hardware commands, simulator state, and FIFO data flow for one connection.
@@ -186,20 +189,28 @@ impl<'a> HardwareSessionRunner<'a> {
 
     fn check_runtime_pause(&mut self) -> Result<ControlFlow<SessionExit>, errors::Error> {
         match self.runtime_control.try_recv() {
-            Some(RuntimeCommand::Pause { duration }) => {
+            Some(RuntimeCommand::Pause { duration, reply_to }) => {
                 tracing::info!(
                     "HardwareSessionRunner: Runtime pause requested for {:?}.",
                     duration
                 );
                 self.batch_queue.clear();
-                self.simulator_handle
-                    .stop_session()
-                    .map_err(|e| errors::Error::Unexpected {
-                        reason: format!("Simulator stop_session failed before pause: {}", e),
-                    })?;
-                Ok(ControlFlow::Break(
-                    SessionExit::RecalibrationRequested { duration },
-                ))
+                Ok(ControlFlow::Break(SessionExit::RecalibrationRequested {
+                    duration,
+                    reply_to,
+                }))
+            }
+            Some(RuntimeCommand::Synchronize { reply_to, .. }) => {
+                let _ = reply_to.send(Err(
+                    "cannot synchronize before the hardware session is paused".to_owned(),
+                ));
+                Ok(ControlFlow::Continue(()))
+            }
+            Some(RuntimeCommand::Resume { reply_to }) => {
+                let _ = reply_to.send(Err(
+                    "cannot resume before the hardware session is paused".to_owned()
+                ));
+                Ok(ControlFlow::Continue(()))
             }
             None => Ok(ControlFlow::Continue(())),
         }

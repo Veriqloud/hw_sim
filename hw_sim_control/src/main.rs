@@ -2,7 +2,7 @@ use std::{path::PathBuf, process::ExitCode};
 
 use clap::{Args, Parser, Subcommand};
 use configs::ipc::{DEFAULT_ALICE_CONTROL_SOCKET_PATH, DEFAULT_BOB_CONTROL_SOCKET_PATH};
-use hw_sim_control::send_command_to_pair;
+use hw_sim_control::{recalibrate_pair, send_command_to_pair};
 use simulator::runtime_control::CommandRequest;
 
 #[derive(Debug, Parser)]
@@ -40,18 +40,23 @@ struct SocketOptions {
 }
 
 fn main() -> ExitCode {
-    let (sockets, request) = match Cli::parse().command {
-        Command::StartAttack { sockets } => (sockets, CommandRequest::StartAttack),
-        Command::StopAttack { sockets } => (sockets, CommandRequest::StopAttack),
-        Command::Recalibrate { duration, sockets } => (
-            sockets,
-            CommandRequest::Pause {
-                duration_ms: duration,
-            },
+    let result = match Cli::parse().command {
+        Command::StartAttack { sockets } => send_command_to_pair(
+            &sockets.alice_socket,
+            &sockets.bob_socket,
+            &CommandRequest::StartAttack,
         ),
+        Command::StopAttack { sockets } => send_command_to_pair(
+            &sockets.alice_socket,
+            &sockets.bob_socket,
+            &CommandRequest::StopAttack,
+        ),
+        Command::Recalibrate { duration, sockets } => {
+            recalibrate_pair(&sockets.alice_socket, &sockets.bob_socket, duration)
+        }
     };
 
-    match send_command_to_pair(&sockets.alice_socket, &sockets.bob_socket, &request) {
+    match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
             eprintln!("{error}");

@@ -16,7 +16,7 @@ use crate::{
         fifo_connection::FifoConnection,
         writer::{actor::IPCWriterActorHandle, errors::Error as WriterError},
     },
-    runtime_control::RuntimeControl,
+    runtime_control::{RuntimeCommand, RuntimeControl, RuntimeReply},
     runtime_status::RuntimeStatusFiles,
 };
 
@@ -45,6 +45,8 @@ enum RecalibrationError {
     ResetFifos { source: configs::ipc::errors::Error },
     #[snafu(display("Failed to recreate qkd ready file after runtime pause: {source}"))]
     CreateReady { source: io::Error },
+    #[snafu(display("Runtime recalibration coordination failed: {reason}"))]
+    Coordination { reason: String },
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -122,17 +124,10 @@ impl<'config> HardwareSessionSupervisor<'config> {
 
             tracing::info!("Starting hardware session for {}.", role);
             match session_runner.run() {
-                Ok(SessionExit::RecalibrationRequested { duration }) => {
+                Ok(SessionExit::RecalibrationRequested { duration, reply_to }) => {
                     tracing::info!("Starting runtime recalibration pause for {:?}.", duration);
-                    let begin_result = self
-                        .runtime_status
-                        .begin_recalibration()
-                        .map_err(|source| RecalibrationError::Begin { source });
-
                     drop(session_runner);
-
-                    let recalibration_result =
-                        begin_result.and_then(|()| self.finish_runtime_pause(duration));
+                    let recalibration_result = self.coordinate_runtime_pause(duration, reply_to);
                     self.runtime_control.complete_pause();
 
                     if let Err(error) = recalibration_result {
@@ -276,6 +271,125 @@ impl<'config> HardwareSessionSupervisor<'config> {
 
         tracing::info!("Runtime recalibration pause completed.");
         Ok(())
+    }
+
+    fn coordinate_runtime_pause(
+        &self,
+        duration: Duration,
+        paused_reply: RuntimeReply<sim_lib::simulation::GenerationProgress>,
+    ) -> Result<(), RecalibrationError> {
+        let preparation = self
+            .runtime_status
+            .begin_recalibration()
+            .map_err(|source| RecalibrationError::Begin { source })
+            .and_then(|()| {
+                self.simulator_handle
+                    .generation_progress()
+                    .map_err(|error| RecalibrationError::Coordination {
+                        reason: format!("could not read generation progress: {error}"),
+                    })
+            });
+
+        let progress = match preparation {
+            Ok(progress) => progress,
+            Err(error) => {
+                let _ = paused_reply.send(Err(error.to_string()));
+                return Err(error);
+            }
+        };
+        tracing::info!(
+            "Generation paused at {} events ({} pulses per batch).",
+            progress.event_count,
+            progress.batch_pulse_count
+        );
+        paused_reply
+            .send(Ok(progress))
+            .map_err(|error| RecalibrationError::Coordination {
+                reason: format!("could not report generation progress: {error}"),
+            })?;
+
+        let (batches_to_discard, synchronized_reply) =
+            match self
+                .runtime_control
+                .recv()
+                .map_err(|error| RecalibrationError::Coordination {
+                    reason: format!(
+                        "runtime control channel closed before synchronization: {error}"
+                    ),
+                })? {
+                RuntimeCommand::Synchronize {
+                    batches_to_discard,
+                    reply_to,
+                } => (batches_to_discard, reply_to),
+                command => {
+                    reject_runtime_command(command, "expected synchronize command");
+                    return Err(RecalibrationError::Coordination {
+                        reason: "expected synchronize command".to_owned(),
+                    });
+                }
+            };
+
+        tracing::info!(
+            "Discarding {} batches before recalibration resume.",
+            batches_to_discard
+        );
+        if let Err(error) = self.simulator_handle.discard_batches(batches_to_discard) {
+            let reason = format!("could not discard {batches_to_discard} batches: {error}");
+            let _ = synchronized_reply.send(Err(reason.clone()));
+            return Err(RecalibrationError::Coordination { reason });
+        }
+        synchronized_reply
+            .send(Ok(()))
+            .map_err(|error| RecalibrationError::Coordination {
+                reason: format!("could not confirm generation synchronization: {error}"),
+            })?;
+
+        let resumed_reply =
+            match self
+                .runtime_control
+                .recv()
+                .map_err(|error| RecalibrationError::Coordination {
+                    reason: format!("runtime control channel closed before resume: {error}"),
+                })? {
+                RuntimeCommand::Resume { reply_to } => reply_to,
+                command => {
+                    reject_runtime_command(command, "expected resume command");
+                    return Err(RecalibrationError::Coordination {
+                        reason: "expected resume command".to_owned(),
+                    });
+                }
+            };
+
+        if let Err(error) = self.simulator_handle.stop_session() {
+            let reason = format!("could not stop simulator session before resume: {error}");
+            let _ = resumed_reply.send(Err(reason.clone()));
+            return Err(RecalibrationError::Coordination { reason });
+        }
+
+        match self.finish_runtime_pause(duration) {
+            Ok(()) => {
+                resumed_reply
+                    .send(Ok(()))
+                    .map_err(|error| RecalibrationError::Coordination {
+                        reason: format!("could not confirm recalibration completion: {error}"),
+                    })
+            }
+            Err(error) => {
+                let _ = resumed_reply.send(Err(error.to_string()));
+                Err(error)
+            }
+        }
+    }
+}
+
+fn reject_runtime_command(command: RuntimeCommand, reason: &str) {
+    match command {
+        RuntimeCommand::Pause { reply_to, .. } => {
+            let _ = reply_to.send(Err(reason.to_owned()));
+        }
+        RuntimeCommand::Synchronize { reply_to, .. } | RuntimeCommand::Resume { reply_to } => {
+            let _ = reply_to.send(Err(reason.to_owned()));
+        }
     }
 }
 

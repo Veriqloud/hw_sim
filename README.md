@@ -61,14 +61,19 @@ Supported commands:
 {"command":"start_attack"}
 {"command":"stop_attack"}
 {"command":"pause","duration_ms":5000}
+{"command":"synchronize","batches_to_discard":4}
+{"command":"resume"}
 ```
 
-`pause` is handled at batch boundaries; it does not interrupt an in-progress FIFO read/write.
+The three recalibration messages form one coordinated exchange. Use `hw_sim_control recalibrate`
+instead of sending them manually. `pause` is handled at batch boundaries; it does not interrupt an
+in-progress FIFO read/write.
 
 Each command receives a newline-delimited JSON response:
 
 ```json
 {"status":"ok"}
+{"status":"ok","progress":{"event_count":102400,"batch_pulse_count":10240}}
 {"status":"error","message":"pause already pending or running"}
 ```
 
@@ -92,7 +97,12 @@ options.
 
 At startup, the simulator removes its stale idle acknowledgement, starts the filesystem watcher, and creates the configured hardware-ready file.
 
-The `pause` command starts a simulated recalibration. The simulator removes its hardware-ready file, waits through the watcher for the idle acknowledgement created by `gc`, sleeps for the requested duration, resets the IPC FIFOs, and recreates the hardware-ready file. It removes a stale idle acknowledgement before starting, but leaves the new one for `gc` to remove when the node resumes.
+The recalibration command pauses both simulators, compares their generation progress, and makes the
+lagging simulator generate and discard the missing batches. Once both seeded random streams are
+synchronized, the simulators wait through the watcher for the idle acknowledgement created by `gc`,
+sleep for the requested duration, reset the IPC FIFOs, and recreate their hardware-ready files. A
+stale idle acknowledgement is removed before starting, but the new one is left for `gc` to remove
+when the node resumes.
 
 The handshake paths must match between each `hw_sim` and `gc` pair:
 
@@ -108,8 +118,10 @@ When Alice and Bob share the same filesystem, use player-specific paths, for exa
 | Alice | `/tmp/qkd_ready_alice` | `/tmp/node_idle_alice` |
 | Bob | `/tmp/qkd_ready_bob` | `/tmp/node_idle_bob` |
 
-Do not share one hardware-ready file between two independent simulator processes: the first simulator to finish could advertise readiness while the other is still recalibrating. On separate machines or in containers with separate `/tmp` filesystems, both players may use the same local path names.
+Do not share one hardware-ready file between two independent simulator processes: the first simulator to finish could advertise readiness while the other is still recalibrating.
 
-To recalibrate a local Alice/Bob pair, send `pause` to both runtime control sockets. `gc` does not forward this simulator command between players. On separate machines, the command must be issued locally on each host because these are Unix sockets, not network sockets. Each consuming node must also enable `support_recalibration` so it polls `gc`, closes its FIFO readers while the hardware is unavailable, and reopens the recreated FIFOs afterwards.
+To recalibrate a local Alice/Bob pair, run `hw_sim_control recalibrate`. Each consuming node must
+also enable `support_recalibration` so it polls `gc`, closes its FIFO readers while the hardware is
+unavailable, and reopens the recreated FIFOs afterwards.
 
 This filesystem handshake belongs to the standalone `simulator` runtime. A binary embedding `sim_lib` directly gets batch generation, session lifecycle, and attack controls, but must provide its own recalibration orchestration if it needs to simulate runtime pauses.

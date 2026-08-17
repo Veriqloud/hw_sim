@@ -13,6 +13,7 @@ use std::{
 };
 
 use serde::{Deserialize, Serialize};
+pub use sim_lib::simulation::GenerationProgress;
 
 use crate::backend::actor::ActorHandle as SimulatorHandle;
 
@@ -32,11 +33,27 @@ impl RuntimeControl {
     pub fn complete_pause(&self) {
         self.pause_in_progress.store(false, Ordering::SeqCst);
     }
+
+    pub fn recv(&self) -> Result<RuntimeCommand, mpsc::RecvError> {
+        self.receiver.recv()
+    }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub type RuntimeReply<T> = Sender<Result<T, String>>;
+
+#[derive(Debug)]
 pub enum RuntimeCommand {
-    Pause { duration: Duration },
+    Pause {
+        duration: Duration,
+        reply_to: RuntimeReply<GenerationProgress>,
+    },
+    Synchronize {
+        batches_to_discard: u64,
+        reply_to: RuntimeReply<()>,
+    },
+    Resume {
+        reply_to: RuntimeReply<()>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -45,6 +62,8 @@ pub enum CommandRequest {
     StartAttack,
     StopAttack,
     Pause { duration_ms: u64 },
+    Synchronize { batches_to_discard: u64 },
+    Resume,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -52,6 +71,8 @@ pub struct CommandResponse {
     pub status: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub progress: Option<GenerationProgress>,
 }
 
 pub fn start_runtime_control_server(
@@ -154,6 +175,20 @@ fn handle_line(
             pause_in_progress,
             Duration::from_millis(duration_ms),
         ),
+        Ok(CommandRequest::Synchronize { batches_to_discard }) => enqueue_recalibration_command(
+            command_sender,
+            pause_in_progress,
+            "synchronize",
+            |reply_to| RuntimeCommand::Synchronize {
+                batches_to_discard,
+                reply_to,
+            },
+        ),
+        Ok(CommandRequest::Resume) => {
+            enqueue_recalibration_command(command_sender, pause_in_progress, "resume", |reply_to| {
+                RuntimeCommand::Resume { reply_to }
+            })
+        }
         Err(e) => CommandResponse::error(format!("invalid json: {}", e)),
     }
 }
@@ -163,6 +198,15 @@ impl CommandResponse {
         Self {
             status: "ok".to_owned(),
             message: None,
+            progress: None,
+        }
+    }
+
+    fn progress(progress: GenerationProgress) -> Self {
+        Self {
+            status: "ok".to_owned(),
+            message: None,
+            progress: Some(progress),
         }
     }
 
@@ -170,6 +214,7 @@ impl CommandResponse {
         Self {
             status: "error".to_owned(),
             message: Some(message),
+            progress: None,
         }
     }
 }
@@ -186,13 +231,47 @@ fn enqueue_pause(
         return CommandResponse::error("pause already pending or running".to_string());
     }
 
-    match sender.send(RuntimeCommand::Pause { duration }) {
-        Ok(()) => CommandResponse::ok(),
-        Err(e) => {
+    match request_runtime(sender, |reply_to| RuntimeCommand::Pause {
+        duration,
+        reply_to,
+    }) {
+        Ok(progress) => CommandResponse::progress(progress),
+        Err(error) => {
             pause_in_progress.store(false, Ordering::SeqCst);
-            CommandResponse::error(format!("pause queue send failed: {}", e))
+            CommandResponse::error(error)
         }
     }
+}
+
+fn enqueue_recalibration_command(
+    sender: &Sender<RuntimeCommand>,
+    pause_in_progress: &AtomicBool,
+    name: &'static str,
+    command: impl FnOnce(RuntimeReply<()>) -> RuntimeCommand,
+) -> CommandResponse {
+    if !pause_in_progress.load(Ordering::SeqCst) {
+        return CommandResponse::error(format!(
+            "cannot {name} without a recalibration in progress"
+        ));
+    }
+
+    match request_runtime(sender, command) {
+        Ok(()) => CommandResponse::ok(),
+        Err(error) => CommandResponse::error(error),
+    }
+}
+
+fn request_runtime<T>(
+    sender: &Sender<RuntimeCommand>,
+    command: impl FnOnce(RuntimeReply<T>) -> RuntimeCommand,
+) -> Result<T, String> {
+    let (reply_to, reply) = mpsc::channel();
+    sender
+        .send(command(reply_to))
+        .map_err(|error| format!("runtime command queue send failed: {error}"))?;
+    reply
+        .recv()
+        .map_err(|error| format!("runtime command reply failed: {error}"))?
 }
 
 fn remove_socket_if_exists(path: &Path) -> Result<(), std::io::Error> {
@@ -205,7 +284,9 @@ fn remove_socket_if_exists(path: &Path) -> Result<(), std::io::Error> {
 
 #[cfg(test)]
 mod tests {
-    use super::{enqueue_pause, CommandRequest, CommandResponse, RuntimeCommand};
+    use super::{
+        enqueue_pause, CommandRequest, CommandResponse, GenerationProgress, RuntimeCommand,
+    };
     use std::{
         sync::{
             atomic::{AtomicBool, Ordering},
@@ -258,6 +339,17 @@ mod tests {
             serde_json::to_string(&CommandRequest::Pause { duration_ms: 250 }).unwrap(),
             r#"{"command":"pause","duration_ms":250}"#
         );
+        assert_eq!(
+            serde_json::to_string(&CommandRequest::Synchronize {
+                batches_to_discard: 4,
+            })
+            .unwrap(),
+            r#"{"command":"synchronize","batches_to_discard":4}"#
+        );
+        assert_eq!(
+            serde_json::to_string(&CommandRequest::Resume).unwrap(),
+            r#"{"command":"resume"}"#
+        );
 
         assert_eq!(
             serde_json::to_string(&CommandResponse::ok()).unwrap(),
@@ -280,15 +372,24 @@ mod tests {
         let (sender, receiver) = mpsc::channel();
         let pause_in_progress = AtomicBool::new(false);
 
-        let first = enqueue_pause(&sender, &pause_in_progress, Duration::from_millis(10));
-        let second = enqueue_pause(&sender, &pause_in_progress, Duration::from_millis(20));
+        std::thread::scope(|scope| {
+            let first = scope
+                .spawn(|| enqueue_pause(&sender, &pause_in_progress, Duration::from_millis(10)));
+            let RuntimeCommand::Pause { duration, reply_to } = receiver.recv().unwrap() else {
+                panic!("expected pause command");
+            };
+            assert_eq!(duration, Duration::from_millis(10));
 
-        assert_eq!(first.status, "ok");
-        assert_eq!(second.status, "error");
-        assert!(pause_in_progress.load(Ordering::SeqCst));
-        assert!(matches!(
-            receiver.recv().unwrap(),
-            RuntimeCommand::Pause { duration } if duration == Duration::from_millis(10)
-        ));
+            let second = enqueue_pause(&sender, &pause_in_progress, Duration::from_millis(20));
+            assert_eq!(second.status, "error");
+            assert!(pause_in_progress.load(Ordering::SeqCst));
+
+            let progress = GenerationProgress {
+                event_count: 100,
+                batch_pulse_count: 10,
+            };
+            reply_to.send(Ok(progress)).unwrap();
+            assert_eq!(first.join().unwrap().progress, Some(progress));
+        });
     }
 }

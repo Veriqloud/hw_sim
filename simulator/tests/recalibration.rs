@@ -122,9 +122,19 @@ fn recalibration_replaces_fifos_and_resumes_source_session() {
     write_u32(&command_path, GENERATION_START_OFFSET, 1);
     peers.exchange_batch();
 
-    request_pause(&control_socket_path, PAUSE_DURATION);
+    let pause_socket_path = control_socket_path.clone();
+    let pause = thread::spawn(move || {
+        request_control(
+            &pause_socket_path,
+            &json!({
+                "command": "pause",
+                "duration_ms": PAUSE_DURATION.as_millis(),
+            }),
+        )
+    });
     // The runner may already be reading the next batch when the pause arrives.
     let _ = write_with_timeout(&mut peers.gc_writer, &gc_batch());
+    assert!(pause.join().unwrap()["progress"].is_object());
     wait_for_path_state(&ready_path, false);
     drop(peers);
 
@@ -139,8 +149,21 @@ fn recalibration_replaces_fifos_and_resumes_source_session() {
         fs::metadata(&gc_path).unwrap().ino()
     );
 
+    request_control(
+        &control_socket_path,
+        &json!({
+            "command": "synchronize",
+            "batches_to_discard": 0,
+        }),
+    );
+    let resume_socket_path = control_socket_path.clone();
+    let resume = thread::spawn(move || {
+        request_control(&resume_socket_path, &json!({ "command": "resume" }))
+    });
+
     let pause_started = Instant::now();
     fs::write(&idle_path, b"idle\n").unwrap();
+    assert_eq!(resume.join().unwrap()["status"], "ok");
     wait_for_path_state(&ready_path, true);
 
     assert!(pause_started.elapsed() >= PAUSE_DURATION);
@@ -242,24 +265,19 @@ fn read_with_timeout(file: &mut File, size: usize) -> io::Result<()> {
     Ok(())
 }
 
-fn request_pause(socket_path: &Path, duration: Duration) {
+fn request_control(socket_path: &Path, request: &serde_json::Value) -> serde_json::Value {
     let mut stream = retry_io("connecting to runtime control socket", || {
         UnixStream::connect(socket_path)
     });
     stream.set_read_timeout(Some(IO_TIMEOUT)).unwrap();
-    writeln!(
-        stream,
-        "{{\"command\":\"pause\",\"duration_ms\":{}}}",
-        duration.as_millis()
-    )
-    .unwrap();
+    serde_json::to_writer(&mut stream, request).unwrap();
+    writeln!(stream).unwrap();
 
     let mut response = String::new();
     BufReader::new(stream).read_line(&mut response).unwrap();
-    assert_eq!(
-        serde_json::from_str::<serde_json::Value>(&response).unwrap()["status"],
-        "ok"
-    );
+    let response = serde_json::from_str::<serde_json::Value>(&response).unwrap();
+    assert_eq!(response["status"], "ok");
+    response
 }
 
 fn write_u32(path: &Path, offset: u64, value: u32) {
