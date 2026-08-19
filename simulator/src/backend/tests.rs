@@ -1,6 +1,6 @@
 use std::{collections::HashMap, f64::consts::PI, time::Instant};
 
-use configs::backend::{Configuration, DecoyStatesConfig, QberConfig};
+use configs::backend::{Configuration, DecoyStatesConfig, QberConfig, SourceSettingOffset};
 use rand::SeedableRng;
 use rand_pcg::Pcg64Mcg;
 use sim_lib::{
@@ -27,6 +27,7 @@ fn valid_config() {
     assert_eq!(
         Configuration {
             angles: vec![0, 10, 11, 12],
+            source_setting_offset: SourceSettingOffset::QuarterTurn,
             seed: 33,
             eta: 0.1,
             qberr: QberConfig::Fixed { value: 0.02 },
@@ -57,6 +58,7 @@ fn valid_config_with_decoy() {
     assert_eq!(
         Configuration {
             angles: vec![0, 32, 64, 96],
+            source_setting_offset: SourceSettingOffset::QuarterTurn,
             seed: 42,
             eta: 0.1,
             qberr: QberConfig::Fixed { value: 0.05 },
@@ -186,6 +188,7 @@ fn qkd_statistics_asymmetric_workflow_ok() {
     let qb_err = 0.05;
     let hw = HardwareBuilder::new().with_pulse_distance(1e-9).build();
     let test_config_angles = vec![0u8, 32u8, 64u8, 96u8];
+    let source_setting_offset = SourceSettingOffset::QuarterTurn;
     let seed = 102;
 
     let mut sim_a = SimulatorBuilder::new()
@@ -195,6 +198,7 @@ fn qkd_statistics_asymmetric_workflow_ok() {
         .with_eta(1e-2)
         .with_qb_err(QberConfig::Fixed { value: qb_err })
         .with_angles(test_config_angles.clone())
+        .with_source_setting_offset(source_setting_offset)
         .with_gcr_padding(false)
         .build();
 
@@ -205,6 +209,7 @@ fn qkd_statistics_asymmetric_workflow_ok() {
         .with_eta(1e-2)
         .with_qb_err(QberConfig::Fixed { value: qb_err })
         .with_angles(test_config_angles.clone())
+        .with_source_setting_offset(source_setting_offset)
         .with_gcr_padding(false)
         .build();
 
@@ -291,8 +296,11 @@ fn qkd_statistics_asymmetric_workflow_ok() {
         }
         let measured_prob_of_1 = ones as f64 / total as f64;
 
-        // The protocol adds a +32 offset to simulate starting from |+> state.
-        let total_angle_offset = (angle_a as u32 + angle_b as u32 + 32) as u8 & 127;
+        let total_angle_offset = (angle_a as u32
+            + angle_b as u32
+            + source_setting_offset.phase_steps() as u32)
+            as u8
+            & 127;
         let angle_rad = (total_angle_offset as f64 / 128.0) * PI;
         let ideal_prob_of_1 = angle_rad.sin().powi(2);
 

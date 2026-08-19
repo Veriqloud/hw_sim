@@ -6,6 +6,7 @@
       96,
       64
     ],
+    "source_setting_offset": "quarter_turn",
     "seed": 42,
     "eta": 0.1,
     "qberr": 0.05,

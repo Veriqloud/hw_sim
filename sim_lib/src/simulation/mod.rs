@@ -1,4 +1,4 @@
-use configs::backend::{DecoyStatesConfig, QberConfig};
+use configs::backend::{DecoyStatesConfig, QberConfig, SourceSettingOffset};
 use rand::RngExt;
 use rand_pcg::Pcg64Mcg;
 use std::time::{Duration, Instant};
@@ -25,6 +25,9 @@ pub struct GenerationProgress {
 #[derive(Debug, PartialEq)]
 pub struct Simulator {
     pub(crate) angles: Vec<u8>,
+    /// Offset used by the physical correlation model. It never changes the
+    /// setting indices serialized on the hardware FIFOs.
+    pub(crate) source_setting_offset: SourceSettingOffset,
     pub eta: f64,
     pub(crate) hw: Hardware,
     pub(crate) modulator_state: ModulatorState,
@@ -175,10 +178,12 @@ impl Simulator {
             let bob_basis_index = (bob_basis_rand[i] % num_angles) as usize;
 
             // Calculate the total angle. Angles are u8 offsets in a 128-step circle.
-            // The +32 simulates Alice sending a |+> state instead of |0>.
+            // The configurable offset models the fixed phase shift introduced by
+            // the source hardware without changing its wire setting codes.
             let total_angle_offset = (angles_vec[alice_basis_index] as u32
                 + angles_vec[bob_basis_index] as u32
-                + 32) as u8
+                + self.source_setting_offset.phase_steps() as u32)
+                as u8
                 & 127;
 
             // Determine the measurement result based on the total angle.
@@ -307,7 +312,7 @@ impl Simulator {
 #[cfg(test)]
 mod tests {
     use crate::simulation::builder::SimulatorBuilder;
-    use configs::backend::QberConfig;
+    use configs::backend::{QberConfig, SourceSettingOffset};
     use rand::SeedableRng;
     use rand_pcg::Pcg64Mcg;
 
@@ -379,6 +384,36 @@ mod tests {
             ahead.generate_correlation_batch().unwrap(),
             lagging.generate_correlation_batch().unwrap()
         );
+    }
+
+    #[test]
+    fn source_setting_offset_does_not_change_fifo_setting_codes() {
+        let make_simulator = |source_setting_offset| {
+            SimulatorBuilder::new()
+                .with_angles(vec![0; 4])
+                .with_source_setting_offset(source_setting_offset)
+                .with_rng(Pcg64Mcg::seed_from_u64(42))
+                .with_seed(42)
+                .with_qb_err(QberConfig::Fixed { value: 0.0 })
+                .build()
+        };
+        let mut no_offset = make_simulator(SourceSettingOffset::None);
+        let mut half_turn = make_simulator(SourceSettingOffset::HalfTurn);
+
+        no_offset.initialize_session().unwrap();
+        half_turn.initialize_session().unwrap();
+        let no_offset_batch = no_offset.generate_correlation_batch().unwrap();
+        let half_turn_batch = half_turn.generate_correlation_batch().unwrap();
+
+        assert_eq!(
+            no_offset_batch.to_alice_fifo(),
+            half_turn_batch.to_alice_fifo()
+        );
+        assert_eq!(
+            no_offset_batch.to_bob_angle_fifo(),
+            half_turn_batch.to_bob_angle_fifo()
+        );
+        assert_ne!(no_offset_batch.results, half_turn_batch.results);
     }
 
     #[test]

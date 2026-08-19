@@ -1,6 +1,35 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Deserializer, Serialize};
 
+/// Fixed phase offset applied by the simulated optical setup.
+///
+/// One full turn is represented by 128 phase steps, so a quarter turn is 32
+/// steps. This setting only affects the simulated measurement correlation. It
+/// does not rotate or otherwise modify the two-bit setting codes written to the
+/// Alice and Bob FIFOs.
+#[derive(Debug, Default, Deserialize, Serialize, PartialEq, Eq, Clone, Copy, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SourceSettingOffset {
+    None,
+    #[default]
+    QuarterTurn,
+    HalfTurn,
+    ThreeQuarterTurns,
+}
+
+impl SourceSettingOffset {
+    /// Converts the configured fraction of a turn to the simulator's 128-step
+    /// phase representation.
+    pub const fn phase_steps(self) -> u8 {
+        match self {
+            Self::None => 0,
+            Self::QuarterTurn => 32,
+            Self::HalfTurn => 64,
+            Self::ThreeQuarterTurns => 96,
+        }
+    }
+}
+
 #[derive(Debug, Deserialize, Serialize, PartialEq, Clone, JsonSchema)]
 #[serde(tag = "type")]
 pub enum QberConfig {
@@ -55,6 +84,10 @@ pub struct DecoyStatesConfig {
 #[derive(Debug, Deserialize, Serialize, PartialEq, Clone, JsonSchema)]
 pub struct Configuration {
     pub angles: Vec<u8>,
+    /// Phase offset used by the optical correlation model. The default keeps
+    /// the historical `+32` behavior.
+    #[serde(default)]
+    pub source_setting_offset: SourceSettingOffset,
     pub seed: u64,
     pub eta: f64,
     #[serde(deserialize_with = "deserialize_qber")]
@@ -69,11 +102,43 @@ impl Default for Configuration {
     fn default() -> Self {
         Self {
             angles: vec![0, 32, 64, 96],
+            source_setting_offset: SourceSettingOffset::default(),
             seed: 42,
             eta: 1.,
             qberr: QberConfig::default(),
             pulse_distance: 1e-8,
             decoy_states: Default::default(),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SourceSettingOffset;
+
+    #[test]
+    fn source_setting_offset_uses_quarter_turn_by_default() {
+        let offset = SourceSettingOffset::default();
+
+        assert_eq!(offset, SourceSettingOffset::QuarterTurn);
+        assert_eq!(offset.phase_steps(), 32);
+    }
+
+    #[test]
+    fn source_setting_offset_deserializes_all_config_values() {
+        for (json, expected, phase_steps) in [
+            (r#""none""#, SourceSettingOffset::None, 0),
+            (r#""quarter_turn""#, SourceSettingOffset::QuarterTurn, 32),
+            (r#""half_turn""#, SourceSettingOffset::HalfTurn, 64),
+            (
+                r#""three_quarter_turns""#,
+                SourceSettingOffset::ThreeQuarterTurns,
+                96,
+            ),
+        ] {
+            let offset: SourceSettingOffset = serde_json::from_str(json).unwrap();
+            assert_eq!(offset, expected);
+            assert_eq!(offset.phase_steps(), phase_steps);
         }
     }
 }

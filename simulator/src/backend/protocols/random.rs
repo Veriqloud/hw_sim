@@ -1,5 +1,6 @@
 #[cfg(test)]
 mod tests {
+    use configs::backend::{QberConfig, SourceSettingOffset};
     use rand::SeedableRng;
     use rand_pcg::Pcg64Mcg;
     use sim_lib::BATCH;
@@ -21,21 +22,24 @@ mod tests {
             // 1. SETUP
             let seed = 42;
             let test_angles = vec![0u8, 32u8, 64u8, 96u8];
+            let source_setting_offset = SourceSettingOffset::QuarterTurn;
             let num_events: usize = 100_000;
 
             let mut sim_a = SimulatorBuilder::new()
                 .with_rng(Pcg64Mcg::seed_from_u64(seed))
                 .with_mode(SimulatorMode::Source)
-                .with_qb_err(configs::backend::QberConfig::Fixed { value: qber })
+                .with_qb_err(QberConfig::Fixed { value: qber })
                 .with_angles(test_angles.clone())
+                .with_source_setting_offset(source_setting_offset)
                 .with_modulator_state(ModulatorState::Random)
                 .build();
 
             let mut sim_b = SimulatorBuilder::new()
                 .with_rng(Pcg64Mcg::seed_from_u64(seed))
                 .with_mode(SimulatorMode::Detector)
-                .with_qb_err(configs::backend::QberConfig::Fixed { value: qber })
+                .with_qb_err(QberConfig::Fixed { value: qber })
                 .with_angles(test_angles.clone())
+                .with_source_setting_offset(source_setting_offset)
                 .with_modulator_state(ModulatorState::Random)
                 .build();
 
@@ -78,8 +82,11 @@ mod tests {
                 let measured_prob_of_1 = ones as f64 / total as f64;
 
                 // Calculate the ideal probability of a '1' based on the scalar product.
-                // The protocol adds a +32 offset to simulate starting from |+> state.
-                let total_angle_offset = (angle_a as u32 + angle_b as u32 + 32) as u8 & 127;
+                let total_angle_offset = (angle_a as u32
+                    + angle_b as u32
+                    + source_setting_offset.phase_steps() as u32)
+                    as u8
+                    & 127;
                 let angle_rad = (total_angle_offset as f64 / 128.0) * PI;
                 let ideal_prob_of_1 = angle_rad.sin().powi(2);
 

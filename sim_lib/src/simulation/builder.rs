@@ -2,7 +2,7 @@ use rand::SeedableRng;
 use rand_pcg::Pcg64Mcg;
 use std::time::Instant;
 
-use configs::backend::{Configuration, DecoyStatesConfig, QberConfig};
+use configs::backend::{Configuration, DecoyStatesConfig, QberConfig, SourceSettingOffset};
 
 use crate::{
     hardware::{
@@ -16,6 +16,7 @@ pub struct SimulatorBuilder {
     pub hw: Hardware,
     pub modulator_state: ModulatorState,
     pub angles: Vec<u8>,
+    pub source_setting_offset: SourceSettingOffset,
     pub now: Instant,
     pub qb_err: QberConfig,
     pub rng: Pcg64Mcg,
@@ -38,6 +39,7 @@ impl SimulatorBuilder {
         SimulatorBuilder::default()
             .with_hardware(hw)
             .with_angles(conf.angles.to_owned())
+            .with_source_setting_offset(conf.source_setting_offset)
             .with_qb_err(conf.qberr.to_owned())
             .with_eta(conf.eta)
             .with_rng(Pcg64Mcg::seed_from_u64(conf.seed))
@@ -58,6 +60,7 @@ impl SimulatorBuilder {
             now: self.now,
             modulator_state: self.modulator_state.to_owned(),
             angles: self.angles.to_owned(),
+            source_setting_offset: self.source_setting_offset,
             time_of_start: None,
             use_gcr_padding: self.use_gcr_padding,
             rate_limiting_enabled: self.use_rate_limiter,
@@ -69,6 +72,14 @@ impl SimulatorBuilder {
 
     pub fn with_angles(&mut self, angles: Vec<u8>) -> &mut Self {
         self.angles = angles;
+        self
+    }
+
+    pub fn with_source_setting_offset(
+        &mut self,
+        source_setting_offset: SourceSettingOffset,
+    ) -> &mut Self {
+        self.source_setting_offset = source_setting_offset;
         self
     }
 
@@ -135,6 +146,7 @@ impl Default for SimulatorBuilder {
             hw: Default::default(),
             modulator_state: Default::default(),
             angles: Default::default(),
+            source_setting_offset: Default::default(),
             now: Instant::now(),
             qb_err: Default::default(),
             rng: Pcg64Mcg::seed_from_u64(42),
@@ -160,7 +172,7 @@ pub mod tests {
         simulation::{Simulator, builder::SimulatorBuilder},
     };
 
-    use configs::backend::QberConfig;
+    use configs::backend::{QberConfig, SourceSettingOffset};
 
     #[test]
     fn test_builder() {
@@ -179,6 +191,7 @@ pub mod tests {
             .with_modulator_state(ModulatorState::Random)
             .with_seed(5)
             .with_angles(vec![0, 32, 34, 96])
+            .with_source_setting_offset(SourceSettingOffset::HalfTurn)
             .with_gcr_padding(false)
             .with_rate_limiter(false)
             .build();
@@ -194,6 +207,7 @@ pub mod tests {
                 now,
                 modulator_state: ModulatorState::Random,
                 angles: vec![0, 32, 34, 96],
+                source_setting_offset: SourceSettingOffset::HalfTurn,
                 time_of_start: None,
                 use_gcr_padding: false,
                 rate_limiting_enabled: false,
