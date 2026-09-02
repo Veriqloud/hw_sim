@@ -38,8 +38,10 @@ impl QkdBatch {
     pub fn to_alice_fifo(&self) -> Vec<u8> {
         (0..BATCH / 2)
             .map(|k| {
-                let e0 = (self.alice_state_index[2 * k] & 0b11) | ((self.decoy_states[2 * k] as u8) << 2);
-                let e1 = (self.alice_state_index[2 * k + 1] & 0b11) | ((self.decoy_states[2 * k + 1] as u8) << 2);
+                let e0 = (self.alice_state_index[2 * k] & 0b11)
+                    | ((self.decoy_states[2 * k] as u8) << 2);
+                let e1 = (self.alice_state_index[2 * k + 1] & 0b11)
+                    | ((self.decoy_states[2 * k + 1] as u8) << 2);
                 e0 | (e1 << 4)
             })
             .collect()
@@ -50,7 +52,8 @@ impl QkdBatch {
     pub fn to_bob_angle_fifo(&self) -> Vec<u8> {
         (0..BATCH / 2)
             .map(|k| {
-                (self.bob_state_index[2 * k] & 0b11) | ((self.bob_state_index[2 * k + 1] & 0b11) << 4)
+                (self.bob_state_index[2 * k] & 0b11)
+                    | ((self.bob_state_index[2 * k + 1] & 0b11) << 4)
             })
             .collect()
     }
@@ -62,12 +65,58 @@ impl QkdBatch {
         let capacity = if use_padding { 2 * BATCH } else { BATCH };
         let mut out = Vec::with_capacity(capacity);
         for (i, result) in self.results.iter().enumerate() {
-            out.push(encode_gcr(self.base_gc + i as u64 * self.gc_step, *result as u8));
+            out.push(encode_gcr(
+                self.base_gc + i as u64 * self.gc_step,
+                *result as u8,
+            ));
             if use_padding {
                 out.push([0u8; 8]);
             }
         }
         out
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use bitvec::prelude::*;
+
+    use crate::{BATCH, BATCH_BYTES, simulation::batches::QkdBatch};
+
+    #[test]
+    fn alice_fifo_encodes_the_optional_intensity_bit_in_each_nibble() {
+        let mut decoy_states = BitArray::<[u8; BATCH_BYTES], Lsb0>::ZERO;
+        decoy_states.set(0, true);
+        let mut alice_state_index = [0_u8; BATCH];
+        alice_state_index[0] = 0b01;
+        alice_state_index[1] = 0b10;
+        let batch = QkdBatch {
+            base_gc: 0,
+            gc_step: 1,
+            alice_state_index,
+            bob_state_index: [0; BATCH],
+            results: BitArray::ZERO,
+            decoy_states,
+        };
+
+        assert_eq!(batch.to_alice_fifo()[0], 0b0010_0101);
+    }
+
+    #[test]
+    fn alice_fifo_keeps_the_historical_format_without_decoy_states() {
+        let mut alice_state_index = [0_u8; BATCH];
+        alice_state_index[0] = 0b01;
+        alice_state_index[1] = 0b10;
+        let batch = QkdBatch {
+            base_gc: 0,
+            gc_step: 1,
+            alice_state_index,
+            bob_state_index: [0; BATCH],
+            results: BitArray::ZERO,
+            decoy_states: BitArray::ZERO,
+        };
+
+        assert_eq!(batch.to_alice_fifo()[0], 0b0010_0001);
     }
 }
 

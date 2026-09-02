@@ -102,9 +102,7 @@ fn start_node_idle_watcher(
     inotify
         .add_watch(
             parent,
-            AddWatchFlags::IN_CREATE
-                | AddWatchFlags::IN_MOVED_TO
-                | AddWatchFlags::IN_CLOSE_WRITE,
+            AddWatchFlags::IN_CREATE | AddWatchFlags::IN_MOVED_TO | AddWatchFlags::IN_CLOSE_WRITE,
         )
         .map_err(inotify_to_io_error)?;
 

@@ -82,6 +82,31 @@ impl Simulator {
         })
     }
 
+    /// Probability that a detected event came from a signal-intensity pulse.
+    ///
+    /// `p1` describes the source choices, but a signal pulse and a decoy pulse
+    /// do not have the same click probability. Since `QkdBatch` contains
+    /// detected events, its intensity distribution must be conditioned on a
+    /// click:
+    ///
+    /// P(mu1 | click) = p1 * P(click | mu1) / P(click).
+    fn detected_signal_probability(&self) -> Option<f64> {
+        self.decoy_states.as_ref().map(|ds| {
+            let signal_click_probability = 1.0 - (-ds.mu1 * self.eta).exp();
+            let decoy_click_probability = 1.0 - (-ds.mu2 * self.eta).exp();
+            let click_probability =
+                ds.p1 * signal_click_probability + (1.0 - ds.p1) * decoy_click_probability;
+
+            if click_probability > 0.0 {
+                ds.p1 * signal_click_probability / click_probability
+            } else {
+                // A zero-efficiency simulation still emits batches for
+                // compatibility with the historical simulator behaviour.
+                ds.p1
+            }
+        })
+    }
+
     pub fn start_attack(&mut self) {
         self.is_under_attack = true;
         tracing::warn!("QKD Attack started: QBER forced to 50%");
@@ -162,10 +187,11 @@ impl Simulator {
         self.rng.fill(&mut qber_rand);
 
         let mut decoy_rand = [0u16; BATCH];
-        // P(choose mu1) threshold scaled to u16::MAX — Some only when decoy mode is active.
-        let p1_threshold: Option<u16> = self.decoy_states.as_ref().map(|ds| {
+        // QkdBatch contains detected events. The intensity threshold therefore
+        // uses P(mu1 | click), not the source selection probability p1.
+        let detected_signal_threshold: Option<u16> = self.detected_signal_probability().map(|p| {
             self.rng.fill(&mut decoy_rand);
-            (ds.p1 * u16::MAX as f64) as u16
+            (p * u16::MAX as f64) as u16
         });
 
         let mut alice_state_index = [0u8; BATCH];
@@ -201,7 +227,7 @@ impl Simulator {
             bob_state_index[i] = bob_basis_index as u8;
             results.set(i, result);
 
-            if let Some(threshold) = p1_threshold {
+            if let Some(threshold) = detected_signal_threshold {
                 // false = signal (mu1), true = decoy (mu2).
                 decoy_states.set(i, decoy_rand[i] >= threshold);
             }
@@ -268,7 +294,11 @@ impl Simulator {
         // Average pulse-counter gap between two consecutive detection events.
         let gc_step = (batch_pulse_count / BATCH_SIZE as u64).max(1);
 
-        tracing::info!("Simulator: Generating batch ({} items, {} pulses).", BATCH_SIZE, batch_pulse_count);
+        tracing::info!(
+            "Simulator: Generating batch ({} items, {} pulses).",
+            BATCH_SIZE,
+            batch_pulse_count
+        );
 
         let base_gc = self.hw.gc_offset + self.last_event_count;
         let inner = self.generate_correlation_batch().map_err(|e| {
@@ -277,7 +307,11 @@ impl Simulator {
                 reason: format!("generate_correlation_batch failed: {}", e),
             }
         })?;
-        let batch = QkdBatch { base_gc, gc_step, ..inner };
+        let batch = QkdBatch {
+            base_gc,
+            gc_step,
+            ..inner
+        };
 
         // Advance pulse counter: next batch starts batch_pulse_count laser pulses later.
         self.last_event_count += batch_pulse_count;
@@ -300,19 +334,17 @@ impl Simulator {
         Ok(batch)
     }
 
-
     // set_angles remains for configuration purposes
     pub fn set_angles(&mut self, angles_config: [u8; 4]) -> Result<(), SimulationError> {
         self.angles = angles_config.to_vec(); // These are configuration angles (bases)
         Ok(())
     }
-
 }
 
 #[cfg(test)]
 mod tests {
     use crate::simulation::builder::SimulatorBuilder;
-    use configs::backend::{QberConfig, SourceSettingOffset};
+    use configs::backend::{DecoyStatesConfig, QberConfig, SourceSettingOffset};
     use rand::SeedableRng;
     use rand_pcg::Pcg64Mcg;
 
@@ -414,6 +446,62 @@ mod tests {
             half_turn_batch.to_bob_angle_fifo()
         );
         assert_ne!(no_offset_batch.results, half_turn_batch.results);
+    }
+
+    #[test]
+    fn detected_intensities_are_conditioned_on_their_click_probabilities() {
+        let decoy_states = DecoyStatesConfig {
+            mu1: 0.5,
+            mu2: 0.1,
+            p1: 0.7,
+        };
+        let eta = 0.1;
+        let expected_signal_probability = decoy_states.p1 * (1.0 - (-decoy_states.mu1 * eta).exp())
+            / (decoy_states.p1 * (1.0 - (-decoy_states.mu1 * eta).exp())
+                + (1.0 - decoy_states.p1) * (1.0 - (-decoy_states.mu2 * eta).exp()));
+        let mut simulator = SimulatorBuilder::new()
+            .with_angles(vec![0, 32, 64, 96])
+            .with_eta(eta)
+            .with_decoy_states(Some(decoy_states))
+            .build();
+        simulator.initialize_session().unwrap();
+
+        let mut signal_count = 0;
+        let mut event_count = 0;
+        for _ in 0..200 {
+            let batch = simulator.generate_correlation_batch().unwrap();
+            signal_count += batch.decoy_states.iter().filter(|bit| !**bit).count();
+            event_count += batch.decoy_states.len();
+        }
+        let measured_signal_probability = signal_count as f64 / event_count as f64;
+
+        assert!((measured_signal_probability - expected_signal_probability).abs() < 0.01);
+        assert!(
+            (measured_signal_probability - 0.7).abs() > 0.1,
+            "detected intensities must not follow the unconditioned source probability"
+        );
+    }
+
+    #[test]
+    fn decoy_intensities_determine_the_average_count_rate() {
+        let decoy_states = DecoyStatesConfig {
+            mu1: 0.5,
+            mu2: 0.1,
+            p1: 0.7,
+        };
+        let eta = 0.1;
+        let expected_click_probability = decoy_states.p1 * (1.0 - (-decoy_states.mu1 * eta).exp())
+            + (1.0 - decoy_states.p1) * (1.0 - (-decoy_states.mu2 * eta).exp());
+        let simulator = SimulatorBuilder::new()
+            .with_angles(vec![0, 32, 64, 96])
+            .with_eta(eta)
+            .with_decoy_states(Some(decoy_states))
+            .build();
+
+        assert_eq!(
+            simulator.generation_progress().batch_pulse_count,
+            (crate::BATCH_SIZE as f64 / expected_click_probability).round() as u64
+        );
     }
 
     #[test]

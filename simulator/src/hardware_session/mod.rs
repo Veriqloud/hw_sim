@@ -151,14 +151,14 @@ impl<'a> HardwareSessionRunner<'a> {
         match self.simulator_handle.generate_qkd_batch() {
             Ok(batch) => Ok(batch),
             Err(error) => {
-                self.simulator_handle.stop_session().map_err(|e| {
-                    errors::Error::Unexpected {
+                self.simulator_handle
+                    .stop_session()
+                    .map_err(|e| errors::Error::Unexpected {
                         reason: format!(
                             "Simulator stop_session failed after batch generation error: {}",
                             e
                         ),
-                    }
-                })?;
+                    })?;
                 Err(errors::Error::Unexpected {
                     reason: format!("generate_qkd_batch failed: {}", error),
                 })
@@ -278,9 +278,7 @@ impl<'a> HardwareSessionRunner<'a> {
         command
     }
 
-    fn await_next_command(
-        &mut self,
-    ) -> Result<ControlFlow<SessionExit, Command>, errors::Error> {
+    fn await_next_command(&mut self) -> Result<ControlFlow<SessionExit, Command>, errors::Error> {
         loop {
             if let ControlFlow::Break(exit) = self.check_runtime_pause()? {
                 return Ok(ControlFlow::Break(exit));

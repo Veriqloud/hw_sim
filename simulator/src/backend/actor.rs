@@ -37,7 +37,10 @@ impl Actor {
             ActorMessage::GenerateQkdBatch { reply_to } => {
                 tracing::debug!("SimulatorActor: Processing GenerateQkdBatch");
                 if let Err(e) = reply_to.send(self.simulator.generate_batch()) {
-                    tracing::error!("SimulatorActor: Failed to send GenerateQkdBatch reply: {}", e);
+                    tracing::error!(
+                        "SimulatorActor: Failed to send GenerateQkdBatch reply: {}",
+                        e
+                    );
                 }
             }
             ActorMessage::GenerationProgress { reply_to } => {

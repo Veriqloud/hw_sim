@@ -16,7 +16,6 @@ pub struct Configuration {
     pub log_level: LogLevel,
 }
 
-
 impl Configuration {
     pub fn new(path: String) -> Result<Self, Error> {
         if path.is_empty() {

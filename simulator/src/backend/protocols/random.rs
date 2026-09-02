@@ -3,10 +3,10 @@ mod tests {
     use configs::backend::{QberConfig, SourceSettingOffset};
     use rand::SeedableRng;
     use rand_pcg::Pcg64Mcg;
-    use sim_lib::BATCH;
     use sim_lib::hardware::modes::SimulatorMode;
     use sim_lib::hardware::modulator_state::ModulatorState;
     use sim_lib::simulation::builder::SimulatorBuilder;
+    use sim_lib::BATCH;
     use std::collections::HashMap;
     use std::f64::consts::PI;
 
@@ -57,14 +57,15 @@ mod tests {
                     let angle_a = test_angles[batch_a.alice_state_index[i] as usize];
                     let angle_b = test_angles[batch_b.bob_state_index[i] as usize];
 
-                    let stats = correlation_stats.entry((angle_a, angle_b)).or_insert((0, 0));
+                    let stats = correlation_stats
+                        .entry((angle_a, angle_b))
+                        .or_insert((0, 0));
                     if !result {
                         stats.0 += 1;
                     } else {
                         stats.1 += 1;
                     }
                 }
-
             }
 
             // 3. VERIFICATION
@@ -82,11 +83,10 @@ mod tests {
                 let measured_prob_of_1 = ones as f64 / total as f64;
 
                 // Calculate the ideal probability of a '1' based on the scalar product.
-                let total_angle_offset = (angle_a as u32
-                    + angle_b as u32
-                    + source_setting_offset.phase_steps() as u32)
-                    as u8
-                    & 127;
+                let total_angle_offset =
+                    (angle_a as u32 + angle_b as u32 + source_setting_offset.phase_steps() as u32)
+                        as u8
+                        & 127;
                 let angle_rad = (total_angle_offset as f64 / 128.0) * PI;
                 let ideal_prob_of_1 = angle_rad.sin().powi(2);
 

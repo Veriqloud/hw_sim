@@ -63,7 +63,11 @@ fn valid_config_with_decoy() {
             eta: 0.1,
             qberr: QberConfig::Fixed { value: 0.05 },
             pulse_distance: 1e-8,
-            decoy_states: Some(DecoyStatesConfig { mu1: 0.5, mu2: 0.1, p1: 0.5 }),
+            decoy_states: Some(DecoyStatesConfig {
+                mu1: 0.5,
+                mu2: 0.1,
+                p1: 0.5
+            }),
         },
         config_input
     );
@@ -109,7 +113,10 @@ fn rng_streams_stay_synchronized_across_sessions() {
     let angles_a1 = batch_a1.to_alice_fifo();
     let angles_b1 = batch_b1.to_alice_fifo();
 
-    assert_eq!(angles_a1, angles_b1, "Angle data for batch 1 should be identical");
+    assert_eq!(
+        angles_a1, angles_b1,
+        "Angle data for batch 1 should be identical"
+    );
     assert_eq!(
         gcr_a1_raw.iter().map(extract_result).collect::<Vec<_>>(),
         gcr_b1_raw.iter().map(extract_result).collect::<Vec<_>>(),
@@ -129,7 +136,10 @@ fn rng_streams_stay_synchronized_across_sessions() {
     let angles_a2 = batch_a2.to_alice_fifo();
     let angles_b2 = batch_b2.to_alice_fifo();
 
-    assert_eq!(angles_a2, angles_b2, "Angle data for batch 2 should be identical");
+    assert_eq!(
+        angles_a2, angles_b2,
+        "Angle data for batch 2 should be identical"
+    );
     assert_eq!(
         gcr_a2_raw.iter().map(extract_result).collect::<Vec<_>>(),
         gcr_b2_raw.iter().map(extract_result).collect::<Vec<_>>(),
@@ -250,7 +260,10 @@ fn qkd_statistics_asymmetric_workflow_ok() {
     // --- Data Gathering ---
     // Unpack FIFO-format bytes (2 events per byte: 0[d][b1][b0]_0[d][b1][b0]) into per-event indices.
     let unpack = |packed: &[u8]| -> Vec<u8> {
-        packed.iter().flat_map(|&b| [(b & 0x03), ((b >> 4) & 0x03)]).collect()
+        packed
+            .iter()
+            .flat_map(|&b| [(b & 0x03), ((b >> 4) & 0x03)])
+            .collect()
     };
     let angle_indices_a = unpack(&angles_a_all);
     let angle_indices_b = unpack(&angles_b_all);
@@ -296,11 +309,9 @@ fn qkd_statistics_asymmetric_workflow_ok() {
         }
         let measured_prob_of_1 = ones as f64 / total as f64;
 
-        let total_angle_offset = (angle_a as u32
-            + angle_b as u32
-            + source_setting_offset.phase_steps() as u32)
-            as u8
-            & 127;
+        let total_angle_offset =
+            (angle_a as u32 + angle_b as u32 + source_setting_offset.phase_steps() as u32) as u8
+                & 127;
         let angle_rad = (total_angle_offset as f64 / 128.0) * PI;
         let ideal_prob_of_1 = angle_rad.sin().powi(2);
 
@@ -580,8 +591,7 @@ fn test_qkd_attack_signal_flow() {
     let batch_attack = sim_handle.generate_qkd_batch().unwrap();
     let batch_attack_control = control_handle.generate_qkd_batch().unwrap();
     let gcr_attack = batch_attack.to_gcr_batch(sim_handle.use_gcr_padding);
-    let gcr_attack_control =
-        batch_attack_control.to_gcr_batch(control_handle.use_gcr_padding);
+    let gcr_attack_control = batch_attack_control.to_gcr_batch(control_handle.use_gcr_padding);
     let results_attack: Vec<u8> = gcr_attack.iter().map(|gcr| (gcr[6] >> 1) & 1).collect();
     let results_attack_control: Vec<u8> = gcr_attack_control
         .iter()
@@ -609,8 +619,7 @@ fn test_qkd_attack_signal_flow() {
     let batch_restored = sim_handle.generate_qkd_batch().unwrap();
     let batch_restored_control = control_handle.generate_qkd_batch().unwrap();
     let gcr_restored = batch_restored.to_gcr_batch(sim_handle.use_gcr_padding);
-    let gcr_restored_control =
-        batch_restored_control.to_gcr_batch(control_handle.use_gcr_padding);
+    let gcr_restored_control = batch_restored_control.to_gcr_batch(control_handle.use_gcr_padding);
     let results_restored: Vec<u8> = gcr_restored.iter().map(|gcr| (gcr[6] >> 1) & 1).collect();
     let results_restored_control: Vec<u8> = gcr_restored_control
         .iter()
